@@ -13,9 +13,11 @@ import (
 
 // scriptedBrowser is a process the client talks to: cat-like, with the test
 // writing the browser's side through the returned function.
+//
+// The scripts use bash (read -d), which sh is on macOS but not on Debian and Ubuntu, where sh is dash.
 func clientOnShell(t *testing.T, script string) (*client, *execenv.Process) {
 	t.Helper()
-	p, err := execenv.Local{}.Start(context.Background(), script)
+	p, err := execenv.Local{}.Start(context.Background(), "exec bash -c '"+strings.ReplaceAll(script, "'", `'\''`)+"'")
 	if err != nil {
 		t.Fatal(err)
 	}

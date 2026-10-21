@@ -10,4 +10,5 @@
 vault.key
 .env
 .env.*
+!.env.example
 config.json
