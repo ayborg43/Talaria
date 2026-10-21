@@ -27,7 +27,16 @@ jobs:
       - name: build (static, no cgo)
         run: CGO_ENABLED=0 go build -trimpath -o /dev/null ./cmd/tal
       - name: test
-        run: go test -race -count=1 ./...
+        shell: bash
+        run: |
+          # On failure, say which tests failed in an annotation, where it can be read without downloading logs.
+          set -o pipefail
+          go test -race -count=1 ./... 2>&1 | tee test.log || {
+            status=$?
+            summary=$(grep -B1 -A14 -E '^(--- FAIL|panic:|FAIL[[:space:]])' test.log | head -120 | sed 's/%/%25/g; s/\r//g' | awk 'BEGIN{ORS="%0A"}{print}')
+            echo "::error title=go test failed on ${{ matrix.os }}::${summary}"
+            exit $status
+          }
 
   vulncheck:
     runs-on: ubuntu-latest
