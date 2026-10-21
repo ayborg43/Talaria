@@ -53,6 +53,9 @@ func buildFence(cfg *config.Config, cfgPath, home string) *execenv.Fence {
 	for _, name := range cfg.ProfileNames() {
 		add(cfg.Profiles[name].APIKeyEnv)
 	}
+	for _, name := range config.DefaultKeyEnvs() { // the usual places a model key is kept, named in the config or not
+		add(name)
+	}
 	add(cfg.Telegram.TokenEnv)
 	add(cfg.Discord.TokenEnv)
 	for _, srv := range cfg.MCPServers {

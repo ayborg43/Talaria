@@ -132,3 +132,33 @@ func TestTalLogAndPolicyCommands(t *testing.T) {
 		t.Fatal("forget needs a target")
 	}
 }
+
+// A shell command the agent runs is not given the keys Talaria itself uses, whether or not the config names them.
+func TestTheFenceKeepsModelKeysAndTokensOutOfShellCommands(t *testing.T) {
+	cfg := &config.Config{
+		Profiles: map[string]config.Profile{"p": {APIKeyEnv: "MY_MODEL_KEY"}},
+		Telegram: config.Telegram{TokenEnv: "MY_TG"},
+		Discord:  config.Discord{TokenEnv: "MY_DC"},
+		MCPServers: map[string]mcp.Server{
+			"a": {URL: "https://x.example/${MCP_HOST_TOKEN}/mcp", OAuth: &mcp.OAuthConfig{ClientSecretEnv: "MAIL_CLIENT_SECRET"}},
+			"b": {Command: "x", Env: map[string]string{"K": "${SERVER_B_KEY}"}, Args: []string{"--t=${SERVER_B_ARG}"}},
+		},
+	}
+	f := buildFence(cfg, "/h/config.json", "/h")
+	deny := map[string]bool{}
+	for _, n := range f.EnvDeny {
+		deny[n] = true
+	}
+	for _, want := range []string{"MY_MODEL_KEY", "MY_TG", "MY_DC", "MAIL_CLIENT_SECRET", "MCP_HOST_TOKEN", "SERVER_B_KEY", "SERVER_B_ARG", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"} {
+		if !deny[want] {
+			t.Errorf("$%s is passed to the agent's shell commands", want)
+		}
+	}
+	// The usual key variable is left out of a command's environment even when no profile names it.
+	t.Setenv("DEEPSEEK_API_KEY", "sk-secret")
+	t.Setenv("HARMLESS_SETTING", "fine")
+	got := strings.Join(f.Environ(), "\n")
+	if strings.Contains(got, "sk-secret") || !strings.Contains(got, "HARMLESS_SETTING=fine") {
+		t.Fatal("the key is removed and the rest of the environment is not")
+	}
+}

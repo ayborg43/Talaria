@@ -59,7 +59,9 @@ func runDoctor(cfg *config.Config, cfgPath, home string, getenv func(string) str
 	}
 
 	fmt.Fprintln(out, "\nModel")
-	r, err := cfg.Resolve(config.Overrides{APIKey: getenv("TALARIA_API_KEY")}, getenv)
+	// The same settings a real run would use: the environment can pick the provider and model.
+	r, err := cfg.Resolve(config.Overrides{Profile: getenv("TALARIA_PROFILE"), Model: getenv("TALARIA_MODEL"),
+		BaseURL: getenv("TALARIA_BASE_URL"), APIKey: getenv("TALARIA_API_KEY"), Type: getenv("TALARIA_PROVIDER")}, getenv)
 	switch {
 	case err != nil:
 		bad("%v", err)
@@ -115,19 +117,21 @@ func runDoctor(cfg *config.Config, cfgPath, home string, getenv func(string) str
 		}
 	}
 
-	if cfg.Ops.Listen != "" {
+	if listen, token, err := opsSettings(cfg, getenv); err != nil {
 		fmt.Fprintln(out, "\nMonitoring")
-		srv := &ops.Server{Addr: cfg.Ops.Listen, Token: getenv(cfg.Ops.TokenEnv)}
-		if err := srv.Validate(); err != nil {
+		bad("%v", err)
+	} else if listen != "" {
+		fmt.Fprintln(out, "\nMonitoring")
+		if err := (&ops.Server{Addr: listen, Token: token}).Validate(); err != nil {
 			bad("%v", err)
 		} else {
-			ok("health and metrics on %s", cfg.Ops.Listen)
+			ok("health and metrics on %s", listen)
 		}
 	}
 
 	fmt.Fprintln(out, "\nTools")
-	for name, spec := range cfg.Environments {
-		if spec.Type == "docker" {
+	for _, name := range usedEnvironments(cfg, getenv) {
+		if spec, ok := cfg.Environments[name]; ok && spec.Type == "docker" {
 			if _, err := exec.LookPath("docker"); err != nil {
 				bad("environment %s needs docker, which is not installed or not on the PATH", name)
 			}
@@ -180,4 +184,27 @@ func discordAllowed(cfg *config.Config, getenv func(string) string) map[int64]bo
 		m[id] = true
 	}
 	return m
+}
+
+// usedEnvironments are the environments something is set up to use: the default, the one the
+// environment variable names, and those chats may switch to. The workspace is always defined, and needs
+// docker only if something actually uses it.
+func usedEnvironments(cfg *config.Config, getenv func(string) string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(n string) {
+		if n != "" && !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	add(getenv("TALARIA_ENV"))
+	add(cfg.DefaultEnvironment)
+	for _, n := range cfg.Telegram.Environments {
+		add(n)
+	}
+	for _, n := range cfg.Discord.Environments {
+		add(n)
+	}
+	return out
 }

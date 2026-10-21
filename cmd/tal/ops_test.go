@@ -183,3 +183,60 @@ func TestBackupLeavesOutTheVaultsKeyFileEvenWhenItIsInsideTheHome(t *testing.T) 
 		t.Fatal("the vault itself is kept")
 	}
 }
+
+func TestOpsCanBeSetFromTheEnvironmentAlone(t *testing.T) {
+	get := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	cfg := &config.Config{}
+	if l, tok, err := opsSettings(cfg, get(nil)); l != "" || tok != "" || err != nil {
+		t.Fatalf("off by default: %q %q %v", l, tok, err)
+	}
+	if l, _, _ := opsSettings(cfg, get(map[string]string{"TALARIA_OPS_LISTEN": "127.0.0.1:9100"})); l != "127.0.0.1:9100" {
+		t.Fatal("the environment turns it on")
+	}
+	cfg.Ops.Listen = "127.0.0.1:1"
+	if l, _, _ := opsSettings(cfg, get(map[string]string{"TALARIA_OPS_LISTEN": "0.0.0.0:9"})); l != "0.0.0.0:9" {
+		t.Fatal("and wins over the file")
+	}
+	if _, tok, _ := opsSettings(cfg, get(map[string]string{"TALARIA_OPS_TOKEN": "t0k"})); tok != "t0k" {
+		t.Fatal("the usual token variable")
+	}
+	cfg.Ops.TokenEnv = "MY_TOK"
+	if _, tok, err := opsSettings(cfg, get(map[string]string{"MY_TOK": "mine", "TALARIA_OPS_TOKEN": "other"})); tok != "mine" || err != nil {
+		t.Fatalf("a named variable wins: %q %v", tok, err)
+	}
+	if _, _, err := opsSettings(cfg, get(nil)); err == nil || !strings.Contains(err.Error(), "MY_TOK") {
+		t.Fatalf("a named variable that is empty is an error: %v", err)
+	}
+	cfg.Ops.Listen = ""
+	if _, _, err := opsSettings(cfg, get(nil)); err != nil {
+		t.Fatalf("not an error when monitoring is off: %v", err)
+	}
+}
+
+func TestDoctorChecksTheProviderTheEnvironmentPicks(t *testing.T) {
+	out, n := doctorOn(t, `{}`, map[string]string{"TALARIA_PROVIDER": "deepseek", "DEEPSEEK_API_KEY": "sk-x", "TALARIA_MODEL": "deepseek-v4-pro"}, nil)
+	if !strings.Contains(out, "deepseek deepseek-v4-pro, key from $DEEPSEEK_API_KEY") || strings.Contains(out, "sk-x") {
+		t.Fatalf("%d:\n%s", n, out)
+	}
+	out, _ = doctorOn(t, `{}`, map[string]string{"TALARIA_PROVIDER": "deepseek"}, nil)
+	if !strings.Contains(out, "needs an API key") || !strings.Contains(out, "DEEPSEEK_API_KEY") {
+		t.Fatalf("a missing key is named:\n%s", out)
+	}
+}
+
+// The workspace is always defined. It needs docker only when something is set up to use it.
+func TestDoctorOnlyWantsDockerForEnvironmentsInUse(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // no docker here
+	out, _ := doctorOn(t, `{"profiles":{"m":{"base_url":"http://localhost:1/v1"}}}`, nil, nil)
+	if strings.Contains(out, "needs docker") {
+		t.Fatalf("nothing uses it:\n%s", out)
+	}
+	out, n := doctorOn(t, `{"profiles":{"m":{"base_url":"http://localhost:1/v1"}},"default_environment":"workspace"}`, nil, nil)
+	if n == 0 || !strings.Contains(out, "environment workspace needs docker") {
+		t.Fatalf("the default environment is in use:\n%s", out)
+	}
+	if got := usedEnvironments(&config.Config{DefaultEnvironment: "a", Telegram: config.Telegram{Environments: []string{"b", "a"}}, Discord: config.Discord{Environments: []string{"c"}}},
+		func(k string) string { return map[string]string{"TALARIA_ENV": "e"}[k] }); strings.Join(got, ",") != "e,a,b,c" {
+		t.Fatalf("%v", got)
+	}
+}

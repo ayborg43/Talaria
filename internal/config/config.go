@@ -426,6 +426,9 @@ func (c *Config) MCPServerNames() []string {
 // Overrides are the values from flags and environment variables that win over
 // the file. Empty means "not set".
 type Overrides struct {
+	// Type forces the provider type ("openai", "anthropic", "deepseek"), so a deployment can pick
+	// one with an environment variable and no config file.
+	Type    string
 	Profile string
 	Model   string
 	BaseURL string
@@ -456,6 +459,16 @@ var (
 	defaultKeyEnv = map[string]string{provider.TypeOpenAI: "OPENAI_API_KEY", provider.TypeAnthropic: "ANTHROPIC_API_KEY", provider.TypeDeepSeek: "DEEPSEEK_API_KEY"}
 )
 
+// DefaultKeyEnvs are the variables each provider's key is read from when a profile does not name one.
+func DefaultKeyEnvs() []string {
+	var out []string
+	for _, v := range defaultKeyEnv {
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // Resolve picks a profile and applies overrides. It does not check the key;
 // call CheckKey before using the result.
 func (c *Config) Resolve(o Overrides, getenv func(string) string) (Resolved, error) {
@@ -479,6 +492,9 @@ func (c *Config) Resolve(o Overrides, getenv func(string) string) (Resolved, err
 	}
 
 	typ := p.Type
+	if o.Type != "" {
+		typ = o.Type
+	}
 	if typ == "" {
 		typ = provider.TypeOpenAI
 	}

@@ -765,3 +765,32 @@ func TestProtectedPathsInTheConfig(t *testing.T) {
 		t.Fatalf("%v %v", c.ProtectedPaths, err)
 	}
 }
+
+// A container picks its provider with an environment variable and no config file.
+func TestProviderTypeFromTheEnvironmentNeedsNoConfigFile(t *testing.T) {
+	c := &Config{}
+	r, err := c.Resolve(Overrides{Type: "deepseek"}, env("DEEPSEEK_API_KEY", "ds-key"))
+	if err != nil || r.Type != "deepseek" || r.BaseURL != "https://api.deepseek.com" || r.Model != "deepseek-flash" || r.APIKey != "ds-key" || r.KeySource != "$DEEPSEEK_API_KEY" {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if err := r.CheckKey(); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = c.Resolve(Overrides{Type: "anthropic", Model: "claude-sonnet-5-5"}, env("ANTHROPIC_API_KEY", "a"))
+	if r.Type != "anthropic" || r.APIKey != "a" || r.Model != "claude-sonnet-5-5" {
+		t.Fatalf("%+v", r)
+	}
+	if _, err := c.Resolve(Overrides{Type: "gemini"}, env()); err == nil || !strings.Contains(err.Error(), "unknown type") {
+		t.Fatalf("%v", err)
+	}
+	// It overrides what a profile says, as the other overrides do.
+	pc := &Config{Profiles: map[string]Profile{"p": {Type: "openai", Model: "gpt"}}}
+	if r, _ := pc.Resolve(Overrides{Type: "deepseek"}, env()); r.Type != "deepseek" {
+		t.Fatalf("%+v", r)
+	}
+	// And the DeepSeek-only settings are still refused on another type.
+	bad := &Config{Profiles: map[string]Profile{"p": {Thinking: new(bool)}}}
+	if _, err := bad.Resolve(Overrides{}, env()); err == nil {
+		t.Fatal("thinking needs the deepseek type")
+	}
+}

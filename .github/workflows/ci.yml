@@ -38,3 +38,22 @@ jobs:
           go-version-file: go.mod
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build the image
+        run: docker build --build-arg VERSION=ci -t talaria:ci .
+      - name: it starts, and says which build it is
+        run: docker run --rm -v ci-data:/data talaria:ci version | grep -q "talaria ci"
+      - name: it refuses to start on a state folder it cannot write
+        run: |
+          mkdir -p "$RUNNER_TEMP/rootowned"
+          if docker run --rm -v "$RUNNER_TEMP/rootowned:/data" --entrypoint talaria-entrypoint talaria:ci version; then
+            echo "should have refused"; exit 1
+          fi
+      - name: the compose file is valid, and insists on a provider
+        run: |
+          TALARIA_PROVIDER=deepseek docker compose config -q
+          if docker compose config -q 2>/dev/null; then echo "should have insisted"; exit 1; fi

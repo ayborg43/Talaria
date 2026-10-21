@@ -1,3 +1,10 @@
 .git
+.github
 *.md
-Dockerfile
+**/*_test.go
+tal
+cmd/tal/tal
+*.tar.gz
+.env
+.env.*
+docker-compose*.yml

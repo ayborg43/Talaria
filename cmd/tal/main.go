@@ -70,7 +70,7 @@ func run() error {
 		return err
 	}
 	cfgPath := config.Path(home)
-	overrides := config.Overrides{Profile: *profile, Model: *model, BaseURL: *baseURL, APIKey: os.Getenv("TALARIA_API_KEY")}
+	overrides := config.Overrides{Profile: *profile, Model: *model, BaseURL: *baseURL, APIKey: os.Getenv("TALARIA_API_KEY"), Type: os.Getenv("TALARIA_PROVIDER")}
 
 	cmd := flag.Arg(0)
 	if cmd == "version" {

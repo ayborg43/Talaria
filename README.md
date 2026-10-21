@@ -13,7 +13,7 @@ export OPENAI_API_KEY=sk-...         # or ANTHROPIC_API_KEY with -profile (see b
 ./tal -p "list the files here"       # one-shot
 ```
 
-`write_file` and `shell` ask for confirmation before running. Pass `-yolo` to skip that. `./tal doctor` checks your setup for the mistakes that matter, and `./tal version` says which build you have.
+`write_file` and `shell` ask for confirmation before running. Pass `-yolo` to skip that. `./tal doctor` checks your setup for the mistakes that matter, and `./tal version` says which build you have. To run it on a server, see Deploying below.
 
 ## Models and profiles
 
@@ -51,7 +51,7 @@ setups and switch between them, create a config file:
 - **Keys:** name the environment variable that holds the key (`api_key_env`) rather than pasting it in.
   An inline `api_key` works but Talaria warns if the file is readable by other users.
 - **Precedence**, highest first: flags, environment, the selected profile, built-in defaults.
-  Flags and variables: `-profile` / `TALARIA_PROFILE`, `-model` / `TALARIA_MODEL`, `-base-url` / `TALARIA_BASE_URL`, `TALARIA_API_KEY`.
+  Flags and variables: `-profile` / `TALARIA_PROFILE`, `-model` / `TALARIA_MODEL`, `-base-url` / `TALARIA_BASE_URL`, `TALARIA_API_KEY`, and `TALARIA_PROVIDER` (`openai`, `anthropic` or `deepseek`: with it and the provider's usual key variable, no config file is needed).
 - **Profile choice:** `-profile`, else `default_profile`, else the only profile if there is just one.
 - **Telegram and Discord:** `allowed_users`, `token_env` and `stream` can live in the `telegram` and `discord` sections;
   `TALARIA_TELEGRAM_TOKEN` / `TALARIA_TELEGRAM_ALLOWED_USERS` and `TALARIA_DISCORD_TOKEN` / `TALARIA_DISCORD_ALLOWED_USERS`
@@ -857,6 +857,49 @@ name); `cron_add` takes optional `profile` and `environment` arguments, with `de
   model that quietly ran on an expensive one, would be worse than a failure message. It runs again at its next time.
 - Jobs on an environment start it when they need it, and share it with chats that use the same one. Approvals are
   unchanged: nothing needing approval runs in a job unless it was created with `allow_risky`, wherever it runs.
+
+## Deploying with Docker and Dokploy
+
+The repository builds into a small image (55 MB) that runs the gateway, and has a `docker-compose.yml` for it. Settings come from
+environment variables, so a platform with a form for them needs no config file.
+
+**What you need first.** A model key, a bot token (Discord or Telegram), and your own user ID on that service. To find the
+ID, deploy once with the token and no IDs, message the bot `/whoami` (`!whoami` on Discord), then add the number and redeploy.
+
+**On Dokploy**, using the Compose type:
+
+1. Create a project, then a **Compose** service from this repository (`ayborg43/Talaria`, branch `main`, compose path
+   `./docker-compose.yml`). Choose plain Compose, not Stack: Stack mode does not support `build`.
+2. In the **Environment** tab, enter the variables from [.env.example](.env.example). Dokploy saves them to a `.env` file next to the
+   compose file, which the compose file reads. The minimum is `TALARIA_PROVIDER` (`openai`, `anthropic` or `deepseek`), that
+   provider's key (`DEEPSEEK_API_KEY`, `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`), the bot token, and
+   `TALARIA_DISCORD_ALLOWED_USERS` (or the Telegram pair). Deploy fails at once, with a message, if `TALARIA_PROVIDER` is missing.
+3. Deploy. There is no domain and no port to add: the gateway makes outbound connections only. It shows as healthy when its own
+   health endpoint answers. A webhook from the repository can redeploy on each push.
+
+The compose file keeps state in two named volumes, `talaria-data` (`/data`: notes, skills, history, jobs, the vault) and `talaria-work`
+(`/work`: the agent's files), both of which Dokploy's volume backups can take. It also holds the container down, because the agent runs shell
+commands in it: no extra privileges, a read-only root file system (writes only to the two volumes and `/tmp`), 1 GB of memory and 256 processes.
+It runs as a non-root user.
+
+On a plain Docker host it is the same: copy `.env.example` to `.env`, fill it in, and `docker compose up -d`. For a single container, `docker run`
+with the same variables and a volume on `/data` and `/work` works too; the image's entrypoint refuses to start, saying why, if `/data` is not writable.
+
+**Settings that are not a variable**: put them as JSON in `TALARIA_CONFIG_JSON` (connected services, limits, protected paths, environments).
+It is written to `/data/config.json` at every start, so what the platform says is what runs. Keep secrets out of it: name the variable that holds
+each one (`api_key_env`, `token_env`). The vault, if you use one, is created inside the container
+(`docker exec -it <container> tal vault init`) and opened afterwards with `TALARIA_VAULT_PASSPHRASE`; a connected service is signed in to the same
+way (`docker exec -it <container> tal connect NAME -no-browser`, opening the address it prints in your own browser and pasting back where it ended up).
+
+**Inside the container.** The agent's shell and file tools run in the container, which is the sandbox: they cannot touch your host or other
+containers, and they see only `/work` and what you mount. The model's key, the bot token and the vault passphrase are kept out of the environment
+of the commands it runs. There is no browser and no workspace container in it (those need Chromium and Docker); the browser tools are off. `tal doctor`,
+`tal backup -o /work/backup.tgz` and `tal version` are run with `docker exec`. Do not write a backup into `/data`: it would be included in the next one.
+
+**What is checked and what is not.** The image builds, runs as uid 10001 with a read-only root, becomes healthy, keeps its state through
+`docker compose down` and `up`, and refuses to start on an unwritable `/data`. All of that was tested with Docker and with fakes for the chat service
+and the model. It has not been deployed on Dokploy itself: the steps above follow Dokploy's documentation for Compose services, but menu names
+may differ between versions.
 
 ## Running Talaria
 

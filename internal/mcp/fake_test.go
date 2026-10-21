@@ -279,6 +279,10 @@ func runFakeStdio(mode string) {
 		if json.Unmarshal(sc.Bytes(), &m) != nil {
 			continue
 		}
+		if len(m.ID) == 0 { // notifications are taken in order, as a real server takes them: "initialized" must be seen before the request that follows it
+			f.handle(&m)
+			continue
+		}
 		go func() { // concurrent, so a slow call does not block a cancellation
 			if reply := f.handle(&m); reply != nil {
 				write(reply)

@@ -323,16 +323,17 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 		cancel()
 	}
 	metrics.Set("talaria_build_info", 1, "version", version.String())
-	if cfg.Ops.Listen != "" {
+	opsAddr, opsToken, err := opsSettings(cfg, os.Getenv)
+	if err != nil {
+		return err
+	}
+	if opsAddr != "" {
 		var names []string
 		for _, s := range services {
 			names = append(names, s.name)
 		}
-		srv := &ops.Server{Addr: cfg.Ops.Listen, Token: os.Getenv(cfg.Ops.TokenEnv),
+		srv := &ops.Server{Addr: opsAddr, Token: opsToken,
 			Status: func() map[string]any { return map[string]any{"gateways": names} }}
-		if cfg.Ops.TokenEnv != "" && srv.Token == "" {
-			return fmt.Errorf("ops.token_env names $%s, which is not set", cfg.Ops.TokenEnv)
-		}
 		if err := srv.Validate(); err != nil {
 			return err
 		}

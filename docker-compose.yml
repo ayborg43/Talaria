@@ -1,0 +1,53 @@
+# Talaria as one service, for Dokploy (Compose type) or plain `docker compose up -d`.
+#
+# Settings come from environment variables. Dokploy writes the ones you enter in its Environment tab to a
+# .env file beside this one, which Compose reads for the ${...} below. The three marked REQUIRED stop the
+# deployment with a clear message if they are missing; see .env.example for everything.
+services:
+  talaria:
+    build:
+      context: .
+      args:
+        VERSION: ${TALARIA_VERSION:-dev}
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      # Which model: openai, anthropic or deepseek, and its key (name below follows the provider).
+      TALARIA_PROVIDER: ${TALARIA_PROVIDER:?set TALARIA_PROVIDER to openai, anthropic or deepseek}
+      TALARIA_MODEL: ${TALARIA_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      # Who may talk to it: a bot token and, REQUIRED for it to serve anyone, the user IDs allowed in.
+      TALARIA_DISCORD_TOKEN: ${TALARIA_DISCORD_TOKEN:-}
+      TALARIA_DISCORD_ALLOWED_USERS: ${TALARIA_DISCORD_ALLOWED_USERS:-}
+      TALARIA_TELEGRAM_TOKEN: ${TALARIA_TELEGRAM_TOKEN:-}
+      TALARIA_TELEGRAM_ALLOWED_USERS: ${TALARIA_TELEGRAM_ALLOWED_USERS:-}
+      # Optional: opens the saved-logins vault without anyone present, and extra settings as JSON.
+      TALARIA_VAULT_PASSPHRASE: ${TALARIA_VAULT_PASSPHRASE:-}
+      TALARIA_CONFIG_JSON: ${TALARIA_CONFIG_JSON:-}
+      # Optional: health and metrics. Inside the container only, unless you change these.
+      TALARIA_OPS_LISTEN: ${TALARIA_OPS_LISTEN:-127.0.0.1:9100}
+      TALARIA_OPS_TOKEN: ${TALARIA_OPS_TOKEN:-}
+    volumes:
+      - talaria-data:/data   # notes, skills, history, jobs, vault: back this one up
+      - talaria-work:/work   # the agent's own files
+    # The agent can run shell commands, so the container it runs them in is held down: no extra privileges,
+    # no writes outside its two volumes and /tmp, and limits on memory and processes.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  talaria-data:
+  talaria-work:
