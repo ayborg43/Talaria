@@ -7,6 +7,7 @@ import (
 
 	"talaria/internal/app"
 	"talaria/internal/cron"
+	"talaria/internal/metrics"
 	"talaria/internal/watch"
 )
 
@@ -57,6 +58,9 @@ func (r *jobRunner) runWatch(ctx context.Context, j cron.Job) (string, error) {
 		return "", err
 	}
 
+	metrics.Inc("talaria_watch_polls_total", "outcome", map[watch.Outcome]string{
+		watch.Quiet: "quiet", watch.Changed: "changed", watch.Failed: "failed", watch.PausedByErrors: "paused", watch.PausedByBudget: "paused",
+	}[out])
 	switch out {
 	case watch.PausedByErrors:
 		r.rt.Cron.UnscheduleWatch(w.ID)
@@ -65,6 +69,7 @@ func (r *jobRunner) runWatch(ctx context.Context, j cron.Job) (string, error) {
 		r.rt.Cron.UnscheduleWatch(w.ID)
 		return fmt.Sprintf("This has changed %d times since you last wrote to me, so I have paused the watch rather than carry on unasked. Write to me to carry on, or: /watches resume %s.", w.Triggers-1, w.ID), nil
 	case watch.Changed:
+		a.MarkUntrusted() // what the model is about to read came from a service, not from the user
 		return a.Run(ctx, watch.Prompt(w, previous, result))
 	}
 	return cron.Silent, nil

@@ -22,7 +22,7 @@ func TestMemoryAndSearchTools(t *testing.T) {
 	cur, _ := sessions.Start()
 
 	reg := tool.NewRegistry()
-	RegisterTools(reg, notes, sessions, cur)
+	RegisterTools(reg, notes, sessions, cur, "")
 	run := func(name, args string) (string, error) {
 		tl, ok := reg.Get(name)
 		if !ok {
@@ -53,7 +53,7 @@ func TestMemoryAndSearchTools(t *testing.T) {
 
 func TestSessionSearchToolOmittedWithoutDB(t *testing.T) {
 	reg := tool.NewRegistry()
-	RegisterTools(reg, &Notes{Dir: t.TempDir()}, nil, "")
+	RegisterTools(reg, &Notes{Dir: t.TempDir()}, nil, "", "")
 	if _, ok := reg.Get("session_search"); ok {
 		t.Fatal("session_search should not register without a database")
 	}

@@ -436,6 +436,11 @@ func (v *Vault) Add(c Credential) error {
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	unlock, err := v.lockFile()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	v.refreshLocked()
 	c.Added = time.Now().UTC()
 	v.creds[c.Name] = c
@@ -446,13 +451,20 @@ func (v *Vault) Add(c Credential) error {
 	return nil
 }
 
-// Update changes a credential in place and saves it, under the vault's lock,
-// after rereading the file, so two processes renewing a token do not overwrite
-// each other. change may not rename it. It reports an error if there is none
+// Update changes a credential in place and saves it, under the vault's lock (a
+// file lock too, so another process is held off), after rereading the file, so two
+// processes renewing a token do not overwrite each other. change may do slow work,
+// such as asking a server for a new token: nothing else changes the vault meanwhile.
+// It may not rename the credential. It reports an error if there is none
 // by that name.
 func (v *Vault) Update(name string, change func(*Credential) error) (Credential, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	unlock, err := v.lockFile()
+	if err != nil {
+		return Credential{}, err
+	}
+	defer unlock()
 	v.refreshLocked()
 	c, ok := v.creds[name]
 	if !ok {
@@ -483,6 +495,11 @@ func (v *Vault) Update(name string, change func(*Credential) error) (Credential,
 func (v *Vault) Remove(name string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	unlock, err := v.lockFile()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	v.refreshLocked()
 	if _, ok := v.creds[name]; !ok {
 		return fmt.Errorf("no credential named %q", name)
@@ -533,6 +550,11 @@ func (v *Vault) ChangePassphrase(passphrase string) error {
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	unlock, err := v.lockFile()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	v.refreshLocked()
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {

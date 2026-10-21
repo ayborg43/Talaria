@@ -20,20 +20,23 @@ import (
 	"talaria/internal/gateway/discord"
 	"talaria/internal/gateway/telegram"
 	"talaria/internal/guard"
+	"talaria/internal/metrics"
+	"talaria/internal/ops"
 	"talaria/internal/provider"
+	"talaria/internal/version"
 )
 
 // gatewayPool is the set of environments chats may use, shared by every chat
 // service so that one container serves them all. Environments start when first
 // asked for; the default one, which Talaria has already started, is in it from
 // the beginning. Closing the pool stops what it started, and the default too.
-func gatewayPool(cfg *config.Config, defName string, def execenv.Env, getenv func(string) string, logf func(string, ...any)) *execenv.Pool {
+func gatewayPool(cfg *config.Config, defName string, def execenv.Env, fence *execenv.Fence, getenv func(string) string, logf func(string, ...any)) *execenv.Pool {
 	if def == nil {
-		def = execenv.Local{}
+		def = execenv.Local{Fence: fence}
 	}
 	pool := execenv.NewPool(func(ctx context.Context, name string) (execenv.Env, error) {
 		if name == execenv.LocalName {
-			return execenv.Local{}, nil
+			return execenv.Local{Fence: fence}, nil
 		}
 		spec, ok := cfg.Environments[name]
 		if !ok {
@@ -140,7 +143,7 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 	}
 	var pool *execenv.Pool
 	if len(cfg.Telegram.Environments) > 0 || len(cfg.Discord.Environments) > 0 {
-		pool = gatewayPool(cfg, envName, env, os.Getenv, logf)
+		pool = gatewayPool(cfg, envName, env, buildFence(cfg, config.Path(home), home), os.Getenv, logf)
 		defer pool.Close() // stops every environment the chats started, and the default one too
 	}
 	backends := gatewayBackends(cfg, res, defProvider, os.Getenv)
@@ -230,13 +233,14 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 		} else {
 			logf("telegram: serving @%s for %d allowed user(s), default profile %s (%s), streaming %s",
 				me.Username, len(allowed), res.Name, res.Model, onOff(cfg.Telegram.StreamReplies()))
+			sharedWarning(len(allowed), func(m string) { logf("telegram: %s", m) })
 		}
 
 		s := &service{name: "telegram", allowed: allowed}
 		s.envs = gatewayEnvironments(cfg, cfg.Telegram.Environments, envName, pool, rt.UseEnvironment)
 		g := &telegram.Gateway{
 			API: api, Allowed: allowed, Logf: logf,
-			Stream: cfg.Telegram.StreamReplies(), Environment: envDesc, Environments: s.envs, Backends: backends,
+			MessagesPerMinute: cfg.Limits.Messages(), Stream: cfg.Telegram.StreamReplies(), Environment: envDesc, Environments: s.envs, Backends: backends,
 			Prefs: &chat.FilePrefs{Path: filepath.Join(home, "telegram_chats.json")},
 		}
 		if gd := rt.Guard(); gd != nil {
@@ -267,13 +271,14 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 		} else {
 			logf("discord: serving %s for %d allowed user(s), default profile %s (%s), streaming %s",
 				me.Username, len(allowed), res.Name, res.Model, onOff(cfg.Discord.StreamReplies()))
+			sharedWarning(len(allowed), func(m string) { logf("discord: %s", m) })
 		}
 
 		s := &service{name: "discord", allowed: allowed, markdown: true}
 		s.envs = gatewayEnvironments(cfg, cfg.Discord.Environments, envName, pool, rt.UseEnvironment)
 		g := &discord.Gateway{
 			API: api, Allowed: allowed, Logf: logf,
-			Stream: cfg.Discord.StreamReplies(), Environment: envDesc, Environments: s.envs, Backends: backends,
+			MessagesPerMinute: cfg.Limits.Messages(), Stream: cfg.Discord.StreamReplies(), Environment: envDesc, Environments: s.envs, Backends: backends,
 			Prefs: &chat.FilePrefs{Path: filepath.Join(home, "discord_chats.json")},
 		}
 		if gd := rt.Guard(); gd != nil {
@@ -317,6 +322,26 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 		mu.Unlock()
 		cancel()
 	}
+	metrics.Set("talaria_build_info", 1, "version", version.String())
+	if cfg.Ops.Listen != "" {
+		var names []string
+		for _, s := range services {
+			names = append(names, s.name)
+		}
+		srv := &ops.Server{Addr: cfg.Ops.Listen, Token: os.Getenv(cfg.Ops.TokenEnv),
+			Status: func() map[string]any { return map[string]any{"gateways": names} }}
+		if cfg.Ops.TokenEnv != "" && srv.Token == "" {
+			return fmt.Errorf("ops.token_env names $%s, which is not set", cfg.Ops.TokenEnv)
+		}
+		if err := srv.Validate(); err != nil {
+			return err
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fail("ops", srv.Run(ctx, logf))
+		}()
+	}
 	for _, s := range services {
 		wg.Add(1)
 		go func() {
@@ -337,3 +362,15 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 	wg.Wait()
 	return firstErr
 }
+
+// sharedWarning says what is shared when more than one person is allowed in. Talaria is one
+// person's agent: chats are kept apart, but what the agent knows and holds is not.
+func sharedWarning(allowed int, say func(string)) {
+	if allowed > 1 {
+		say(sharedNote)
+	}
+}
+
+const sharedNote = "warning: more than one person is allowed in. Their conversations and history are kept apart, but everything else is shared: " +
+	"the agent's notes and skills, the saved logins and connected accounts (anyone allowed in can have the agent use them), the files and the " +
+	"workspace, and the model account's spending. Only allow people you would give all of that to."

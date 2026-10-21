@@ -194,10 +194,14 @@ func (a *API) GetUpdates(ctx context.Context, offset, timeoutSec int) ([]Update,
 	return ups, err
 }
 
+var noPreview = map[string]any{"is_disabled": true}
+
 // SendMessage sends plain text (no parse mode, so model output can never be
 // rejected for bad markup) and returns the new message id.
 func (a *API) SendMessage(ctx context.Context, chatID int64, text string, kb *InlineKeyboard) (int, error) {
-	params := map[string]any{"chat_id": chatID, "text": text}
+	// No link previews: Telegram fetches the first link in a message to show a card for it, which
+	// is a request to whatever address the model wrote, made by Telegram, with nobody asked.
+	params := map[string]any{"chat_id": chatID, "text": text, "link_preview_options": noPreview}
 	if kb != nil {
 		params["reply_markup"] = kb
 	}
@@ -208,7 +212,7 @@ func (a *API) SendMessage(ctx context.Context, chatID int64, text string, kb *In
 
 // EditMessageText replaces a message's text and drops its inline keyboard.
 func (a *API) EditMessageText(ctx context.Context, chatID int64, messageID int, text string) error {
-	return a.call(ctx, "editMessageText", map[string]any{"chat_id": chatID, "message_id": messageID, "text": text}, nil)
+	return a.call(ctx, "editMessageText", map[string]any{"chat_id": chatID, "message_id": messageID, "text": text, "link_preview_options": noPreview}, nil)
 }
 
 func (a *API) AnswerCallback(ctx context.Context, id, text string) error {

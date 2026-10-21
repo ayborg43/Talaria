@@ -3,6 +3,7 @@ package oauth
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -197,12 +198,46 @@ func TestLoginIgnoresACallbackThatIsNotOurs(t *testing.T) {
 	forged := func(context.Context) (string, error) {
 		return "http://127.0.0.1:1/callback?code=stolen&state=not-our-state", nil
 	}
-	_, err := Login{ServerURL: s.MCPURL(), Out: &out, Paste: forged, Timeout: 5 * time.Second}.Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "wrong state") {
-		t.Fatalf("%v", err)
+	_, err := Login{ServerURL: s.MCPURL(), Out: &out, Paste: forged, Timeout: 700 * time.Millisecond}.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "no sign-in came back") {
+		t.Fatalf("a pasted answer with the wrong state is ignored, and the wait goes on: %v", err)
 	}
 	if len(s.TokenForms) != 0 {
 		t.Fatal("a code from a callback with the wrong state must never be exchanged")
+	}
+}
+
+// Any web page can send a request to the port Talaria is listening on. That must
+// not be able to end the sign-in, whether it carries an error or a code.
+func TestAStrayRequestToTheCallbackDoesNotEndTheSignIn(t *testing.T) {
+	s := oauthtest.New()
+	defer s.Close()
+	var out bytes.Buffer
+	var probed []int
+	open := func(addr string) error {
+		u, _ := url.Parse(addr)
+		redirect, _ := url.Parse(u.Query().Get("redirect_uri"))
+		for _, q := range []string{"error=access_denied", "code=evil&state=guess", "code=evil", ""} {
+			resp, err := http.Get("http://" + redirect.Host + "/callback?" + q)
+			if err != nil {
+				return err
+			}
+			probed = append(probed, resp.StatusCode)
+			resp.Body.Close()
+		}
+		return browser(t)(addr) // and then the real sign-in comes back
+	}
+	data, err := Login{ServerURL: s.MCPURL(), Out: &out, Open: open, Timeout: 10 * time.Second}.Run(context.Background())
+	if err != nil || data.AccessToken == "" {
+		t.Fatalf("%v", err)
+	}
+	for _, code := range probed {
+		if code != 400 {
+			t.Fatalf("a stray request is turned away: %v", probed)
+		}
+	}
+	if len(s.TokenForms) != 1 || s.TokenForms[0].Get("code") == "evil" {
+		t.Fatalf("only the real code is exchanged: %v", s.TokenForms)
 	}
 }
 
@@ -460,5 +495,75 @@ func TestRevoke(t *testing.T) {
 	}
 	if Revoke(context.Background(), NewHTTPClient(), &vault.OAuthData{AccessToken: "x"}) || Revoke(context.Background(), NewHTTPClient(), nil) {
 		t.Fatal("nothing to revoke at")
+	}
+}
+
+// A gateway and `tal connect` are two processes, each with its own copy of the vault. With a refresh
+// token that works once, the one that gets there second must use what the first saved, not spend the
+// dead token and sign the user out.
+func TestTwoProcessesRenewingTogetherSpendTheRefreshTokenOnce(t *testing.T) {
+	s := oauthtest.New()
+	defer s.Close()
+	s.RotateRefresh = true
+	v1 := newVault(t)
+	signedIn(t, s, v1)
+	v2, err := vault.Open(v1.Path, "a long enough passphrase", nil) // another process opening the same file
+	if err != nil {
+		t.Fatal(err)
+	}
+	later := func() time.Time { return time.Now().Add(61 * time.Minute) }
+	a := &Source{Vault: v1, Server: "mail", Now: later}
+	b := &Source{Vault: v2, Server: "mail", Now: later}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 12)
+	for i := 0; i < 6; i++ {
+		for _, src := range []*Source{a, b} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, err := src.Token(context.Background())
+				errs <- err
+			}()
+		}
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("a renewal failed, which is what spending a rotated token twice looks like: %v", err)
+		}
+	}
+	if s.Refreshes != 1 {
+		t.Fatalf("%d renewals: the second process must see what the first saved", s.Refreshes)
+	}
+	c1, _ := v1.Get("oauth.mail")
+	c2, _ := v2.Get("oauth.mail")
+	if c1.OAuth.RefreshToken != c2.OAuth.RefreshToken || c1.OAuth.AccessToken != c2.OAuth.AccessToken {
+		t.Fatal("both end up with the same sign-in")
+	}
+}
+
+// The token is a bearer token: it goes only to the server it was made for.
+func TestASignInIsOnlyUsedForItsOwnServer(t *testing.T) {
+	s := oauthtest.New()
+	defer s.Close()
+	v := newVault(t)
+	signedIn(t, s, v)
+	src := &Source{Vault: v, Server: "mail"}
+	if err := src.CheckURL(s.MCPURL()); err != nil {
+		t.Fatal(err)
+	}
+	if err := src.CheckURL(strings.ToUpper(s.URL[:7]) + s.URL[7:] + "/mcp/"); err != nil {
+		t.Fatalf("the same address written differently: %v", err)
+	}
+	for _, other := range []string{"https://evil.example/mcp", s.URL + "/other", "http://127.0.0.1:1/mcp", "not a url", ""} {
+		err := src.CheckURL(other)
+		if err == nil || !strings.Contains(err.Error(), "tal connect mail") {
+			t.Errorf("%q: %v", other, err)
+		}
+	}
+	if err := (&Source{Vault: v, Server: "unknown"}).CheckURL(s.MCPURL()); !errors.Is(err, ErrNotSignedIn) {
+		t.Fatalf("%v", err)
 	}
 }

@@ -39,9 +39,10 @@ type liveReply struct {
 	interval time.Duration
 	logf     func(format string, args ...any)
 
-	mu   sync.Mutex
-	text []rune // everything streamed in this segment
-	done int    // runes of text already placed in earlier, finished messages
+	mu     sync.Mutex
+	capped bool   // the segment reached maxReplyParts messages' worth, and the rest is being dropped
+	text   []rune // everything streamed in this segment
+	done   int    // runes of text already placed in earlier, finished messages
 
 	wake chan struct{}
 	quit chan struct{}
@@ -71,7 +72,13 @@ func newLiveReply(ctx context.Context, t Transport, chatID int64, interval time.
 // onText receives the next piece of the model's reply.
 func (l *liveReply) onText(s string) {
 	l.mu.Lock()
-	l.text = append(l.text, []rune(s)...)
+	if limit := maxReplyParts * l.t.MaxMessage(); !l.capped {
+		l.text = append(l.text, []rune(s)...)
+		if len(l.text) > limit {
+			l.text = append(l.text[:limit], []rune(cutNote(maxReplyParts))...)
+			l.capped = true // a model that will not stop must not turn into thousands of messages
+		}
+	}
 	l.mu.Unlock()
 	select {
 	case l.wake <- struct{}{}:
@@ -112,7 +119,7 @@ func (l *liveReply) endSegment() {
 	defer l.flushMu.Unlock()
 	l.flushFinal()
 	l.mu.Lock()
-	l.text, l.done = nil, 0
+	l.text, l.done, l.capped = nil, 0, false
 	l.mu.Unlock()
 	l.msgID, l.shown, l.segShown, l.carry = 0, "", false, ""
 }

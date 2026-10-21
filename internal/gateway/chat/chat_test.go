@@ -167,15 +167,59 @@ func TestCommand(t *testing.T) {
 	}
 }
 
-func TestFormatArgs(t *testing.T) {
-	if got := formatArgs(`{"command":"ls -la\necho hi"}`); got != "command: ls -la\necho hi" {
-		t.Fatalf("got %q", got)
+func sentText(f *fakeService) string {
+	var b strings.Builder
+	for _, ev := range f.log() {
+		b.WriteString(ev.Text + "\n")
 	}
-	if got := formatArgs("not json"); got != "not json" {
-		t.Fatalf("got %q", got)
+	return b.String()
+}
+
+func TestTheApprovalBodyIsNeverCutOffSilently(t *testing.T) {
+	fake := newFakeService(20000, false)
+	e := &Engine{T: fake, root: context.Background()}
+	// Short: shown as it is, the target first.
+	body, ok := e.approvalBody(1, `{"content":"hi","path":"/tmp/x"}`)
+	if !ok || body != "path: /tmp/x\ncontent: hi" {
+		t.Fatalf("%q %v", body, ok)
 	}
-	if got := formatArgs(`{"content":"` + strings.Repeat("x", 2000) + `"}`); len([]rune(got)) > approvalArgsMax+1 {
-		t.Fatalf("not truncated: %d runes", len([]rune(got)))
+	// Long: all of it is sent first, and the question points at it.
+	long := strings.Repeat("x", 2000)
+	body, ok = e.approvalBody(1, `{"path":"/home/me/.zshrc","content":"`+long+`"}`)
+	sent := sentText(fake)
+	if !ok || !strings.Contains(sent, long) || !strings.Contains(sent, "path: /home/me/.zshrc") || !strings.Contains(body, "the whole request is in the message above") {
+		t.Fatalf("the full text must go out before the question:\nsent: %.200q\nbody: %.200q", sent, body)
+	}
+	if !strings.HasPrefix(body, "path: /home/me/.zshrc") {
+		t.Fatalf("the question still starts with the target: %.100q", body)
+	}
+	// Too long to check: refused, and the user is told why.
+	fake = newFakeService(20000, false)
+	e = &Engine{T: fake, root: context.Background()}
+	if _, ok := e.approvalBody(1, `{"command":"`+strings.Repeat("y", approvalArgsHard+1)+`"}`); ok {
+		t.Fatal("a request nobody can read must not be put to them")
+	}
+	if !strings.Contains(sentText(fake), "did not run it") {
+		t.Fatal("the user is told")
+	}
+}
+
+func TestApprovalTokensAreUnguessableAndUnique(t *testing.T) {
+	taken := map[string]*pendingApproval{}
+	seen := map[string]bool{}
+	for i := 0; i < 1000; i++ {
+		tok := newToken(taken)
+		if len(tok) != 16 || seen[tok] || strings.ContainsAny(tok, ":") {
+			t.Fatalf("%q", tok)
+		}
+		seen[tok] = true
+		taken[tok] = &pendingApproval{}
+	}
+	if _, _, ok := ParseApproval(ApprovalData(newToken(nil), ChoiceAllow)); !ok {
+		t.Fatal("a token fits in the button data")
+	}
+	if tok := newToken(nil); tok == "1" || tok == "2" {
+		t.Fatal("not a counter, which restarts at 1 after the gateway does")
 	}
 }
 

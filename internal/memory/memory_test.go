@@ -1,6 +1,8 @@
 package memory
 
 import (
+	"database/sql"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -91,4 +93,75 @@ func TestSessionSearch(t *testing.T) {
 	if _, err := s.Search("!!!", 5, live); err == nil {
 		t.Fatal("query without words should error")
 	}
+}
+
+// With more than one person on the allowlist, one chat must not be able to search another's history.
+func TestAChatSearchesOnlyItsOwnHistory(t *testing.T) {
+	s, err := OpenSessions(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	alice, _ := s.StartFor("discord:1")
+	bob, _ := s.StartFor("discord:2")
+	local, _ := s.Start()
+	s.Add(alice, "user", "alice's secret plan: pineapple")
+	s.Add(bob, "user", "bob's secret plan: pineapple too")
+	s.Add(local, "user", "the owner's pineapple note")
+
+	count := func(owner string) int {
+		hits, err := s.SearchFor(owner, "pineapple", 20, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(hits)
+	}
+	if count("discord:1") != 1 || count("discord:2") != 1 {
+		t.Fatalf("each chat sees only its own: %d %d", count("discord:1"), count("discord:2"))
+	}
+	if count("telegram:1") != 0 {
+		t.Fatal("the same number on another service is another chat")
+	}
+	if count("") != 3 {
+		t.Fatalf("the command line is the person who runs Talaria and sees everything: %d", count(""))
+	}
+	hits, _ := s.Search("pineapple", 20, "")
+	if len(hits) != 3 {
+		t.Fatal("Search is the unscoped form")
+	}
+}
+
+// A history made before sessions had owners keeps working: its sessions belong to no chat.
+func TestAnOlderHistoryIsMigrated(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, _ := sql.Open("sqlite", path)
+	for _, q := range []string{
+		`CREATE TABLE sessions(id TEXT PRIMARY KEY, started_at INTEGER NOT NULL)`,
+		`CREATE TABLE messages(id INTEGER PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), role TEXT NOT NULL, content TEXT NOT NULL, ts INTEGER NOT NULL)`,
+		`CREATE VIRTUAL TABLE messages_fts USING fts5(content, content='messages', content_rowid='id')`,
+		`CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content); END`,
+		`INSERT INTO sessions VALUES ('old', 1)`,
+		`INSERT INTO messages(session_id, role, content, ts) VALUES ('old', 'user', 'a kiwi from before', 1)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	s, err := OpenSessions(path)
+	if err != nil {
+		t.Fatalf("an older database must open: %v", err)
+	}
+	defer s.Close()
+	if hits, _ := s.Search("kiwi", 5, ""); len(hits) != 1 {
+		t.Fatal("the command line still finds it")
+	}
+	if hits, _ := s.SearchFor("discord:1", "kiwi", 5, ""); len(hits) != 0 {
+		t.Fatal("a chat does not see what belongs to nobody")
+	}
+	s2, err := OpenSessions(path) // and opening again changes nothing
+	if err != nil {
+		t.Fatal(err)
+	}
+	s2.Close()
 }

@@ -8,6 +8,14 @@ import (
 	"strings"
 )
 
+const (
+	maxLine  = 8 << 20  // the longest single line accepted
+	maxEvent = 16 << 20 // the most data one event may gather
+)
+
+// ErrTooLong means a line or event went past the limits above.
+var ErrTooLong = errors.New("event stream line or event is too long")
+
 // Stop, returned from a Read callback, ends reading without an error.
 var Stop = errors.New("stop reading stream")
 
@@ -17,12 +25,14 @@ var Stop = errors.New("stop reading stream")
 func Read(r io.Reader, fn func(data string) error) error {
 	br := bufio.NewReader(r) // not Scanner: events can exceed its token limit
 	var data []string
+	size := 0
 	dispatch := func() (stop bool, err error) {
 		if len(data) == 0 {
 			return false, nil
 		}
 		payload := strings.Join(data, "\n")
 		data = data[:0]
+		size = 0
 		if err := fn(payload); err != nil {
 			if errors.Is(err, Stop) {
 				return true, nil
@@ -33,7 +43,10 @@ func Read(r io.Reader, fn func(data string) error) error {
 	}
 
 	for {
-		line, readErr := br.ReadString('\n')
+		line, readErr := readLine(br)
+		if errors.Is(readErr, ErrTooLong) {
+			return readErr
+		}
 		line = strings.TrimRight(line, "\r\n")
 		switch {
 		case line == "":
@@ -41,6 +54,9 @@ func Read(r io.Reader, fn func(data string) error) error {
 				return err
 			}
 		case strings.HasPrefix(line, "data:"):
+			if size += len(line); size > maxEvent {
+				return ErrTooLong
+			}
 			data = append(data, strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
 		}
 		if readErr != nil {
@@ -50,5 +66,22 @@ func Read(r io.Reader, fn func(data string) error) error {
 			}
 			return readErr
 		}
+	}
+}
+
+// readLine reads up to and including a newline, failing with ErrTooLong rather than
+// buffering a line without end.
+func readLine(br *bufio.Reader) (string, error) {
+	var sb strings.Builder
+	for {
+		part, err := br.ReadSlice('\n')
+		sb.Write(part)
+		if sb.Len() > maxLine {
+			return "", ErrTooLong
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		return sb.String(), err
 	}
 }

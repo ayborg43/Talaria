@@ -346,6 +346,12 @@ func (p *Page) Click(ctx context.Context, ref int) error {
 	if err != nil {
 		return err
 	}
+	if loc.Covered {
+		// The user approved a click on this element. Something else is drawn over it, so a click would
+		// land on that instead: a transparent frame over a harmless-looking button is how a page gets
+		// a click it was not given. Not clicking is the only safe answer.
+		return fmt.Errorf("something else is on top of that element (%s), so a click would land on that instead of what you approved. Nothing was clicked. Take a snapshot to see what is in the way (a pop-up or banner?)", loc.Hit)
+	}
 	_, before := p.loadState()
 	for _, ev := range []map[string]any{
 		{"type": "mouseMoved", "x": loc.X, "y": loc.Y},
@@ -355,9 +361,6 @@ func (p *Page) Click(ctx context.Context, ref int) error {
 		if _, err := p.call(ctx, "Input.dispatchMouseEvent", ev); err != nil {
 			return err
 		}
-	}
-	if loc.Covered {
-		p.note(fmt.Sprintf("Something else was on top of that element, so the click landed on %s. Take a snapshot to see what is in the way (a pop-up or banner?).", loc.Hit))
 	}
 	p.settle(ctx, before)
 	return nil

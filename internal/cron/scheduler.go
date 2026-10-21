@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"talaria/internal/metrics"
 	"time"
 )
 
@@ -263,6 +264,20 @@ func (s *Scheduler) runJob(ctx, rctx context.Context, r *run, j Job) {
 		}
 		s.Deliver(ctx, j.ChatID, fmt.Sprintf("🛑 %s was cancelled.", j.Name))
 		return
+	}
+	kind := j.Kind
+	if kind == "" {
+		kind = "job"
+	}
+	switch {
+	case errors.Is(err, ErrDrop):
+		metrics.Inc("talaria_jobs_total", "kind", kind, "result", "dropped")
+	case err != nil:
+		metrics.Inc("talaria_jobs_total", "kind", kind, "result", "error")
+	case strings.HasPrefix(strings.TrimSpace(reply), Silent):
+		metrics.Inc("talaria_jobs_total", "kind", kind, "result", "silent")
+	default:
+		metrics.Inc("talaria_jobs_total", "kind", kind, "result", "delivered")
 	}
 	if errors.Is(err, ErrDrop) {
 		s.logf("cron: dropping job %s", j.ID)

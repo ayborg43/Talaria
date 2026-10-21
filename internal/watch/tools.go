@@ -69,6 +69,11 @@ func RegisterTools(r *tool.Registry, b Binding) {
 			"id":{"type":"string"},
 			"action":{"type":"string","enum":["pause","resume","delete"]},
 			"every_minutes":{"type":"integer"}},"required":["id"]}`),
+		// Resuming gives a watch a fresh allowance and deleting one ends it: the user decides those.
+		NeedsApprovalFor: func(raw json.RawMessage) bool {
+			var a struct{ Action string }
+			return json.Unmarshal(raw, &a) != nil || a.Action == "resume" || a.Action == "delete"
+		},
 		Run: b.update,
 	})
 }

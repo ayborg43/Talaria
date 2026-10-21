@@ -99,6 +99,7 @@ func RegisterBuiltinsIn(r *Registry, env execenv.Env) {
 		Description:   "Run a shell command with sh -c (60s timeout) and return combined stdout and stderr." + where,
 		Schema:        json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}`),
 		NeedsApproval: true,
+		Egress:        always, // a command can send anything anywhere
 		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var a struct{ Command string }
 			if err := json.Unmarshal(raw, &a); err != nil {
@@ -124,3 +125,9 @@ func RegisterBuiltinsIn(r *Registry, env execenv.Env) {
 		},
 	})
 }
+
+// always is an Egress check for a tool whose every call could send something out.
+func always(json.RawMessage) bool { return true }
+
+// Always is the same, for tools in other packages.
+var Always = always

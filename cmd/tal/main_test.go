@@ -90,7 +90,7 @@ func TestGatewayEnvironments(t *testing.T) {
 	apply := func(_ *agent.Agent, env execenv.Env) { applied = append(applied, env.Describe()) }
 	logf := func(string, ...any) {}
 
-	pool := gatewayPool(cfg, "sandbox", execenv.Local{}, os.Getenv, logf)
+	pool := gatewayPool(cfg, "sandbox", execenv.Local{}, nil, os.Getenv, logf)
 	defer pool.Close()
 	envs := gatewayEnvironments(cfg, cfg.Telegram.Environments, "sandbox", pool, apply)
 	// The list is what the config allows plus the default, sorted, with no duplicates, and
@@ -132,7 +132,7 @@ func TestGatewayEnvironments(t *testing.T) {
 	// A start that fails says why and does not stick.
 	t.Setenv("PATH", t.TempDir())
 	cfg2 := &config.Config{Environments: map[string]execenv.Spec{"box": {Type: "ssh", Host: "h"}}, Telegram: config.Telegram{Environments: []string{"box"}}}
-	pool2 := gatewayPool(cfg2, "local", nil, os.Getenv, logf)
+	pool2 := gatewayPool(cfg2, "local", nil, nil, os.Getenv, logf)
 	defer pool2.Close()
 	envs2 := gatewayEnvironments(cfg2, cfg2.Telegram.Environments, "local", pool2, apply)
 	if _, err := envs2.Get(context.Background(), "box"); err == nil || !strings.Contains(err.Error(), "ssh is not installed") {
@@ -145,7 +145,7 @@ func TestGatewayEnvironments(t *testing.T) {
 
 func TestGatewayEnvironmentsOffUnlessConfigured(t *testing.T) {
 	cfg := &config.Config{Environments: map[string]execenv.Spec{"sandbox": {Type: "docker", Image: "x"}}}
-	pool := gatewayPool(cfg, "local", nil, os.Getenv, func(string, ...any) {})
+	pool := gatewayPool(cfg, "local", nil, nil, os.Getenv, func(string, ...any) {})
 	defer pool.Close()
 	if envs := gatewayEnvironments(cfg, cfg.Telegram.Environments, "local", pool, nil); envs != nil {
 		t.Fatal("with telegram.environments empty, chats cannot switch")
@@ -166,7 +166,7 @@ func TestServicesOfferTheirOwnEnvironmentsOverOneSharedPool(t *testing.T) {
 		Telegram: config.Telegram{Environments: []string{"sandbox"}},
 		Discord:  config.Discord{Environments: []string{"build", "local"}},
 	}
-	pool := gatewayPool(cfg, "local", nil, os.Getenv, func(string, ...any) {})
+	pool := gatewayPool(cfg, "local", nil, nil, os.Getenv, func(string, ...any) {})
 	defer pool.Close()
 	tg := gatewayEnvironments(cfg, cfg.Telegram.Environments, "local", pool, nil)
 	dc := gatewayEnvironments(cfg, cfg.Discord.Environments, "local", pool, nil)
@@ -204,5 +204,16 @@ func TestParseIDsAcceptsDiscordSnowflakes(t *testing.T) {
 	}
 	if _, err := parseIDs("alice"); err == nil {
 		t.Fatal("a name is not an ID")
+	}
+}
+
+func TestAllowlistIDsFromTheEnvironmentMustBePositive(t *testing.T) {
+	if ids, err := parseIDs("12, 34 ,,56"); err != nil || len(ids) != 3 || !ids[34] {
+		t.Fatalf("%v %v", ids, err)
+	}
+	for _, bad := range []string{"0", "-1", "12,0", "abc", "1.5"} {
+		if _, err := parseIDs(bad); err == nil {
+			t.Errorf("%q was accepted: user 0 is what a missing ID parses to", bad)
+		}
 	}
 }

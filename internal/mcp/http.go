@@ -63,8 +63,12 @@ type httpConn struct {
 	session string
 }
 
+// noRedirect hands a redirect back as the reply: following it would send the headers
+// (API keys), the session and the JSON-RPC body, tool arguments included, wherever it points.
+func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
 func newHTTPConn(s Server) *httpConn {
-	return &httpConn{url: s.URL, headers: s.Headers, hc: &http.Client{}}
+	return &httpConn{url: s.URL, headers: s.Headers, hc: &http.Client{CheckRedirect: noRedirect}}
 }
 
 func (c *httpConn) isHTTP() bool { return true }

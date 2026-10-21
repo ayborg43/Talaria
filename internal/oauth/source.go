@@ -59,6 +59,26 @@ func (s *Source) get() (vault.Credential, error) {
 	return c, nil
 }
 
+func (s *Source) stale(o *vault.OAuthData) bool {
+	return o.AccessToken == "" || (!o.Expiry.IsZero() && !s.now().Add(renewBefore).Before(o.Expiry))
+}
+
+// CheckURL refuses to use the sign-in for any server but the one it was made for.
+// The token is a bearer token: sent to another address, it would be handed to
+// whoever runs that one. This matters when the config's url changes after signing in.
+func (s *Source) CheckURL(raw string) error {
+	c, err := s.get()
+	if err != nil {
+		return err
+	}
+	want, err1 := canonical(c.OAuth.Resource)
+	got, err2 := canonical(raw)
+	if err1 != nil || err2 != nil || want != got {
+		return fmt.Errorf("the sign-in for %s was made for %s, not for %s: check the url in the config, or run `tal connect %s` again to sign in to the new address", s.Server, c.OAuth.Resource, raw, s.Server)
+	}
+	return nil
+}
+
 // Token returns an access token to send, renewing it first if it is about to expire.
 func (s *Source) Token(ctx context.Context) (string, error) {
 	s.mu.Lock()
@@ -67,13 +87,8 @@ func (s *Source) Token(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	o := c.OAuth
-	stale := o.AccessToken == "" || (!o.Expiry.IsZero() && !s.now().Add(renewBefore).Before(o.Expiry))
-	if stale {
-		if o.RefreshToken == "" {
-			return "", fmt.Errorf("%w: run `tal connect %s`", ErrSignedOut, s.Server)
-		}
-		if c, err = s.refreshLocked(ctx, c); err != nil {
+	if s.stale(c.OAuth) {
+		if c, err = s.renew(ctx, ""); err != nil {
 			return "", err
 		}
 	}
@@ -93,41 +108,49 @@ func (s *Source) Refresh(ctx context.Context) error {
 	if s.lastSent != "" && c.OAuth.AccessToken != s.lastSent { // renewed since, perhaps by another process
 		return nil
 	}
-	if c.OAuth.RefreshToken == "" {
-		return fmt.Errorf("%w: run `tal connect %s`", ErrSignedOut, s.Server)
-	}
-	_, err = s.refreshLocked(ctx, c)
+	_, err = s.renew(ctx, c.OAuth.AccessToken)
 	return err
 }
 
-func (s *Source) refreshLocked(ctx context.Context, c vault.Credential) (vault.Credential, error) {
-	o := c.OAuth
-	md := Metadata{TokenEndpoint: o.TokenEndpoint}
-	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {o.RefreshToken}}
-	if o.Resource != "" {
-		form.Set("resource", o.Resource)
-	}
-	tok, err := exchange(ctx, s.hc(), md, Client{ID: o.ClientID, Secret: o.ClientSecret}, form)
-	if err != nil {
-		if errors.Is(err, ErrSignedOut) {
-			return c, fmt.Errorf("%w: run `tal connect %s`", ErrSignedOut, s.Server)
-		}
-		return c, err
-	}
-	now := s.now()
+// renew gets a new token from the server, holding the vault's lock (the file lock
+// too) from reading the refresh token to saving the new one. Two processes that
+// both find the token old therefore take turns: the second sees what the first
+// saved and has nothing to do. Refresh tokens that rotate would otherwise be spent
+// twice, and the second use signs the user out.
+//
+// refused is a token the server turned down, "" if the token is simply old.
+func (s *Source) renew(ctx context.Context, refused string) (vault.Credential, error) {
 	updated, err := s.Vault.Update(s.name(), func(c *vault.Credential) error {
-		c.OAuth.AccessToken = tok.AccessToken
-		c.OAuth.Expiry = tok.expiry(now)
+		o := c.OAuth
+		if !s.stale(o) && (refused == "" || o.AccessToken != refused) {
+			return nil // another process renewed it while this one waited for the lock
+		}
+		if o.RefreshToken == "" {
+			return fmt.Errorf("%w: run `tal connect %s`", ErrSignedOut, s.Server)
+		}
+		form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {o.RefreshToken}}
+		if o.Resource != "" {
+			form.Set("resource", o.Resource)
+		}
+		tok, err := exchange(ctx, s.hc(), Metadata{TokenEndpoint: o.TokenEndpoint}, Client{ID: o.ClientID, Secret: o.ClientSecret}, form)
+		if err != nil {
+			if errors.Is(err, ErrSignedOut) {
+				return fmt.Errorf("%w: run `tal connect %s`", ErrSignedOut, s.Server)
+			}
+			return err
+		}
+		o.AccessToken = tok.AccessToken
+		o.Expiry = tok.expiry(s.now())
 		if tok.RefreshToken != "" { // servers that rotate them send a new one; the old one is then dead
-			c.OAuth.RefreshToken = tok.RefreshToken
+			o.RefreshToken = tok.RefreshToken
 		}
 		if tok.Scope != "" {
-			c.OAuth.Scopes = strings.Fields(tok.Scope)
+			o.Scopes = strings.Fields(tok.Scope)
 		}
 		return nil
 	})
 	if err != nil {
-		return c, fmt.Errorf("the token was renewed but could not be saved: %w", err)
+		return vault.Credential{}, err
 	}
 	return updated, nil
 }

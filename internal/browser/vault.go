@@ -36,7 +36,8 @@ func RegisterVault(r *tool.Registry, m *Manager, owner string, creds Credentials
 		Run:    t.vaultList,
 	})
 	r.Register(tool.Tool{
-		Name: "browser_fill",
+		Untrusted: true,
+		Name:      "browser_fill",
 		Description: "Fill a saved credential into a field of the current page without seeing it: its username, its password, or (for a saved key) its value. " +
 			"It works only on the sites the credential was saved for, and a password or value goes only into a password field. " +
 			"To log in: fill the username field, fill the password field, then click the sign-in button. Returns the page afterwards.",
@@ -120,6 +121,9 @@ func (t *toolset) fill(ctx context.Context, raw json.RawMessage) (string, error)
 	}
 	if err := p.TypeInto(ctx, a.Ref, value, true, false, mustBe); err != nil {
 		return "", err
+	}
+	if secret {
+		t.m.NoteSecret(t.owner, here)
 	}
 	what := a.Field + " of " + cred.Name
 	return t.finish(ctx, p, fmt.Sprintf("Filled the %s into %s.", what, Brief(el)))

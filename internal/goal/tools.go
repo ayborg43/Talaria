@@ -79,6 +79,12 @@ func RegisterTools(r *tool.Registry, b Binding) {
 			"check_in_minutes":{"type":"integer"},
 			"status":{"type":"string","enum":["open","paused","done","dropped"]}},
 			"required":["id"]}`),
+		// Reopening a goal gives it a fresh allowance of check-ins, and dropping one ends it: the user
+		// decides those. Notes, steps and pausing or finishing it are the agent's to do on its own.
+		NeedsApprovalFor: func(raw json.RawMessage) bool {
+			var a struct{ Status string }
+			return json.Unmarshal(raw, &a) != nil || a.Status == "open" || a.Status == "dropped"
+		},
 		Run: b.update,
 	})
 }

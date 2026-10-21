@@ -9,8 +9,10 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"talaria/internal/metrics"
 	"talaria/internal/provider"
 	"talaria/internal/tool"
 )
@@ -68,8 +70,20 @@ type Gate interface {
 // prompt: "write_file (subagent notes)". BaseTool undoes it.
 func Labelled(tool, label string) string { return tool + " (subagent " + label + ")" }
 
-// BaseTool is the tool a possibly Labelled name refers to.
+// afterOutside marks an approval prompt that is asked only because the conversation
+// has read outside content.
+const afterOutside = " (after reading outside content)"
+
+// Flagged names a tool as it appears in a prompt that is asked because of what the
+// conversation has read.
+func Flagged(tool string) string { return tool + afterOutside }
+
+// IsFlagged reports whether a prompt's tool name came from Flagged.
+func IsFlagged(name string) bool { return strings.Contains(name, afterOutside) }
+
+// BaseTool is the tool a possibly Labelled or Flagged name refers to.
 func BaseTool(name string) string {
+	name = strings.Replace(name, afterOutside, "", 1)
 	if i := strings.Index(name, " (subagent "); i > 0 {
 		return name[:i]
 	}
@@ -94,6 +108,14 @@ type Agent struct {
 	Approve func(name, args string) bool
 	// Gate, if set, rules on every tool call, scrubs results and keeps a record.
 	Gate Gate
+	// BeforeModel, if set, is asked before every request to the model, and may refuse it: this is
+	// where a budget on model calls is enforced.
+	BeforeModel func() error
+	// GuardUntrusted makes calls that could send something out ask first once this
+	// conversation has read outside content (see tool.Tool.Untrusted and Egress),
+	// whatever would normally be allowed, except where a permission rule in the
+	// config says "allow": that is the user's own explicit choice.
+	GuardUntrusted bool
 	// Label names this agent in the record when it is a subagent.
 	Label string
 	// OnToolStart, if set, is called just before a tool runs, after any approval.
@@ -108,7 +130,15 @@ type Agent struct {
 	OnText func(delta string)
 
 	messages []provider.Message
+	tainted  int32 // set once an untrusted tool has run; atomic, as parallel tools update it
 }
+
+// MarkUntrusted records that the conversation has taken in text from outside, as
+// when a watch hands the model what a service returned.
+func (a *Agent) MarkUntrusted() { atomic.StoreInt32(&a.tainted, 1) }
+
+// ReadOutside reports whether the conversation has taken in outside content.
+func (a *Agent) ReadOutside() bool { return atomic.LoadInt32(&a.tainted) == 1 }
 
 func (a *Agent) add(m provider.Message) {
 	a.messages = append(a.messages, m)
@@ -131,12 +161,24 @@ func (a *Agent) Run(ctx context.Context, input string) (string, error) {
 	}
 
 	for i := 0; i < steps; i++ {
+		if a.BeforeModel != nil {
+			if err := a.BeforeModel(); err != nil {
+				return "", err
+			}
+		}
+		began := time.Now()
 		reply, err := a.Provider.Chat(ctx, provider.Request{
 			Model:    a.Model,
 			Messages: a.requestMessages(),
 			Tools:    a.Tools.Specs(),
 			OnText:   a.OnText,
 		})
+		result := "ok"
+		if err != nil {
+			result = "error"
+		}
+		metrics.Inc("talaria_model_calls_total", "result", result)
+		metrics.Observe("talaria_model_call", time.Since(began))
 		if err != nil {
 			return "", err
 		}
@@ -211,6 +253,13 @@ func (a *Agent) runCalls(ctx context.Context, calls []provider.ToolCall) {
 		a.add(provider.Message{Role: provider.RoleTool, ToolCallID: call.ID, Content: result.text, Images: result.images})
 	}
 
+	// Before any runs, so calls made together are judged together. A tool that could itself send something
+	// out is left to mark the conversation when it has run: marking it first would make it ask about itself.
+	for _, call := range calls {
+		if t, ok := a.Tools.Get(call.Name); ok && t.Untrusted && t.Egress == nil {
+			a.MarkUntrusted()
+		}
+	}
 	for i := 0; i < len(calls); {
 		j := i
 		for j < len(calls) && a.parallel(calls[j]) {
@@ -272,6 +321,7 @@ type execResult struct {
 func (a *Agent) execute(ctx context.Context, call provider.ToolCall) (res execResult) {
 	entry := Entry{Tool: call.Name, Args: call.Arguments, Label: a.Label, Status: "not run"}
 	defer func() {
+		metrics.Inc("talaria_tool_calls_total", "status", strings.ReplaceAll(entry.Status, " ", "_"))
 		entry.Result = res.text
 		if a.Gate != nil {
 			a.Gate.Record(entry)
@@ -287,27 +337,41 @@ func (a *Agent) execute(ctx context.Context, call provider.ToolCall) (res execRe
 	if t.LogArgs != nil {
 		entry.Args = t.LogArgs([]byte(call.Arguments))
 	}
+	needs := t.NeedsApproval || (t.NeedsApprovalFor != nil && t.NeedsApprovalFor(json.RawMessage(call.Arguments)))
 	verdict := Verdict{Via: "auto"}
 	if a.Gate != nil {
-		verdict = a.Gate.Verdict(call.Name, t.NeedsApproval)
-	} else if t.NeedsApproval {
+		verdict = a.Gate.Verdict(call.Name, needs)
+	} else if needs {
 		verdict.Action = Ask
+	}
+	flagged := false
+	if a.GuardUntrusted && verdict.Action == Allow && verdict.Via != "rule" && a.ReadOutside() && t.Egress != nil && t.Egress(json.RawMessage(call.Arguments)) {
+		verdict = Verdict{Action: Ask, Via: "outside content"}
+		flagged = true
 	}
 	entry.Via, entry.Rule = verdict.Via, verdict.Rule
 	switch verdict.Action {
 	case Deny:
 		return execResult{text: "error: the permission rules do not allow this tool"}
 	case Ask:
-		entry.Via = "prompt"
+		if !flagged {
+			entry.Via = "prompt"
+		}
 		shown := call.Arguments
 		if t.Describe != nil { // what the user is asked about is what the call will do, not its raw arguments
 			if d := t.Describe([]byte(call.Arguments)); d != "" {
 				shown = d
 			}
 		}
-		if a.Approve == nil || !a.Approve(call.Name, shown) {
+		name := call.Name
+		if flagged {
+			name = Flagged(name)
+		}
+		if a.Approve == nil || !a.Approve(name, shown) {
+			metrics.Inc("talaria_approvals_total", "decision", "denied")
 			return execResult{text: "error: the user denied this tool call"}
 		}
+		metrics.Inc("talaria_approvals_total", "decision", "allowed")
 	}
 	entry.Allowed = true
 
@@ -328,6 +392,9 @@ func (a *Agent) execute(ctx context.Context, call provider.ToolCall) (res execRe
 		return execResult{text: a.scrub("error: " + err.Error())}
 	}
 	entry.Status = "ok"
+	if t.Untrusted {
+		a.MarkUntrusted()
+	}
 	text := a.scrub(out.Text) // before cutting, so a secret is never left half-shown
 	if len(text) > maxToolOutput {
 		text = text[:maxToolOutput] + "\n[truncated]"

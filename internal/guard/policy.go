@@ -11,8 +11,11 @@ import (
 
 // DefaultNoRemember lists the tools the "always allow" button is not offered
 // for unless the config says otherwise. A shell command can do anything, so
-// approving one is not approving the next.
-var DefaultNoRemember = []string{"shell"}
+// approving one is not approving the next. The rest are the ones whose effects
+// outlast the conversation or run with nobody watching: a file written (a
+// startup script, a setting) acts later, and a saved skill, scheduled job, task,
+// goal or watch steers the agent when no one is there to approve what it does.
+var DefaultNoRemember = []string{"shell", "write_file", "skill_save", "cron_add", "task_start", "goal_create", "watch_create", "watch_update", "goal_update"}
 
 type rule struct {
 	pattern string // as written: a tool name, or a name ending in *

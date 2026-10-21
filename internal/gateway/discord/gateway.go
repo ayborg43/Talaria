@@ -57,6 +57,8 @@ type Gateway struct {
 	// Permissions, if set, adds an Always button to approval prompts and the
 	// permissions and log commands.
 	Permissions chat.Permissions
+	// MessagesPerMinute limits how fast a chat may give the agent work; 0 is no limit.
+	MessagesPerMinute int
 
 	// Commands, OnUserMessage and StopBackground are passed to the chat engine:
 	// extra commands (/tasks, /goals), a hook for when a user speaks, and a way
@@ -90,6 +92,7 @@ func (g *Gateway) setup() {
 			Environment: g.Environment, Environments: g.Environments,
 			Backends: g.Backends, Prefs: g.Prefs, Permissions: g.Permissions,
 			Commands: g.Commands, OnUserMessage: g.OnUserMessage, StopBackground: g.StopBackground,
+			MessagesPerMinute: g.MessagesPerMinute,
 		}
 	})
 }
@@ -187,7 +190,10 @@ func (g *Gateway) onInteraction(ctx context.Context, data json.RawMessage) {
 	case in.Member != nil:
 		user = in.Member.User
 	}
-	uid, _ := strconv.ParseInt(user.ID, 10, 64)
+	uid, perr := strconv.ParseInt(user.ID, 10, 64)
+	if perr != nil || uid <= 0 {
+		return // no user, or one that is not an ID: never "user 0", which a sloppy allowlist could contain
+	}
 
 	var err error
 	decision, choice := g.eng.Decide(token, uid, g.tr.userOf(in.ChannelID), choice)

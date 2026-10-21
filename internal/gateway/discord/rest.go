@@ -235,7 +235,7 @@ var noMentions = map[string]any{"parse": []string{}}
 
 // CreateMessage posts text, with buttons if components is not empty.
 func (a *API) CreateMessage(ctx context.Context, channelID, content string, components []Component) (Message, error) {
-	body := map[string]any{"content": content, "allowed_mentions": noMentions}
+	body := map[string]any{"content": content, "allowed_mentions": noMentions, "flags": flagSuppressEmbeds}
 	if len(components) > 0 {
 		body["components"] = components
 	}
@@ -246,7 +246,7 @@ func (a *API) CreateMessage(ctx context.Context, channelID, content string, comp
 
 // EditMessage replaces a message's text and removes its buttons.
 func (a *API) EditMessage(ctx context.Context, channelID, messageID, content string) error {
-	body := map[string]any{"content": content, "allowed_mentions": noMentions, "components": []Component{}}
+	body := map[string]any{"content": content, "allowed_mentions": noMentions, "components": []Component{}, "flags": flagSuppressEmbeds}
 	return a.call(ctx, http.MethodPatch, "/channels/"+channelID+"/messages/"+messageID, body, nil)
 }
 
@@ -268,16 +268,19 @@ const (
 	respMessage       = 4 // reply with a new message
 	respUpdateMessage = 7 // replace the message the button is on
 	flagEphemeral     = 64
+	// flagSuppressEmbeds stops Discord fetching a link in a message to show a card for it, which is a
+	// request, made by Discord, to whatever address the model wrote.
+	flagSuppressEmbeds = 4
 )
 
 // Respond answers a button press. Discord wants an answer within three seconds.
 func (a *API) Respond(ctx context.Context, in Interaction, kind int, content string, ephemeral bool) error {
-	data := map[string]any{"content": content, "allowed_mentions": noMentions}
+	data := map[string]any{"content": content, "allowed_mentions": noMentions, "flags": flagSuppressEmbeds}
 	switch {
 	case kind == respUpdateMessage:
 		data["components"] = []Component{}
 	case ephemeral:
-		data["flags"] = flagEphemeral
+		data["flags"] = flagEphemeral | flagSuppressEmbeds
 	}
 	err := a.call(ctx, http.MethodPost, "/interactions/"+in.ID+"/"+in.Token+"/callback", map[string]any{"type": kind, "data": data}, nil)
 	if err != nil && in.Token != "" { // the interaction token is in the URL, and works for a while

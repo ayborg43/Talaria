@@ -2,21 +2,24 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"talaria/internal/agent"
 	"talaria/internal/execenv"
+	"talaria/internal/metrics"
 )
 
 const (
 	queueDepth      = 8
 	approvalArgsMax = 900
+	// approvalArgsHard is the most that is put to a person to approve at all.
+	approvalArgsHard = 12000
 )
 
 // Engine connects the private chats of one chat service to agents.
@@ -64,6 +67,11 @@ type Engine struct {
 	Backends *Backends
 	Prefs    ChatPrefs
 
+	// MessagesPerMinute limits how fast one chat may give the agent work, a burst of that many
+	// included; 0 is no limit. Commands such as /stop are never limited.
+	MessagesPerMinute int
+
+	lim     limiter
 	root    context.Context
 	workers sync.WaitGroup
 	mu      sync.Mutex
@@ -172,7 +180,9 @@ func (e *Engine) Incoming(chatID, userID int64, text string) {
 	}
 
 	if !e.Allowed[userID] {
-		if cmd == "/start" || cmd == "/whoami" {
+		// Anyone on the internet can write to a bot. Answering each takes a request to the chat
+		// service, and answering a flood of them gets the bot rate limited, or banned.
+		if (cmd == "/start" || cmd == "/whoami") && e.lim.allowStrangerReply(userID) {
 			e.send(chatID, fmt.Sprintf("Not authorized. Your %s user ID is %d. "+
 				"The owner can add it to %s.", e.T.Service(), userID, allowlistVar(e.T.Service())))
 		}
@@ -239,6 +249,14 @@ func (e *Engine) Incoming(chatID, userID int64, text string) {
 			e.send(chatID, c.Run(chatID, args))
 			break
 		}
+		if ok, warn := e.lim.allowMessage(chatID, e.MessagesPerMinute); !ok {
+			metrics.Inc("talaria_messages_total", "gateway", strings.ToLower(e.T.Service()), "result", "rate_limited")
+			if warn {
+				e.send(c.id, fmt.Sprintf("That is more than %d messages a minute, so I am ignoring some. Slow down and I will carry on.", e.MessagesPerMinute))
+			}
+			break
+		}
+		metrics.Inc("talaria_messages_total", "gateway", strings.ToLower(e.T.Service()), "result", "accepted")
 		if e.OnUserMessage != nil {
 			e.OnUserMessage(chatID)
 		}
@@ -423,8 +441,7 @@ func (e *Engine) askApproval(c *chat, name, args string) bool {
 	}
 
 	e.mu.Lock()
-	e.nextID++
-	token := strconv.Itoa(e.nextID)
+	token := newToken(e.pending)
 	p := &pendingApproval{chatID: c.id, tool: name, ch: make(chan Choice, 1)}
 	e.pending[token] = p
 	e.mu.Unlock()
@@ -440,13 +457,13 @@ func (e *Engine) askApproval(c *chat, name, args string) bool {
 	if e.Environments != nil && env != "" && env != execenv.LocalName && (name == "shell" || name == "write_file" || strings.HasPrefix(name, "shell ") || strings.HasPrefix(name, "write_file ")) {
 		where = " in " + env
 	}
-	body := formatArgs(args)
-	if e.T.Markdown() { // show it as written: a command is full of characters that mean something to Markdown
-		body = "```\n" + strings.ReplaceAll(body, "```", "`\u200b``") + "\n```"
+	body, ok := e.approvalBody(c.id, args)
+	if !ok {
+		return false
 	}
 	text := fmt.Sprintf("Allow %s%s?\n%s", name, where, body)
 	tool := agent.BaseTool(name)
-	always := e.Permissions != nil && e.Permissions.Rememberable(tool)
+	always := e.Permissions != nil && e.Permissions.Rememberable(tool) && !agent.IsFlagged(name)
 	msg, err := e.T.SendApproval(ctx, c.id, text, token, always)
 	if err != nil {
 		e.logf("approval prompt failed: %v", err)
@@ -495,7 +512,7 @@ func (e *Engine) Decide(token string, user, chatID int64, choice Choice) (Decisi
 	case !e.Allowed[user] || chatID != p.chatID:
 		return DecisionForbidden, choice
 	}
-	if choice == ChoiceAlways && (e.Permissions == nil || !e.Permissions.Rememberable(agent.BaseTool(p.tool))) {
+	if choice == ChoiceAlways && (e.Permissions == nil || agent.IsFlagged(p.tool) || !e.Permissions.Rememberable(agent.BaseTool(p.tool))) {
 		choice = ChoiceAllow // no such button was offered, so no such answer is valid
 	}
 	select {
@@ -505,32 +522,44 @@ func (e *Engine) Decide(token string, user, chatID int64, choice Choice) (Decisi
 	return DecisionRecorded, choice
 }
 
-// formatArgs shows tool arguments readably: "key: value" lines for a JSON
-// object (so shell commands appear verbatim), raw text otherwise.
-func formatArgs(raw string) string {
-	var obj map[string]any
-	out := raw
-	if json.Unmarshal([]byte(raw), &obj) == nil {
-		keys := make([]string, 0, len(obj))
-		for k := range obj {
-			keys = append(keys, k)
+// newToken makes the name of an approval request: unguessable, so that a button
+// left on screen from before a restart, or one made up, cannot answer a new
+// request.
+func newToken(taken map[string]*pendingApproval) string {
+	for {
+		var b [8]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			panic("no randomness: " + err.Error()) // nothing safe to do without it
 		}
-		sort.Strings(keys)
-		var b strings.Builder
-		for _, k := range keys {
-			if s, ok := obj[k].(string); ok {
-				fmt.Fprintf(&b, "%s: %s\n", k, s)
-			} else {
-				v, _ := json.Marshal(obj[k])
-				fmt.Fprintf(&b, "%s: %s\n", k, v)
-			}
+		t := hex.EncodeToString(b[:])
+		if _, dup := taken[t]; !dup {
+			return t
 		}
-		out = strings.TrimSpace(b.String())
 	}
-	if r := []rune(out); len(r) > approvalArgsMax {
-		out = string(r[:approvalArgsMax]) + "…"
+}
+
+// approvalBody is what the question shows of a call's arguments. All of it must
+// be readable before the answer: a prompt that quietly cut off the end could hide
+// what the user is agreeing to. What fits is shown with the question; a longer
+// request is sent in full just before it; one too long to read at all is refused.
+func (e *Engine) approvalBody(chatID int64, args string) (string, bool) {
+	full := agent.ApprovalText(args)
+	runes := []rune(full)
+	if len(runes) > approvalArgsHard {
+		e.send(chatID, fmt.Sprintf("I was about to ask whether to allow something with %d characters of arguments, which is more than anyone can sensibly check here, so I did not run it. Ask for something smaller, or do it from the terminal.", len(runes)))
+		return "", false
 	}
-	return out
+	fence := func(s string) string {
+		if e.T.Markdown() { // show it as written: a command is full of characters that mean something to Markdown
+			return "```\n" + strings.ReplaceAll(s, "```", "`\u200b``") + "\n```"
+		}
+		return s
+	}
+	if len(runes) <= approvalArgsMax {
+		return fence(full), true
+	}
+	e.send(chatID, "The whole of what you are about to be asked to allow:\n"+fence(full))
+	return fence(string(runes[:approvalArgsMax]) + "\n… (that was the start: the whole request is in the message above)"), true
 }
 
 func (e *Engine) send(chatID int64, text string) { e.Send(e.root, chatID, text) }

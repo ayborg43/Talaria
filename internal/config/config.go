@@ -11,6 +11,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -47,7 +49,7 @@ type Profile struct {
 type Telegram struct {
 	Token        string  `json:"token,omitempty"`
 	TokenEnv     string  `json:"token_env,omitempty"`
-	AllowedUsers []int64 `json:"allowed_users,omitempty"`
+	AllowedUsers UserIDs `json:"allowed_users,omitempty"`
 	// Stream shows replies as they are written, by editing a message in place.
 	// On unless set to false.
 	Stream *bool `json:"stream,omitempty"`
@@ -108,6 +110,46 @@ type Discord struct {
 // StreamReplies reports whether replies are shown as they are written.
 func (d Discord) StreamReplies() bool { return d.Stream == nil || *d.Stream }
 
+// Ops is the health and metrics endpoint. Off unless Listen is set.
+type Ops struct {
+	// Listen is host:port, such as "127.0.0.1:9100". An address that is not on this machine needs TokenEnv.
+	Listen string `json:"listen,omitempty"`
+	// TokenEnv names the environment variable holding a bearer token that /metrics then requires.
+	TokenEnv string `json:"token_env,omitempty"`
+}
+
+// Limits bound what a runaway client, a loop, or something steering the agent could cost.
+type Limits struct {
+	// MessagesPerMinute is how fast one chat may give the agent work, a burst of that size included.
+	// Default 30; negative removes the limit.
+	MessagesPerMinute int `json:"messages_per_minute,omitempty"`
+	// ModelCallsPerHour caps requests to the model across everything Talaria runs, jobs and
+	// watches included. Default 1000; negative removes the limit.
+	ModelCallsPerHour int `json:"model_calls_per_hour,omitempty"`
+}
+
+// Messages is the effective messages-per-minute limit; 0 means none.
+func (l Limits) Messages() int {
+	switch {
+	case l.MessagesPerMinute < 0:
+		return 0
+	case l.MessagesPerMinute == 0:
+		return 30
+	}
+	return l.MessagesPerMinute
+}
+
+// ModelCalls is the effective hourly cap on model requests; 0 means none.
+func (l Limits) ModelCalls() int {
+	switch {
+	case l.ModelCallsPerHour < 0:
+		return 0
+	case l.ModelCallsPerHour == 0:
+		return 1000
+	}
+	return l.ModelCallsPerHour
+}
+
 // Policy holds the permission rules and the activity log's settings.
 type Policy struct {
 	// Rules say what happens when the agent calls a tool: "allow" (run it),
@@ -121,13 +163,27 @@ type Policy struct {
 	NoRemember *[]string `json:"no_remember,omitempty"`
 	// Audit keeps the log of tool calls (audit.log). On unless set to false.
 	Audit *bool `json:"audit,omitempty"`
+	// UntrustedContent says what happens once a conversation has read something from outside (a
+	// web page, a mail, a connected service's reply), which may carry instructions meant for the
+	// agent: "ask" (the default) makes anything that could send something out, run a command or
+	// leave a note behind ask first, even if it would normally run, except where a rule above says
+	// "allow"; "off" does not.
+	UntrustedContent string `json:"untrusted_content,omitempty"`
 }
+
+// GuardUntrusted reports whether calls that could send something out ask once outside content was read.
+func (p Policy) GuardUntrusted() bool { return p.UntrustedContent != "off" }
 
 // AuditEnabled reports whether tool calls are logged.
 func (p Policy) AuditEnabled() bool { return p.Audit == nil || *p.Audit }
 
 // Parse validates the rules.
 func (p Policy) Parse() (*guard.Policy, error) {
+	switch p.UntrustedContent {
+	case "", "ask", "off":
+	default:
+		return nil, fmt.Errorf("untrusted_content must be \"ask\" or \"off\", not %q", p.UntrustedContent)
+	}
 	var noRemember []string
 	if p.NoRemember != nil {
 		noRemember = append([]string{}, *p.NoRemember...)
@@ -194,6 +250,14 @@ type Config struct {
 	// Subagents bounds the delegate tool: how many run at once and how long each may work.
 	Subagents subagent.Limits `json:"subagents,omitzero"`
 
+	Limits Limits `json:"limits,omitzero"`
+	// Ops serves the gateway's health and metrics for a monitor to poll.
+	Ops Ops `json:"ops,omitzero"`
+	// ProtectedPaths are places the agent's file tools may not read, list or write,
+	// besides Talaria's own state and the usual credential directories (~/.ssh, ~/.aws, ...).
+	// "~/" means your home directory. Everything below a path is protected too.
+	ProtectedPaths []string `json:"protected_paths,omitempty"`
+
 	// Warnings are problems worth telling the user about that did not stop loading.
 	Warnings []string `json:"-"`
 }
@@ -249,6 +313,11 @@ func Load(path string) (*Config, error) {
 		}
 	}
 	for _, name := range c.ProfileNames() {
+		if p := c.Profiles[name]; p.BaseURL != "" {
+			if u, err := url.Parse(p.BaseURL); err == nil && u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
+				c.Warnings = append(c.Warnings, fmt.Sprintf("profile %q reaches its model over plain http to %s: the key and the whole conversation cross the network readable by anyone on the way. Use https", name, u.Hostname()))
+			}
+		}
 		if p := c.Profiles[name]; (p.Type == "" || p.Type == provider.TypeOpenAI) && strings.Contains(p.BaseURL, "api.deepseek.com") {
 			c.Warnings = append(c.Warnings, fmt.Sprintf("profile %q reaches DeepSeek as a plain openai profile, which drops the reasoning DeepSeek needs back once tools are used: set \"type\": \"deepseek\"", name))
 		}
@@ -374,6 +443,9 @@ type Resolved struct {
 	Model     string
 	MaxTokens int
 	NoVision  bool // the model cannot see images
+	// Withheld names a key variable that is set but was not used, because this profile points
+	// somewhere other than the provider the variable is for.
+	Withheld string
 	// Thinking and ReasoningEffort are DeepSeek's settings, "" when not set.
 	Thinking        string
 	ReasoningEffort string
@@ -443,7 +515,13 @@ func (c *Config) Resolve(o Overrides, getenv func(string) string) (Resolved, err
 	case p.APIKey != "":
 		r.APIKey, r.KeySource = p.APIKey, "api_key in the config file"
 	case p.APIKeyEnv == "" && getenv(defaultKeyEnv[typ]) != "":
-		r.APIKey, r.KeySource = getenv(defaultKeyEnv[typ]), "$"+defaultKeyEnv[typ]
+		// The usual variable is only sent to the provider it is for. A profile pointed anywhere else
+		// (a local server, a proxy, an address from a flag) would otherwise be handed a real key it was never given.
+		if sameHost(r.BaseURL, provider.DefaultBaseURL(typ)) {
+			r.APIKey, r.KeySource = getenv(defaultKeyEnv[typ]), "$"+defaultKeyEnv[typ]
+		} else {
+			r.Withheld = defaultKeyEnv[typ]
+		}
 	}
 	return r, nil
 }
@@ -453,6 +531,9 @@ func (c *Config) Resolve(o Overrides, getenv func(string) string) (Resolved, err
 func (r Resolved) CheckKey() error {
 	hosted := r.Type == provider.TypeAnthropic || strings.Contains(r.BaseURL, "api.openai.com") || strings.Contains(r.BaseURL, "api.deepseek.com")
 	if hosted && r.APIKey == "" {
+		if r.Withheld != "" {
+			return fmt.Errorf("profile %q points at %s, which is not where $%s belongs, so that key was not sent there. Name the variable this address takes in the profile's api_key_env, or set TALARIA_API_KEY", r.Name, r.BaseURL, r.Withheld)
+		}
 		return fmt.Errorf("profile %q needs an API key: set $%s (or TALARIA_API_KEY)", r.Name, r.KeyEnv)
 	}
 	return nil
@@ -477,6 +558,21 @@ func (p Profile) validateThinking(name, typ string) error {
 		return nil
 	}
 	return fmt.Errorf("profile %q: reasoning_effort must be low, high or max, not %q", name, p.ReasoningEffort)
+}
+
+func isLoopbackHost(h string) bool {
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
+}
+
+// sameHost reports whether two addresses are on the same host.
+func sameHost(a, b string) bool {
+	ua, errA := url.Parse(a)
+	ub, errB := url.Parse(b)
+	return errA == nil && errB == nil && ua.Hostname() != "" && strings.EqualFold(ua.Hostname(), ub.Hostname())
 }
 
 func (c *Config) profileNames() string {

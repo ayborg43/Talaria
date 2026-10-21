@@ -2,12 +2,15 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
 	"talaria/internal/config"
+	"talaria/internal/execenv"
 	"talaria/internal/guard"
 )
 
@@ -29,6 +32,48 @@ func buildGuard(cfg *config.Config, home string, getenv func(string) string, env
 	return g, nil
 }
 
+var envRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
+// buildFence says what the agent's file tools may not touch, and which environment
+// variables its shell commands are not given: everything Talaria keeps its secrets
+// in. Only this machine's environment is fenced; a container or remote host is a
+// different computer, and what it holds is what it was given.
+func buildFence(cfg *config.Config, cfgPath, home string) *execenv.Fence {
+	userHome, _ := os.UserHomeDir()
+	keyFile := ""
+	if cfg.Vault.KeyFile != "" {
+		keyFile = expandHome(cfg.Vault.KeyFile)
+	}
+	f := &execenv.Fence{Paths: execenv.ProtectedPaths(home, cfgPath, keyFile, userHome, cfg.ProtectedPaths)}
+	add := func(n string) {
+		if n != "" {
+			f.EnvDeny = append(f.EnvDeny, n)
+		}
+	}
+	for _, name := range cfg.ProfileNames() {
+		add(cfg.Profiles[name].APIKeyEnv)
+	}
+	add(cfg.Telegram.TokenEnv)
+	add(cfg.Discord.TokenEnv)
+	for _, srv := range cfg.MCPServers {
+		if srv.OAuth != nil {
+			add(srv.OAuth.ClientSecretEnv)
+		}
+		vals := append([]string{srv.URL}, srv.Args...)
+		for _, m := range []map[string]string{srv.Env, srv.Headers} {
+			for _, v := range m {
+				vals = append(vals, v)
+			}
+		}
+		for _, v := range vals {
+			for _, m := range envRef.FindAllStringSubmatch(v, -1) {
+				add(m[1])
+			}
+		}
+	}
+	return f
+}
+
 // collectSecrets gathers every secret Talaria knows about: model keys, bot
 // tokens, what MCP servers are given, and any environment variable whose name
 // says it holds one. The shapes of common tokens are caught separately.
@@ -40,6 +85,11 @@ func collectSecrets(cfg *config.Config, getenv func(string) string, environ []st
 		}
 	}
 	secrets = append(secrets, cfg.TelegramToken(getenv), cfg.DiscordToken(getenv), getenv("TALARIA_API_KEY"))
+	if cfg.Vault.KeyFile != "" { // the passphrase in the key file opens the vault: it must never reach the model or a log
+		if raw, err := os.ReadFile(expandHome(cfg.Vault.KeyFile)); err == nil {
+			secrets = append(secrets, strings.TrimSpace(string(raw)))
+		}
+	}
 	for _, srv := range cfg.MCPServers {
 		for _, group := range []map[string]string{srv.Env, srv.Headers} {
 			for _, v := range group {

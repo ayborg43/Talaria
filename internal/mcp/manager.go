@@ -204,6 +204,8 @@ func (m *Manager) Register(r *tool.Registry) {
 				Description:   fmt.Sprintf("[MCP server %q] %s", s.name, et.tool.Description),
 				Schema:        et.tool.InputSchema,
 				NeedsApproval: et.approve,
+				Untrusted:     true, // what a connected service returns is text from outside
+				Egress:        egress(et.class),
 				Run: func(ctx context.Context, args json.RawMessage) (string, error) {
 					ctx, cancel := context.WithTimeout(ctx, timeout)
 					defer cancel()
@@ -245,4 +247,11 @@ func FirstLine(s string, n int) string {
 		}
 	}
 	return ""
+}
+
+// egress says whether a call to a tool of this class could send something out or change
+// something over there: everything but reading and preparing a draft.
+func egress(c Class) func(json.RawMessage) bool {
+	out := c != ClassRead && c != ClassDraft
+	return func(json.RawMessage) bool { return out }
 }

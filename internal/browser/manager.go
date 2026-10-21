@@ -84,6 +84,12 @@ type Manager struct {
 	// Resolve looks up a host's addresses; nil uses the system resolver. Tests replace it.
 	Resolve func(ctx context.Context, host string) ([]string, error)
 
+	// What each conversation has seen and done, to tell when a navigation goes somewhere new and
+	// when a page may be showing a password that was filled in. Guarded by seenMu.
+	seenMu  sync.Mutex
+	hosts   map[string]map[string]bool
+	secrets map[string]string // owner -> address of the page a saved secret was filled in on
+
 	mu       sync.Mutex
 	cl       *client
 	userAg   string
@@ -93,6 +99,43 @@ type Manager struct {
 	closed   bool
 	janitor  sync.Once
 	quit     chan struct{}
+}
+
+// NoteHost records that a conversation has opened a page on host.
+func (m *Manager) NoteHost(owner, host string) {
+	m.seenMu.Lock()
+	defer m.seenMu.Unlock()
+	if m.hosts == nil {
+		m.hosts = map[string]map[string]bool{}
+	}
+	if m.hosts[owner] == nil {
+		m.hosts[owner] = map[string]bool{}
+	}
+	m.hosts[owner][strings.ToLower(host)] = true
+}
+
+// SeenHost reports whether a conversation has opened a page on host before.
+func (m *Manager) SeenHost(owner, host string) bool {
+	m.seenMu.Lock()
+	defer m.seenMu.Unlock()
+	return m.hosts[owner][strings.ToLower(host)]
+}
+
+// NoteSecret records that a saved secret was filled into the page at url.
+func (m *Manager) NoteSecret(owner, url string) {
+	m.seenMu.Lock()
+	defer m.seenMu.Unlock()
+	if m.secrets == nil {
+		m.secrets = map[string]string{}
+	}
+	m.secrets[owner] = url
+}
+
+// SecretOnPage reports whether a saved secret was filled in on this very page.
+func (m *Manager) SecretOnPage(owner, url string) bool {
+	m.seenMu.Lock()
+	defer m.seenMu.Unlock()
+	return url != "" && m.secrets[owner] == url
 }
 
 // ErrClosed is returned once the manager has been shut down.

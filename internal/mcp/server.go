@@ -123,6 +123,8 @@ func (s Server) Validate(name string) error {
 		return fmt.Errorf("mcp server %q: timeout_seconds cannot be negative", name)
 	case s.OAuth != nil && s.Command != "":
 		return fmt.Errorf("mcp server %q: oauth only applies to a url", name)
+	case s.OAuth != nil && !oauthTransportOK(s.URL):
+		return fmt.Errorf("mcp server %q: a sign-in sends its token with every request, so the url must be https (http is only allowed for this machine)", name)
 	case s.OAuth != nil && len(s.Headers) > 0:
 		return fmt.Errorf("mcp server %q: give oauth or headers, not both: a sign-in sets the Authorization header itself", name)
 	case s.OAuth != nil && (s.OAuth.RedirectPort < 0 || s.OAuth.RedirectPort > 65535):
@@ -262,4 +264,14 @@ func (s Server) label() string {
 		return "http"
 	}
 	return "stdio " + strings.Join(append([]string{s.Command}, s.Args...), " ")
+}
+
+// oauthTransportOK reports whether a bearer token may travel to this address:
+// https anywhere, or http to this machine. The address may still hold ${VAR}.
+func oauthTransportOK(raw string) bool {
+	u, err := url.Parse(varRE.ReplaceAllString(raw, "x"))
+	if err != nil || u.Host == "" {
+		return true // reported by the url check that follows
+	}
+	return u.Scheme == "https" || (u.Scheme == "http" && isLoopback(u.Hostname()))
 }

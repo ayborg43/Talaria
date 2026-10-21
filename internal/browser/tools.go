@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	neturl "net/url"
 	"strings"
 	"time"
 
@@ -31,25 +32,30 @@ const usage = " The browser is a real, persistent one: logins and cookies are ke
 // owner (each gets its own tab). Calling it again replaces them.
 func Register(r *tool.Registry, m *Manager, owner string) {
 	t := &toolset{m: m, owner: owner}
+	reg := func(tl tool.Tool) { // everything a page returns is text from outside
+		tl.Untrusted = true
+		r.Register(tl)
+	}
 	obj := func(props string, required ...string) json.RawMessage {
 		req, _ := json.Marshal(required)
 		return json.RawMessage(`{"type":"object","properties":{` + props + `},"required":` + string(req) + `}`)
 	}
 	const refProp = `"ref":{"type":"integer","description":"element number from the latest page listing"}`
 
-	r.Register(tool.Tool{
+	reg(tool.Tool{
 		Name:        "browser_open",
 		Description: "Open a web page in the browser and read it." + usage,
 		Schema:      obj(`"url":{"type":"string","description":"a full http or https address"}`, "url"),
+		Egress:      t.opensNewSite,
 		Run:         t.open,
 	})
-	r.Register(tool.Tool{
+	reg(tool.Tool{
 		Name:        "browser_snapshot",
 		Description: "Read the current page again (after waiting, or to refresh the element numbers).",
 		Schema:      obj(``),
 		Run:         t.snapshot,
 	})
-	r.Register(tool.Tool{
+	reg(tool.Tool{
 		Name:          "browser_click",
 		Description:   "Click a link, button or other element. Returns the page afterwards.",
 		Schema:        obj(refProp, "ref"),
@@ -57,7 +63,7 @@ func Register(r *tool.Registry, m *Manager, owner string) {
 		Describe:      t.describeClick,
 		Run:           t.click,
 	})
-	r.Register(tool.Tool{
+	reg(tool.Tool{
 		Name:        "browser_type",
 		Description: "Type text into a field. Replaces what is there unless append is true. With submit, presses Enter afterwards (to send a form or search). Returns the page afterwards.",
 		Schema: obj(refProp+`,"text":{"type":"string"},"append":{"type":"boolean","description":"add to the existing text instead of replacing it"},`+
@@ -67,7 +73,7 @@ func Register(r *tool.Registry, m *Manager, owner string) {
 		LogArgs:       t.logType,
 		Run:           t.typeText,
 	})
-	r.Register(tool.Tool{
+	reg(tool.Tool{
 		Name:          "browser_press",
 		Description:   "Press a key on whatever has focus: " + strings.Join(KeyNames(), ", ") + ". Returns the page afterwards.",
 		Schema:        obj(`"key":{"type":"string","enum":`+jsonList(KeyNames())+`}`, "key"),
@@ -75,7 +81,7 @@ func Register(r *tool.Registry, m *Manager, owner string) {
 		Describe:      t.describePress,
 		Run:           t.press,
 	})
-	r.Register(tool.Tool{
+	reg(tool.Tool{
 		Name:          "browser_select",
 		Description:   "Choose an option in a drop-down list, by its text or value. Returns the page afterwards.",
 		Schema:        obj(refProp+`,"value":{"type":"string"}`, "ref", "value"),
@@ -83,32 +89,32 @@ func Register(r *tool.Registry, m *Manager, owner string) {
 		Describe:      t.describeSelect,
 		Run:           t.selectOption,
 	})
-	r.Register(tool.Tool{
+	reg(tool.Tool{
 		Name:        "browser_scroll",
 		Description: "Scroll the page. Returns the page afterwards.",
 		Schema:      obj(`"direction":{"type":"string","enum":["down","up","top","bottom"]}`, "direction"),
 		Run:         t.scroll,
 	})
-	r.Register(tool.Tool{
+	reg(tool.Tool{
 		Name:        "browser_back",
 		Description: "Go back to the previous page. Returns the page.",
 		Schema:      obj(``),
 		Run:         t.back,
 	})
-	r.Register(tool.Tool{
+	reg(tool.Tool{
 		Name: "browser_screenshot",
 		Description: "Take a picture of the page as it looks. Use it when the numbered list is not enough: charts, images, layout, a puzzling page. " +
 			"Only works if the model can see images.",
 		Schema:  obj(``),
 		RunRich: t.screenshot,
 	})
-	r.Register(tool.Tool{
+	reg(tool.Tool{
 		Name:        "browser_wait",
 		Description: "Wait for some text to appear on the page (up to 30 seconds, default 10), or just wait that long. Returns the page.",
 		Schema:      obj(`"text":{"type":"string"},"seconds":{"type":"number"}`),
 		Run:         t.wait,
 	})
-	r.Register(tool.Tool{
+	reg(tool.Tool{
 		Name:        "browser_close",
 		Description: "Close this conversation's browser tab, which also forgets what page it was on. Logins are kept.",
 		Schema:      obj(``),
@@ -180,7 +186,29 @@ func (t *toolset) open(ctx context.Context, raw json.RawMessage) (string, error)
 	if err := p.Navigate(ctx, u); err != nil {
 		return "", err
 	}
+	t.m.NoteHost(t.owner, hostOf(a.URL))
 	return t.finish(ctx, p, "")
+}
+
+// hostOf is the host of an address, lower-case, or "" if it has none.
+func hostOf(raw string) string {
+	u, err := neturl.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
+}
+
+// opensNewSite says whether opening this address would reach a site the conversation has not
+// opened before. After reading outside content, that is how a page's text can be carried out:
+// in the address of the next page.
+func (t *toolset) opensNewSite(raw json.RawMessage) bool {
+	var a struct{ URL string }
+	if json.Unmarshal(raw, &a) != nil {
+		return true
+	}
+	h := hostOf(a.URL)
+	return h == "" || !t.m.SeenHost(t.owner, h)
 }
 
 func (t *toolset) snapshot(ctx context.Context, _ json.RawMessage) (string, error) {
@@ -312,11 +340,17 @@ func (t *toolset) screenshot(ctx context.Context, _ json.RawMessage) (tool.Resul
 	if note != "" {
 		return tool.Result{}, errors.New(note)
 	}
+	url, _ := p.URL(ctx)
+	if t.m.SecretOnPage(t.owner, url) {
+		// A page can show a password it was given: a "show password" button turns the dots into the
+		// text, and a picture of that goes to the model and its provider. Nothing that is filled in is
+		// ever shown to the model, and this keeps it so until the page changes.
+		return tool.Result{}, errors.New("a saved password was filled in on this page, and a screenshot could show it. Move on to another page first, or read the page with browser_snapshot, which never shows it")
+	}
 	img, err := p.Screenshot(ctx)
 	if err != nil {
 		return tool.Result{}, err
 	}
-	url, _ := p.URL(ctx)
 	return tool.Result{Text: "Screenshot of " + SafeURL(url) + " (1280x800).", Images: []provider.Image{{MIME: "image/jpeg", Data: img}}}, nil
 }
 

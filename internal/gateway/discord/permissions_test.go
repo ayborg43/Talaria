@@ -27,7 +27,7 @@ func guarded(p provider.Provider, g *guard.Guard) func(int64, func(string, strin
 
 func newGuard(t *testing.T, rules map[string]string) *guard.Guard {
 	t.Helper()
-	pol, err := guard.ParsePolicy(rules, nil)
+	pol, err := guard.ParsePolicy(rules, []string{"shell"}) // these tests use write_file as an ordinary rememberable tool
 	if err != nil {
 		t.Fatal(err)
 	}

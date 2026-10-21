@@ -53,10 +53,10 @@ func (n *Notes) save(t Target, entries []string) error {
 		return fmt.Errorf("%s would be %d characters, over the %d limit: replace or remove entries to make room",
 			files[t], len(text), caps[t])
 	}
-	if err := os.MkdirAll(n.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(n.Dir, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(n.Dir, files[t]), []byte(text), 0o644)
+	return os.WriteFile(filepath.Join(n.Dir, files[t]), []byte(text), 0o600)
 }
 
 func checkTarget(t Target) error {

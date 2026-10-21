@@ -43,6 +43,7 @@ import (
 	"talaria/internal/mcp"
 	"talaria/internal/provider"
 	"talaria/internal/vault"
+	"talaria/internal/version"
 	"talaria/internal/watch"
 )
 
@@ -72,6 +73,13 @@ func run() error {
 	overrides := config.Overrides{Profile: *profile, Model: *model, BaseURL: *baseURL, APIKey: os.Getenv("TALARIA_API_KEY")}
 
 	cmd := flag.Arg(0)
+	if cmd == "version" {
+		fmt.Println("talaria", version.String())
+		return nil
+	}
+	if cmd == "restore" { // before the config is read: a damaged config is a reason to restore
+		return runRestore(home, flag.Args()[1:], os.Stdout)
+	}
 	if cmd == "config" {
 		return runConfig(cfgPath, flag.Arg(1), overrides)
 	}
@@ -112,6 +120,13 @@ func run() error {
 			args = args[1:]
 		}
 		return runConnect(ctx, cfg, home, args, ask, os.Stdout, realConnectDeps)
+	case "doctor": // needs no model or API key
+		if runDoctor(cfg, cfgPath, home, os.Getenv, os.Stdout) > 0 {
+			os.Exit(1)
+		}
+		return nil
+	case "backup": // needs no model or API key
+		return runBackup(cfg, home, flag.Args()[1:], os.Stdout)
 	case "vault": // needs no model or API key
 		return runVault(cfg, home, flag.Args()[1:], newTerminal(), os.Stdout)
 	case "workspace": // needs no model or API key
@@ -125,7 +140,7 @@ func run() error {
 		return runMCPList(ctx, cfg, cfgPath, home)
 	case "", "gateway":
 	default:
-		return fmt.Errorf("unknown command %q (try: tal gateway, tal cron list, tal mcp list, tal env, tal log, tal policy, tal workspace, tal vault, tal connect, tal config)", cmd)
+		return fmt.Errorf("unknown command %q (try: tal gateway, tal cron list, tal mcp list, tal env, tal log, tal policy, tal workspace, tal vault, tal connect, tal backup, tal restore, tal doctor, tal version, tal config)", cmd)
 	}
 
 	res, err := cfg.Resolve(overrides, os.Getenv)
@@ -164,7 +179,7 @@ func run() error {
 	mcpServers := startMCP(ctx, cfg, vlt)
 	defer mcpServers.Close()
 	guarded.Policy.NeverRemember(mcpServers.Sensitive()...) // the Always button is never offered for a tool that sends or deletes
-	appCfg := app.Config{Home: home, Provider: p, Model: res.Model, MCP: mcpServers, Subagents: cfg.Subagents, Env: env, Guard: guarded,
+	appCfg := app.Config{Home: home, Provider: p, Model: res.Model, MCP: mcpServers, Subagents: cfg.Subagents, Env: env, Guard: guarded, Fence: buildFence(cfg, cfgPath, home), TrustOutsideContent: !cfg.Policy.GuardUntrusted(), ModelCallsPerHour: cfg.Limits.ModelCalls(),
 		Browser: browserConfig(cfg), Goals: &goal.Store{Path: filepath.Join(home, "goals.json")},
 		Watches: &watch.Store{Path: filepath.Join(home, "watches.json")}}
 	if vlt != nil {
@@ -425,12 +440,13 @@ func runCLI(ctx context.Context, rt *app.Runtime, res config.Resolved, prompt st
 		endLine()
 		outMu.Unlock()
 		tool := agent.BaseTool(name)
-		always := scope != nil && scope.Rememberable(tool)
+		always := scope != nil && scope.Rememberable(tool) && !agent.IsFlagged(name)
 		choices := "[y/N]"
 		if always {
 			choices = "[y/N/a=always]"
 		}
-		fmt.Fprintf(os.Stderr, "\nallow %s %s? %s ", name, args, choices)
+		// All of the arguments, with nothing in them able to redraw the line: what is on screen must be what will run.
+		fmt.Fprintf(os.Stderr, "\nallow %s?\n%s\n%s ", name, indent(agent.ApprovalText(args)), choices)
 		line, _ := in.ReadString('\n')
 		switch answer := strings.ToLower(strings.TrimSpace(line)); {
 		case always && (answer == "a" || answer == "always"):
@@ -587,8 +603,8 @@ func parseIDs(s string) (map[int64]bool, error) {
 			continue
 		}
 		id, err := strconv.ParseInt(f, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("%q is not a numeric user ID", f)
+		if err != nil || id <= 0 {
+			return nil, fmt.Errorf("%q is not a user ID (a positive whole number)", f)
 		}
 		ids[id] = true
 	}
@@ -616,3 +632,6 @@ func orDefault(v, def string) string {
 	}
 	return v
 }
+
+// indent sets a multi-line block off from the question it belongs to.
+func indent(s string) string { return "    " + strings.ReplaceAll(s, "\n", "\n    ") }

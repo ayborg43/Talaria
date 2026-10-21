@@ -10,18 +10,22 @@ import (
 	"time"
 )
 
-// Local runs everything on the machine Talaria runs on.
-type Local struct{}
+// Local runs everything on the machine Talaria runs on. Fence, if set, keeps the
+// file tools out of protected places and Talaria's secrets out of shell commands.
+type Local struct{ Fence *Fence }
 
 func (Local) Describe() string { return "this machine" }
 func (Local) Remote() bool     { return false }
 func (Local) Close()           {}
 
-func (Local) Shell(ctx context.Context, command string, timeout time.Duration) (ShellResult, error) {
+func (l Local) Shell(ctx context.Context, command string, timeout time.Duration) (ShellResult, error) {
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(cctx, "sh", "-c", command)
+	if l.Fence != nil {
+		cmd.Env = l.Fence.Environ()
+	}
 	setupKill(cmd)
 	out := &capBuffer{max: MaxOutput}
 	cmd.Stdout, cmd.Stderr = out, out // one writer, so the two streams stay in order
@@ -45,7 +49,10 @@ func (Local) Shell(ctx context.Context, command string, timeout time.Duration) (
 	return res, nil
 }
 
-func (Local) ReadFile(_ context.Context, path string, limit int) ([]byte, bool, error) {
+func (l Local) ReadFile(_ context.Context, path string, limit int) ([]byte, bool, error) {
+	if err := l.Fence.Check(path); err != nil {
+		return nil, false, err
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, false, err
@@ -61,14 +68,20 @@ func (Local) ReadFile(_ context.Context, path string, limit int) ([]byte, bool, 
 	return buf, false, nil
 }
 
-func (Local) WriteFile(_ context.Context, path string, data []byte) error {
+func (l Local) WriteFile(_ context.Context, path string, data []byte) error {
+	if err := l.Fence.Check(path); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(path, data, 0o644)
 }
 
-func (Local) ListDir(_ context.Context, path string) ([]string, error) {
+func (l Local) ListDir(_ context.Context, path string) ([]string, error) {
+	if err := l.Fence.Check(path); err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		return nil, err

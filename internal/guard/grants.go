@@ -122,7 +122,7 @@ func (g *Grants) edit(change func(map[string][]string)) error {
 		return err
 	}
 	dir := filepath.Dir(g.Path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, "grants-*.tmp")

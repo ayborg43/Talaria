@@ -131,9 +131,10 @@ func RegisterTaskTools(r *tool.Registry, s *Store, ctl Control, gateway string, 
 	})
 
 	r.Register(tool.Tool{
-		Name:        "task_cancel",
-		Description: "Stop one of this chat's background tasks by id (or \"all\").",
-		Schema:      json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
+		Name:          "task_cancel",
+		NeedsApproval: true,
+		Description:   "Stop one of this chat's background tasks by id (or \"all\").",
+		Schema:        json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var a struct{ ID string }
 			if err := json.Unmarshal(raw, &a); err != nil {

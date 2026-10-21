@@ -673,3 +673,95 @@ func TestExampleConfigStillLoadsAndHasADeepSeekProfile(t *testing.T) {
 		t.Fatal(c.Warnings)
 	}
 }
+
+func TestUserIDsMustBePositiveEverywhere(t *testing.T) {
+	for _, bad := range []string{`{"telegram":{"allowed_users":[0]}}`, `{"telegram":{"allowed_users":[-5]}}`, `{"discord":{"allowed_users":["0"]}}`, `{"telegram":{"allowed_users":["x"]}}`} {
+		if _, err := Load(write(t, bad, 0o600)); err == nil {
+			t.Errorf("%s was accepted", bad)
+		}
+	}
+	c, err := Load(write(t, `{"telegram":{"allowed_users":[123456789,"42"]}}`, 0o600))
+	if err != nil || len(c.Telegram.AllowedUsers) != 2 || c.Telegram.AllowedUsers[1] != 42 {
+		t.Fatalf("%+v %v", c.Telegram.AllowedUsers, err)
+	}
+}
+
+// The usual key variables are for the provider they name. A profile pointed anywhere else is not
+// handed a real key it was never given: the shipped "local" example would otherwise get $OPENAI_API_KEY.
+func TestTheDefaultKeyIsOnlySentToItsOwnProvider(t *testing.T) {
+	e := env("OPENAI_API_KEY", "sk-real", "ANTHROPIC_API_KEY", "sk-ant-real", "DEEPSEEK_API_KEY", "ds-real")
+	for name, tc := range map[string]struct {
+		p       Profile
+		o       Overrides
+		wantKey string
+	}{
+		"openai at openai":       {Profile{}, Overrides{}, "sk-real"},
+		"openai at a local one":  {Profile{BaseURL: "http://localhost:11434/v1"}, Overrides{}, ""},
+		"openai at a proxy":      {Profile{BaseURL: "https://proxy.example/v1"}, Overrides{}, ""},
+		"base url from a flag":   {Profile{}, Overrides{BaseURL: "http://localhost:1/v1"}, ""},
+		"named variable":         {Profile{BaseURL: "https://proxy.example/v1", APIKeyEnv: "OPENAI_API_KEY"}, Overrides{}, "sk-real"},
+		"anthropic at anthropic": {Profile{Type: "anthropic"}, Overrides{}, "sk-ant-real"},
+		"anthropic via a proxy":  {Profile{Type: "anthropic", BaseURL: "https://proxy.example"}, Overrides{}, ""},
+		"deepseek at deepseek":   {Profile{Type: "deepseek"}, Overrides{}, "ds-real"},
+		"deepseek elsewhere":     {Profile{Type: "deepseek", BaseURL: "http://localhost:8000/v1"}, Overrides{}, ""},
+		"the explicit override":  {Profile{BaseURL: "http://localhost:1/v1"}, Overrides{APIKey: "given"}, "given"},
+	} {
+		r, err := (&Config{Profiles: map[string]Profile{"p": tc.p}}).Resolve(tc.o, e)
+		if err != nil || r.APIKey != tc.wantKey {
+			t.Errorf("%s: key %q, want %q (%v)", name, r.APIKey, tc.wantKey, err)
+		}
+	}
+	// A custom address that needs a key says why none was sent, instead of asking for a key that is set.
+	r, _ := (&Config{Profiles: map[string]Profile{"p": {Type: "anthropic", BaseURL: "https://proxy.example"}}}).Resolve(Overrides{}, e)
+	err := r.CheckKey()
+	if err == nil || !strings.Contains(err.Error(), "api_key_env") || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") || strings.Contains(err.Error(), "sk-ant") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestPlainHTTPToAModelIsWarnedAboutExceptOnThisMachine(t *testing.T) {
+	c, err := Load(write(t, `{"profiles":{"a":{"base_url":"http://models.example/v1"},"b":{"base_url":"http://localhost:11434/v1"},"c":{"base_url":"http://127.0.0.1:1/v1"},"d":{"base_url":"https://models.example/v1"}}}`, 0o600))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Warnings) != 1 || !strings.Contains(c.Warnings[0], `"a"`) || !strings.Contains(c.Warnings[0], "https") {
+		t.Fatalf("%v", c.Warnings)
+	}
+}
+
+func TestLimitsAndOpsSettings(t *testing.T) {
+	c, err := Load(write(t, `{}`, 0o600))
+	if err != nil || c.Limits.Messages() != 30 || c.Limits.ModelCalls() != 1000 || c.Ops.Listen != "" {
+		t.Fatalf("defaults: %d %d %v", c.Limits.Messages(), c.Limits.ModelCalls(), err)
+	}
+	c, _ = Load(write(t, `{"limits":{"messages_per_minute":5,"model_calls_per_hour":50},"ops":{"listen":"127.0.0.1:9100","token_env":"T"}}`, 0o600))
+	if c.Limits.Messages() != 5 || c.Limits.ModelCalls() != 50 || c.Ops.Listen != "127.0.0.1:9100" || c.Ops.TokenEnv != "T" {
+		t.Fatalf("%+v %+v", c.Limits, c.Ops)
+	}
+	c, _ = Load(write(t, `{"limits":{"messages_per_minute":-1,"model_calls_per_hour":-1}}`, 0o600))
+	if c.Limits.Messages() != 0 || c.Limits.ModelCalls() != 0 {
+		t.Fatal("negative removes the limit")
+	}
+	if _, err := Load(write(t, `{"limits":{"message_per_minute":5}}`, 0o600)); err == nil {
+		t.Fatal("a typo is an error")
+	}
+}
+
+func TestUntrustedContentSetting(t *testing.T) {
+	for in, want := range map[string]bool{`{}`: true, `{"policy":{"untrusted_content":"ask"}}`: true, `{"policy":{"untrusted_content":"off"}}`: false} {
+		c, err := Load(write(t, in, 0o600))
+		if err != nil || c.Policy.GuardUntrusted() != want {
+			t.Errorf("%s: %v %v", in, c.Policy.GuardUntrusted(), err)
+		}
+	}
+	if _, err := Load(write(t, `{"policy":{"untrusted_content":"sometimes"}}`, 0o600)); err == nil {
+		t.Fatal("anything else is an error")
+	}
+}
+
+func TestProtectedPathsInTheConfig(t *testing.T) {
+	c, err := Load(write(t, `{"protected_paths":["~/Documents/taxes","/srv/secret"]}`, 0o600))
+	if err != nil || len(c.ProtectedPaths) != 2 {
+		t.Fatalf("%v %v", c.ProtectedPaths, err)
+	}
+}

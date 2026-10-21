@@ -42,7 +42,12 @@ type Annotations struct {
 
 var (
 	sendWords = set("send", "post", "publish", "reply", "forward", "share", "invite", "pay", "transfer", "submit", "broadcast", "notify", "tweet", "email", "mail", "text", "sms", "call", "dm")
-	// "email", "mail", "text" and "call" only count as sending when the tool is not a reader (see Classify).
+	// Words that are as often a thing as an action: "get_post" and "list_mail" read, "send_mail" sends.
+	// They only count as sending when the tool does not start with a reading verb (see Classify).
+	nounish = set("email", "mail", "text", "sms", "call", "dm", "post", "reply", "share")
+	// Words for reaching out over the network: whatever the tool reads, what it was asked for goes
+	// to someone else. Such a tool is not a plain read.
+	netWords    = set("url", "uri", "http", "https", "web", "website", "webpage", "curl", "wget", "browse", "crawl", "scrape", "download", "export", "request", "proxy")
 	delWords    = set("delete", "remove", "trash", "purge", "drop", "destroy", "cancel", "revoke", "erase", "clear", "empty", "wipe", "unsubscribe", "kick", "ban")
 	readVerbs   = set("get", "list", "search", "read", "fetch", "find", "query", "show", "view", "check", "lookup", "count", "describe", "browse", "export", "download", "preview", "inspect", "summarize", "who", "whoami")
 	writeVerbs  = set("create", "update", "set", "add", "write", "edit", "modify", "move", "mark", "label", "patch", "put", "insert", "upload", "save", "rename", "copy", "archive", "star", "snooze", "accept", "decline", "respond", "approve", "reject", "reschedule")
@@ -84,22 +89,28 @@ func Classify(name string, a Annotations) Class {
 		first = ws[0]
 	}
 	reader := readVerbs[first]
+	compound := has(set("and", "then", "also", "after", "before")) // "fetch_and_post": two actions, and the last one counts
+	plainReader := reader && !compound
 
 	switch {
 	case has(delWords) || isTrue(a.Destructive):
 		return ClassDelete
-	case has(sendWords) && !(reader && !isSendVerb(first)):
-		// "send_email" sends; "search_email" and "list_mail" read. A word like
-		// email only means sending when the tool does not start with a reading verb.
+	case has(sendWords) && !(plainReader && !isSendVerb(first) && onlyNounish(ws)):
+		// "send_email" sends; "search_email" and "list_mail" read. A word like email only means
+		// sending when the tool does not start with a reading verb. A reading verb does not excuse a
+		// word that is only a verb ("fetch_and_post_message", "read_and_reply"), or a tool that does
+		// two things.
 		return ClassSend
 	case isTrue(a.OpenWorld) && !isTrue(a.ReadOnly):
 		if reader && !has(writeVerbs) {
 			return ClassOther // the name says it reads and the hint says it reaches outside: they disagree, so it asks
 		}
 		return ClassSend // the server says it reaches outside, and the name does not say it only reads
-	case isTrue(a.ReadOnly) && !has(writeVerbs):
-		return ClassRead
-	case reader && !has(writeVerbs):
+	case has(netWords):
+		return ClassOther // reaches out over the network: asks, whatever it says it does
+	case !compound && has(readVerbs) && !has(writeVerbs):
+		// The name says it reads. A server's readOnlyHint agrees with that, or is ignored: a name
+		// that says nothing is not made a read by a hint, which the server could set on anything.
 		return ClassRead
 	case has(set("draft", "drafts")) && !isTrue(a.ReadOnly):
 		return ClassDraft
@@ -109,3 +120,13 @@ func Classify(name string, a Annotations) Class {
 
 // isSendVerb reports whether a first word is itself one that sends.
 func isSendVerb(w string) bool { return w != "" && sendWords[w] && !readVerbs[w] }
+
+// onlyNounish reports whether every sending word in a tool's name is one that is also a thing.
+func onlyNounish(ws []string) bool {
+	for _, w := range ws {
+		if sendWords[w] && !nounish[w] {
+			return false
+		}
+	}
+	return true
+}

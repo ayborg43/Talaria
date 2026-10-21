@@ -54,6 +54,13 @@ type Config struct {
 	// Vault holds saved logins the browser can fill in without the model seeing
 	// them. Nil means there is none.
 	Vault browser.Credentials
+	// ModelCallsPerHour limits requests to the model, across everything this process runs; 0 is no limit.
+	ModelCallsPerHour int
+	// TrustOutsideContent turns off the guard that makes anything able to send something
+	// out ask first once the conversation has read outside content.
+	TrustOutsideContent bool
+	// Fence keeps the file tools out of protected places on this machine; see execenv.Fence.
+	Fence *execenv.Fence
 	// Goals keeps the objectives chats have given the agent. Nil turns goals off.
 	Goals *goal.Store
 	// Watches keeps what chats have asked to be told about in connected services.
@@ -98,6 +105,8 @@ type Runtime struct {
 	pool     *subagent.Pool // nil when subagents are disabled
 	warn     func(format string, args ...any)
 
+	budget *budget
+
 	bmu      sync.Mutex
 	browsers map[any]*browser.Manager // one browser per environment, started when first used
 }
@@ -114,17 +123,19 @@ func Open(cfg Config, warn func(format string, args ...any)) *Runtime {
 		mcp:      cfg.MCP,
 		env:      cfg.Env,
 		warn:     warn,
+		budget:   &budget{max: cfg.ModelCallsPerHour},
 	}
 	if rt.env == nil {
-		rt.env = execenv.Local{}
+		rt.env = execenv.Local{Fence: cfg.Fence}
 	}
 	if !cfg.Subagents.Disabled {
 		rt.pool = subagent.NewPool(cfg.Subagents)
 	}
-	if err := os.MkdirAll(cfg.Home, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.Home, 0o700); err != nil {
 		warn("session history disabled: %v", err)
 		return rt
 	}
+	os.Chmod(cfg.Home, 0o700) // history, notes and jobs are private; a home made by an older version may be open
 	s, err := memory.OpenSessions(filepath.Join(cfg.Home, "sessions.db"))
 	if err != nil {
 		warn("session history disabled: %v", err)
@@ -193,6 +204,15 @@ type AgentOptions struct {
 	Tasks cron.Control
 }
 
+// owner names whose conversation this is, for the history: one chat on one service. The command line is
+// the person who runs Talaria and has no owner, so it sees everything.
+func (o AgentOptions) owner() string {
+	if o.ChatID == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", o.gatewayOrDefault(), o.ChatID)
+}
+
 func (o AgentOptions) origin() string {
 	switch {
 	case o.Origin != "":
@@ -229,7 +249,7 @@ func (rt *Runtime) NewAgent(o AgentOptions) *agent.Agent {
 		sessions = nil
 	}
 	if sessions != nil {
-		id, err := sessions.Start()
+		id, err := sessions.StartFor(o.owner())
 		if err != nil {
 			rt.warn("session history disabled for this conversation: %v", err)
 			sessions = nil
@@ -240,7 +260,7 @@ func (rt *Runtime) NewAgent(o AgentOptions) *agent.Agent {
 	tools := tool.NewRegistry()
 	tool.RegisterBuiltinsIn(tools, rt.env)
 	skill.RegisterTools(tools, rt.skills)
-	memory.RegisterTools(tools, rt.notes, sessions, sessionID)
+	memory.RegisterTools(tools, rt.notes, sessions, sessionID, o.owner())
 	if o.ChatID != 0 && !o.NoCron {
 		cron.RegisterTools(tools, rt.Cron, o.Gateway, o.ChatID, o.Jobs)
 		if o.Tasks != nil {
@@ -262,11 +282,13 @@ func (rt *Runtime) NewAgent(o AgentOptions) *agent.Agent {
 	system += fmt.Sprintf("\n\n%s%s", rt.notes.Prompt(), rt.skills.Index())
 
 	ag := &agent.Agent{
-		Provider: rt.provider,
-		Model:    rt.cfg.Model,
-		Tools:    tools,
-		System:   system,
-		Approve:  o.Approve,
+		Provider:       rt.provider,
+		Model:          rt.cfg.Model,
+		Tools:          tools,
+		System:         system,
+		Approve:        o.Approve,
+		GuardUntrusted: !rt.cfg.TrustOutsideContent,
+		BeforeModel:    rt.budget.take,
 	}
 	if o.ChatID != 0 && rt.cfg.Watches != nil && rt.mcp.HasTools() {
 		watch.RegisterTools(tools, rt.WatchBinding(o.Gateway, o.ChatID, tools, ag.Call, !o.NoCron))

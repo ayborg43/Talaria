@@ -17,7 +17,7 @@ func TestAlwaysAllowButtonOnTelegram(t *testing.T) {
 	f := newFake(t)
 	dir := t.TempDir()
 	target := filepath.Join(dir, "out.txt")
-	pol, _ := guard.ParsePolicy(nil, nil)
+	pol, _ := guard.ParsePolicy(nil, []string{"shell"}) // write_file stands in for an ordinary rememberable tool
 	g := &guard.Guard{Policy: pol, Grants: &guard.Grants{Path: filepath.Join(dir, "grants.json")}, Audit: &guard.Log{Path: filepath.Join(dir, "audit.log")}}
 
 	args, _ := json.Marshal(map[string]string{"path": target, "content": "x"})

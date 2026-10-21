@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"talaria/internal/metrics"
 	"testing"
 	"time"
 )
@@ -179,5 +180,33 @@ func TestRunTimeout(t *testing.T) {
 	h.fireAt("2026-10-20 10:06")
 	if len(h.got) != 1 || !strings.Contains(h.got[0].text, "hang failed") {
 		t.Fatalf("timeout should be reported as a failure: %+v", h.got)
+	}
+}
+
+func TestJobsAreCountedByKindAndWhatBecameOfThem(t *testing.T) {
+	metrics.Reset()
+	h := newHarness(t, func(_ context.Context, j Job) (string, error) {
+		switch j.Prompt {
+		case "quiet":
+			return Silent, nil
+		case "broken":
+			return "", errors.New("boom")
+		case "gone":
+			return "", ErrDrop
+		}
+		return "hello", nil
+	})
+	for _, p := range []string{"quiet", "broken", "gone", "loud"} {
+		h.store.AddNow(Job{Name: p, Kind: KindWatch, Watch: "w", Prompt: p, ChatID: 2})
+	}
+	h.store.AddNow(Job{Name: "plain", Prompt: "loud", ChatID: 2})
+	h.fireAt("2026-10-20 10:00")
+	for result, want := range map[string]float64{"silent": 1, "error": 1, "dropped": 1, "delivered": 1} {
+		if got := metrics.Get("talaria_jobs_total", "kind", "watch", "result", result); got != want {
+			t.Errorf("watch %s: %v, want %v", result, got, want)
+		}
+	}
+	if metrics.Get("talaria_jobs_total", "kind", "job", "result", "delivered") != 1 {
+		t.Error("an ordinary job is kind job")
 	}
 }

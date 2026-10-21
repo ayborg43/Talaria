@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"os"
 	"strings"
 	"time"
 	"unicode"
@@ -44,6 +45,12 @@ type Hit struct {
 }
 
 func OpenSessions(path string) (*Sessions, error) {
+	// Created owner-only before SQLite does it with the default mode: the history is every
+	// conversation, and its write-ahead log takes the same mode.
+	if f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600); err == nil {
+		f.Close()
+	}
+	os.Chmod(path, 0o600)
 	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
@@ -52,20 +59,33 @@ func OpenSessions(path string) (*Sessions, error) {
 		db.Close()
 		return nil, err
 	}
+	// Whose conversation a session was, so one chat cannot search another's. Added to databases
+	// made before there was an owner; sessions from then belong to no chat, and only the command line sees them.
+	var has int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name = 'owner'`).Scan(&has); err == nil && has == 0 {
+		if _, err := db.Exec(`ALTER TABLE sessions ADD COLUMN owner TEXT NOT NULL DEFAULT ''`); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
 	return &Sessions{db: db}, nil
 }
 
 func (s *Sessions) Close() error { return s.db.Close() }
 
 // Start records a new session and returns its id.
-func (s *Sessions) Start() (string, error) {
+func (s *Sessions) Start() (string, error) { return s.StartFor("") }
+
+// StartFor records a new session for an owner, such as "discord:123": only a search made for
+// that owner (or one made for no owner, which is the local command line) will find it.
+func (s *Sessions) StartFor(owner string) (string, error) {
 	var b [3]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
 	}
 	now := time.Now().UTC()
 	id := now.Format("20060102-150405") + "-" + hex.EncodeToString(b[:])
-	_, err := s.db.Exec(`INSERT INTO sessions(id, started_at) VALUES (?, ?)`, id, now.Unix())
+	_, err := s.db.Exec(`INSERT INTO sessions(id, started_at, owner) VALUES (?, ?, ?)`, id, now.Unix(), owner)
 	return id, err
 }
 
@@ -82,6 +102,12 @@ func (s *Sessions) Add(sessionID, role, content string) error {
 // Search finds messages matching any word in query, best matches first,
 // skipping the session named by exclude (usually the live one).
 func (s *Sessions) Search(query string, limit int, exclude string) ([]Hit, error) {
+	return s.SearchFor("", query, limit, exclude)
+}
+
+// SearchFor searches what an owner may see: their own sessions. For no owner (the command line, which
+// is the person who runs Talaria) it is all of them.
+func (s *Sessions) SearchFor(owner, query string, limit int, exclude string) ([]Hit, error) {
 	terms := strings.FieldsFunc(query, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
 	if len(terms) == 0 {
 		return nil, errors.New("query has no searchable words")
@@ -97,8 +123,9 @@ func (s *Sessions) Search(query string, limit int, exclude string) ([]Hit, error
 		SELECT m.session_id, m.role, m.ts, snippet(messages_fts, 0, '[', ']', '…', 24)
 		FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid
 		WHERE messages_fts MATCH ? AND m.session_id != ?
+		  AND (? = '' OR m.session_id IN (SELECT id FROM sessions WHERE owner = ?))
 		ORDER BY bm25(messages_fts) LIMIT ?`,
-		strings.Join(terms, " OR "), exclude, limit)
+		strings.Join(terms, " OR "), exclude, owner, owner, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -115,4 +142,16 @@ func (s *Sessions) Search(query string, limit int, exclude string) ([]Hit, error
 		hits = append(hits, h)
 	}
 	return hits, rows.Err()
+}
+
+// Snapshot writes a consistent copy of the history database at src to dst
+// (which must not exist), even while another process is writing to it.
+func Snapshot(src, dst string) error {
+	db, err := sql.Open("sqlite", src+"?_pragma=busy_timeout(5000)&mode=ro")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = db.Exec("VACUUM INTO ?", dst)
+	return err
 }

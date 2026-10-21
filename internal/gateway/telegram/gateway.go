@@ -46,6 +46,8 @@ type Gateway struct {
 	// Permissions, if set, adds an Always button to approval prompts and the
 	// permissions and log commands.
 	Permissions chat.Permissions
+	// MessagesPerMinute limits how fast a chat may give the agent work; 0 is no limit.
+	MessagesPerMinute int
 
 	// Commands, OnUserMessage and StopBackground are passed to the chat engine:
 	// extra commands (/tasks, /goals), a hook for when a user speaks, and a way
@@ -73,6 +75,7 @@ func (g *Gateway) engine() *chat.Engine {
 			Environment: g.Environment, Environments: g.Environments,
 			Backends: g.Backends, Prefs: g.Prefs, Permissions: g.Permissions,
 			Commands: g.Commands, OnUserMessage: g.OnUserMessage, StopBackground: g.StopBackground,
+			MessagesPerMinute: g.MessagesPerMinute,
 		}
 	})
 	return g.eng

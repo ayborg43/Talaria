@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -225,5 +226,62 @@ func TestTheVaultIsReadAtUseTime(t *testing.T) {
 	other.Remove("second")
 	if _, err := r.call("browser_fill", `{"ref":1,"credential":"second","field":"username"}`); err == nil {
 		t.Fatal("removed credentials stop working")
+	}
+}
+
+// A page can show a password it was given: a "show password" button turns the dots into text.
+func TestNoScreenshotOfAPageWhereAPasswordWasFilled(t *testing.T) {
+	r, _ := vaultRig(t)
+	r.ok("browser_open", `{"url":"http://login.test/"}`)
+	if _, err := r.call("browser_screenshot", `{}`); err != nil {
+		t.Fatalf("a screenshot is fine before anything secret is on the page: %v", err)
+	}
+	r.ok("browser_fill", `{"ref":1,"credential":"login-test","field":"username"}`)
+	if _, err := r.call("browser_screenshot", `{}`); err != nil {
+		t.Fatalf("a username is not a secret: %v", err)
+	}
+	r.ok("browser_fill", `{"ref":2,"credential":"login-test","field":"password"}`)
+	if _, err := r.call("browser_screenshot", `{}`); err == nil || !strings.Contains(err.Error(), "could show it") {
+		t.Fatalf("%v", err)
+	}
+	if got := r.sent("Page.captureScreenshot"); len(got) != 2 {
+		t.Fatalf("only the two before the password were taken: %d", len(got))
+	}
+	// Once the page changes, pictures are fine again.
+	r.ok("browser_click", `{"ref":3}`)
+	if _, err := r.call("browser_screenshot", `{}`); err != nil {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestBrowserToolsMarkTheConversationAsHavingReadOutsideContent(t *testing.T) {
+	r, _ := vaultRig(t)
+	for _, name := range []string{"browser_open", "browser_snapshot", "browser_click", "browser_type", "browser_screenshot", "browser_fill"} {
+		tl, ok := r.reg.Get(name)
+		if !ok || !tl.Untrusted {
+			t.Errorf("%s: %+v", name, tl.Untrusted)
+		}
+	}
+	if tl, _ := r.reg.Get("vault_list"); tl.Untrusted {
+		t.Error("the list of saved names is Talaria's own")
+	}
+}
+
+func TestOpeningASiteNotVisitedBeforeIsAnEgressCall(t *testing.T) {
+	r := newRig(t, Options{})
+	open, _ := r.reg.Get("browser_open")
+	if open.Egress == nil {
+		t.Fatal("no egress check")
+	}
+	arg := func(u string) json.RawMessage { return json.RawMessage(`{"url":"` + u + `"}`) }
+	if !open.Egress(arg("http://shop.test/")) {
+		t.Fatal("a first visit is somewhere new")
+	}
+	r.ok("browser_open", `{"url":"http://shop.test/"}`)
+	if open.Egress(arg("http://SHOP.test/other?page=2")) {
+		t.Fatal("a page on a site already opened is not")
+	}
+	if !open.Egress(arg("http://evil.test/?stolen=data")) || !open.Egress(json.RawMessage(`{}`)) || !open.Egress(json.RawMessage(`nonsense`)) {
+		t.Fatal("another site, or something unreadable, asks")
 	}
 }

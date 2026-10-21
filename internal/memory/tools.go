@@ -11,7 +11,7 @@ import (
 
 // RegisterTools adds the memory tool and, when sessions is non-nil, session_search.
 // currentSession is excluded from search results since the model already has it.
-func RegisterTools(r *tool.Registry, n *Notes, sessions *Sessions, currentSession string) {
+func RegisterTools(r *tool.Registry, n *Notes, sessions *Sessions, currentSession, owner string) {
 	r.Register(tool.Tool{
 		Name: "memory",
 		Description: "Edit your persistent notes. target=memory is for your own durable notes (environment facts, conventions, lessons); " +
@@ -23,6 +23,9 @@ func RegisterTools(r *tool.Registry, n *Notes, sessions *Sessions, currentSessio
 			"content":{"type":"string","description":"new entry text (add, replace)"},
 			"old":{"type":"string","description":"unique snippet of the existing entry (replace, remove)"}},
 			"required":["action","target"]}`),
+		// Notes go into every later prompt, unattended runs included, so a note planted by
+		// something the conversation read would steer the agent for good.
+		Egress: tool.Always,
 		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var a struct {
 				Action  string
@@ -66,7 +69,7 @@ func RegisterTools(r *tool.Registry, n *Notes, sessions *Sessions, currentSessio
 			if err := json.Unmarshal(raw, &a); err != nil {
 				return "", err
 			}
-			hits, err := sessions.Search(a.Query, a.Limit, currentSession)
+			hits, err := sessions.SearchFor(owner, a.Query, a.Limit, currentSession)
 			if err != nil {
 				return "", err
 			}

@@ -69,6 +69,11 @@ func ConnectAuth(ctx context.Context, name string, s Server, getenv func(string)
 	}
 	var cn conn
 	if s.isHTTP() {
+		if b, ok := auth.(interface{ CheckURL(string) error }); ok {
+			if err := b.CheckURL(s.URL); err != nil {
+				return nil, err
+			}
+		}
 		h := newHTTPConn(s)
 		h.auth, h.name = auth, name
 		cn = h

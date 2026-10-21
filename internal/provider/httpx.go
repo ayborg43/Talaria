@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 // Variables so tests can shrink them.
 var (
 	streamIdle   = 3 * time.Minute  // a stream with no bytes for this long is abandoned
+	streamTotal  = 30 * time.Minute // and one that has run this long, however steadily it sends
 	requestLimit = 10 * time.Minute // whole-request limit when not streaming
 	backoff      = func(attempt int, resp *http.Response) time.Duration {
 		if resp != nil {
@@ -29,7 +31,35 @@ var (
 const (
 	maxAttempts = 3
 	maxResponse = 10 << 20
+	// maxStream bounds what one streamed reply may send in all, and maxToolCalls how many
+	// tool calls it may announce: a server that goes on forever or numbers its calls
+	// absurdly is not a model answering.
+	maxToolCalls = 128
 )
+
+var maxStream int64 = 64 << 20 // a variable so a test can shrink it
+
+// newHTTPClient is the client for model APIs. It does not follow redirects: Go would carry
+// headers other than Authorization (such as Anthropic's x-api-key) to the new host, and a
+// 307 or 308 would send the whole conversation there too.
+func newHTTPClient() *http.Client {
+	return &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+}
+
+// capReader fails once more than n bytes have been read.
+type capReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *capReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n -= int64(n)
+	if c.n < 0 {
+		return n, errors.New("the reply is larger than Talaria will accept")
+	}
+	return n, err
+}
 
 // watchdog derives a context that is cancelled after d unless touch is called
 // again in time. cancel releases it.
@@ -109,6 +139,9 @@ func post(ctx context.Context, c *http.Client, url string, headers map[string]st
 func apiError(resp *http.Response) error {
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode/100 == 3 {
+		return fmt.Errorf("provider answered %s and sent the request elsewhere. Talaria does not follow redirects, as they would carry your key along: set base_url to the address the provider means", resp.Status)
+	}
 	return fmt.Errorf("provider returned %s: %s", resp.Status, errorMessage(raw))
 }
 
@@ -152,6 +185,9 @@ func roundTrip(ctx context.Context, c *http.Client, url string, headers map[stri
 	}
 	wctx, cancel, touch := watchdog(ctx, limit)
 	defer cancel()
+	if onText != nil {
+		defer time.AfterFunc(streamTotal, cancel).Stop()
+	}
 
 	msg, err := func() (Message, error) {
 		resp, err := post(wctx, c, url, headers, payload)
@@ -161,7 +197,7 @@ func roundTrip(ctx context.Context, c *http.Client, url string, headers map[stri
 		defer resp.Body.Close()
 
 		if onText != nil && strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
-			return parseStream(touchReader{resp.Body, touch})
+			return parseStream(&capReader{r: touchReader{resp.Body, touch}, n: maxStream})
 		}
 		raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse))
 		if err != nil {
@@ -174,7 +210,7 @@ func roundTrip(ctx context.Context, c *http.Client, url string, headers map[stri
 		return m, err
 	}()
 	if err != nil && ctx.Err() == nil && wctx.Err() != nil {
-		err = fmt.Errorf("provider timed out (no data for %s)", limit)
+		err = fmt.Errorf("provider timed out (no data for %s, or the reply ran longer than %s)", limit, streamTotal)
 	}
 	return msg, err
 }

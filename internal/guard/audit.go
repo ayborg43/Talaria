@@ -60,7 +60,7 @@ func (l *Log) Append(r Record) error {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(l.Path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(l.Path), 0o700); err != nil {
 		return err
 	}
 	if fi, err := os.Stat(l.Path); err == nil && fi.Size() >= l.maxBytes() {

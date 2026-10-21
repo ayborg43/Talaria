@@ -3,6 +3,8 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -33,7 +35,7 @@ func TestClassify(t *testing.T) {
 		{"list_drafts", Annotations{}, ClassRead},
 		{"find-free-time", Annotations{}, ClassRead},
 		{"calendar_lookup", Annotations{ReadOnly: yes()}, ClassRead},
-		{"freebusy", Annotations{ReadOnly: yes()}, ClassRead},
+		{"freebusy", Annotations{ReadOnly: yes()}, ClassOther}, // a hint alone does not make an unrecognised name a read: the server could say it of anything
 		// what sends
 		{"send_email", Annotations{}, ClassSend},
 		{"send_draft", Annotations{}, ClassSend},
@@ -73,6 +75,31 @@ func TestClassify(t *testing.T) {
 		{"search_everything", Annotations{OpenWorld: yes(), ReadOnly: yes()}, ClassRead},
 		{"delete_thing", Annotations{ReadOnly: yes()}, ClassDelete}, // a lie about reading does not free a delete
 		{"send_thing", Annotations{ReadOnly: yes()}, ClassSend},
+		// a reading verb does not excuse a word that only acts, or a tool that does two things
+		{"fetch_and_post_message", Annotations{}, ClassSend},
+		{"getAndSendEmail", Annotations{}, ClassSend},
+		{"read_and_reply", Annotations{}, ClassSend},
+		{"list_and_share_file", Annotations{ReadOnly: yes()}, ClassSend},
+		{"search_and_forward", Annotations{}, ClassSend},
+		{"get_then_notify", Annotations{}, ClassSend},
+		{"read_publish_status", Annotations{}, ClassSend}, // a word that only acts is not excused by the verb in front of it
+		// ...but a word that is also a thing still reads
+		{"get_post", Annotations{}, ClassRead},
+		{"read_reply", Annotations{}, ClassRead},
+		{"list_mail", Annotations{}, ClassRead},
+		{"search_email", Annotations{}, ClassRead},
+		{"get_text", Annotations{}, ClassRead},
+		// a hint never makes an unrecognised name a read
+		{"run_shell", Annotations{ReadOnly: yes()}, ClassOther},
+		{"charge_card", Annotations{ReadOnly: yes()}, ClassOther},
+		// what reaches over the network sends what it was asked for to someone: not a plain read
+		{"fetch_url", Annotations{}, ClassOther},
+		{"browse", Annotations{}, ClassOther},
+		{"web_search", Annotations{ReadOnly: yes()}, ClassOther},
+		{"http_get", Annotations{}, ClassOther},
+		{"download_file", Annotations{}, ClassOther},
+		{"export_to_drive", Annotations{}, ClassOther},
+		{"get_webpage", Annotations{ReadOnly: yes()}, ClassOther},
 	} {
 		if got := Classify(tc.name, tc.ann); got != tc.want {
 			t.Errorf("Classify(%q, %+v) = %s, want %s", tc.name, tc.ann, got, tc.want)
@@ -215,6 +242,15 @@ func TestAConnectorWithReadsAndDraftsFreeAsksAboutTheRest(t *testing.T) {
 	for _, info := range m.Status()[0].Tools {
 		if w := want[info.Exposed]; info.Class != w.class || info.NeedsApproval != w.asks {
 			t.Errorf("status of %s: %+v", info.Exposed, info)
+		}
+	}
+	// Everything a service returns is text from outside; only what could send or change something over
+	// there can carry it away, so only that asks once the conversation has read any.
+	for name, w := range want {
+		tl, _ := r.Get(name)
+		wantEgress := w.class != ClassRead && w.class != ClassDraft
+		if !tl.Untrusted || tl.Egress == nil || tl.Egress(nil) != wantEgress {
+			t.Errorf("%s: untrusted=%v egress=%v, want egress=%v", name, tl.Untrusted, tl.Egress != nil && tl.Egress(nil), wantEgress)
 		}
 	}
 	sens := m.Sensitive()
@@ -374,5 +410,44 @@ func TestNoTokenIsSentToAServerWithoutOAuth(t *testing.T) {
 		if strings.Contains(l, "token") {
 			t.Fatal("talked to an authorization server it was not asked to use")
 		}
+	}
+}
+
+// A sign-in's token goes with every request: over plain http to another machine it would be
+// readable by anyone on the way.
+func TestASignInNeedsHTTPSExceptOnThisMachine(t *testing.T) {
+	for url, ok := range map[string]bool{
+		"https://mcp.example.com/mail": true, "http://127.0.0.1:8080/mcp": true, "http://localhost/mcp": true, "http://[::1]:9/mcp": true,
+		"http://mcp.example.com/mail": false, "http://192.168.1.10/mcp": false, "https://${HOST}/mcp": true, "http://${HOST}/mcp": false,
+	} {
+		err := Server{URL: url, OAuth: &OAuthConfig{}}.Validate("mail")
+		if (err == nil) != ok {
+			t.Errorf("%s: %v", url, err)
+		}
+	}
+	if err := (Server{URL: "http://mcp.example.com/x", Headers: map[string]string{"X": "y"}}).Validate("m"); err != nil {
+		t.Fatalf("this rule is about sign-ins; headers keep their existing warning: %v", err)
+	}
+}
+
+// Following a redirect would send the headers, the session and the tool arguments on to wherever it points.
+func TestAnMCPServerCannotRedirectItsCallersElsewhere(t *testing.T) {
+	var got http.Header
+	var reached bool
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		got = r.Header.Clone()
+	}))
+	defer other.Close()
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL, http.StatusTemporaryRedirect)
+	}))
+	defer redirector.Close()
+	_, err := Connect(context.Background(), "x", Server{URL: redirector.URL, Headers: map[string]string{"X-Api-Key": "SECRET"}}, func(string) string { return "" })
+	if err == nil {
+		t.Fatal("a redirect is not an answer")
+	}
+	if reached {
+		t.Fatalf("the redirect was followed, with %v", got)
 	}
 }

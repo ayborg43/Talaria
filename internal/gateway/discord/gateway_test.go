@@ -448,7 +448,7 @@ func TestApprovalButtons(t *testing.T) {
 			f.press(99, prompt.Channel, prompt.Buttons[0], prompt.Text)
 			f.waitFor("the refusal", func() bool { return len(f.callbackLog()) == 1 })
 			cb := f.callbackLog()[0]
-			if cb.Type != 4 || cb.Flags != 64 || cb.Content != chat.MsgNotAllowed {
+			if cb.Type != 4 || cb.Flags&64 == 0 || cb.Content != chat.MsgNotAllowed {
 				t.Fatalf("a stranger's press should get a private refusal: %+v", cb)
 			}
 			// So must a press that comes from a channel the prompt was not sent to.
@@ -480,7 +480,7 @@ func TestApprovalButtons(t *testing.T) {
 			// The same button again is stale.
 			f.press(1, prompt.Channel, button, prompt.Text)
 			f.waitFor("the stale press to be answered", func() bool { return len(f.callbackLog()) == 4 })
-			if cb := f.callbackLog()[3]; cb.Content != chat.MsgExpired || cb.Flags != 64 {
+			if cb := f.callbackLog()[3]; cb.Content != chat.MsgExpired || cb.Flags&64 == 0 {
 				t.Fatalf("%+v", cb)
 			}
 		})

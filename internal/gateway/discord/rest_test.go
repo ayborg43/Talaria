@@ -83,6 +83,9 @@ func TestCreateMessageSuppressesMentions(t *testing.T) {
 	if _, has := req.Body["components"]; has {
 		t.Fatal("a plain message carries no components")
 	}
+	if flags, _ := req.Body["flags"].(float64); int(flags)&4 == 0 {
+		t.Fatalf("link embeds must be suppressed: Discord fetches the address on its own: %v", req.Body)
+	}
 
 	api.CreateMessage(context.Background(), "5", "pick", []Component{{Type: componentRow, Components: []Component{{Type: componentButton, Style: styleSuccess, Label: "Allow", CustomID: "ap:1:y"}}}})
 	row := log()[1].Body["components"].([]any)[0].(map[string]any)
@@ -155,7 +158,7 @@ func TestRespondToAnInteraction(t *testing.T) {
 		t.Fatalf("an update must clear the buttons: %v", d)
 	}
 	d2 := l[1].Body["data"].(map[string]any)
-	if l[1].Body["type"] != float64(4) || d2["flags"] != float64(64) {
+	if l[1].Body["type"] != float64(4) || int(d2["flags"].(float64))&64 == 0 {
 		t.Fatalf("a refusal is shown only to the person who pressed: %v", l[1].Body)
 	}
 }

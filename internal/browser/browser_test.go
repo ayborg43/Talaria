@@ -242,12 +242,17 @@ func TestClickOnAStaleNumber(t *testing.T) {
 	}
 }
 
-func TestClickThatLandsOnSomethingElseSaysSo(t *testing.T) {
+// The click the user approved was for an element. If something else is drawn over it, the click
+// would go to that: a page could put an invisible frame over a harmless button to be clicked.
+func TestNoClickIsMadeWhenSomethingCoversTheElement(t *testing.T) {
 	r := newRig(t, Options{})
 	r.ok("browser_open", `{"url":"http://shop.test/"}`)
-	out := r.ok("browser_click", `{"ref":3}`) // the fake covers element 3
-	if !strings.Contains(out, "Something else was on top") || !strings.Contains(out, "Cookie banner") {
-		t.Fatalf("%s", out)
+	_, err := r.call("browser_click", `{"ref":3}`) // the fake covers element 3
+	if err == nil || !strings.Contains(err.Error(), "Nothing was clicked") || !strings.Contains(err.Error(), "Cookie banner") {
+		t.Fatalf("%v", err)
+	}
+	if got := r.sent("Input.dispatchMouseEvent"); len(got) != 0 {
+		t.Fatalf("the mouse was used anyway: %+v", got)
 	}
 }
 

@@ -107,7 +107,11 @@ func Verdict(c Choice) string {
 // Deliver sends text to a chat, split to fit the service's limit. It needs no
 // running engine, so a scheduler can use it from any goroutine.
 func Deliver(ctx context.Context, t Transport, chat int64, text string, logf func(string, ...any)) {
-	for _, part := range SplitMessage(text, t.MaxMessage(), t.Markdown()) {
+	parts := SplitMessage(text, t.MaxMessage(), t.Markdown())
+	if len(parts) > maxReplyParts {
+		parts = append(parts[:maxReplyParts-1:maxReplyParts-1], cutNote(maxReplyParts))
+	}
+	for _, part := range parts {
 		if _, err := t.Send(ctx, chat, part); err != nil {
 			if logf != nil {
 				logf("%s: send failed: %v", strings.ToLower(t.Service()), err)
@@ -119,4 +123,12 @@ func Deliver(ctx context.Context, t Transport, chat int64, text string, logf fun
 
 func allowlistVar(service string) string {
 	return fmt.Sprintf("TALARIA_%s_ALLOWED_USERS", strings.ToUpper(service))
+}
+
+// maxReplyParts is the most messages one reply may become. A reply past that is cut, with a
+// note: thousands of messages in a few minutes is how a chat service bans a bot.
+const maxReplyParts = 20
+
+func cutNote(parts int) string {
+	return fmt.Sprintf("\n[The rest of this reply was left out: it was longer than %d messages.]", parts)
 }

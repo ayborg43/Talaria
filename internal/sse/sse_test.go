@@ -1,6 +1,7 @@
 package sse
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -55,5 +56,25 @@ func TestReadSSEStopAndErrors(t *testing.T) {
 	big := strings.Repeat("x", 200_000) // longer than bufio.Scanner's default token limit
 	if got := collect(t, "data: "+big+"\n\n"); len(got) != 1 || len(got[0]) != len(big) {
 		t.Fatal("large event was not read intact")
+	}
+}
+
+func TestAnEndlessLineIsRefusedNotBuffered(t *testing.T) {
+	long := "data: " + strings.Repeat("x", maxLine+10) + "\n\n"
+	err := Read(strings.NewReader(long), func(string) error { return nil })
+	if !errors.Is(err, ErrTooLong) {
+		t.Fatalf("%v", err)
+	}
+	// An event made of many ordinary lines is bounded too.
+	line := "data: " + strings.Repeat("y", 1<<20) + "\n"
+	err = Read(strings.NewReader(strings.Repeat(line, 20)), func(string) error { return nil })
+	if !errors.Is(err, ErrTooLong) {
+		t.Fatalf("%v", err)
+	}
+	// Ordinary large events still work.
+	var got int
+	err = Read(strings.NewReader("data: "+strings.Repeat("z", 5<<20)+"\n\n"), func(d string) error { got = len(d); return nil })
+	if err != nil || got != 5<<20 {
+		t.Fatalf("%v %d", err, got)
 	}
 }

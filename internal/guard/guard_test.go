@@ -74,7 +74,7 @@ func TestPolicyRejectsBadRules(t *testing.T) {
 
 func TestGrantsAllowOnlyTheChatAndToolTheyWereMadeFor(t *testing.T) {
 	dir := t.TempDir()
-	g := &Guard{Policy: mustPolicy(t, nil, nil), Grants: &Grants{Path: filepath.Join(dir, "grants.json")}}
+	g := &Guard{Policy: mustPolicy(t, nil, []string{"shell"}), Grants: &Grants{Path: filepath.Join(dir, "grants.json")}}
 	a := g.For("chat", "telegram", 1)
 	if a.Verdict("write_file", true).Action != agent.Ask {
 		t.Fatal("nothing is granted yet")
@@ -95,7 +95,7 @@ func TestGrantsAllowOnlyTheChatAndToolTheyWereMadeFor(t *testing.T) {
 			t.Errorf("%s must still be asked", name)
 		}
 	}
-	if a.Verdict("skill_save", true).Action != agent.Ask {
+	if a.Verdict("skill_delete", true).Action != agent.Ask {
 		t.Error("a grant covers one tool")
 	}
 	if fi, _ := os.Stat(g.Grants.Path); fi.Mode().Perm() != 0o600 {
@@ -118,7 +118,7 @@ func TestRememberable(t *testing.T) {
 	g := &Guard{Policy: mustPolicy(t, map[string]string{"cron_add": "ask", "read_*": "allow"}, nil), Grants: &Grants{Path: filepath.Join(t.TempDir(), "g")}}
 	p := ChatPermissions{G: g, Gateway: "telegram"}
 	for tool, want := range map[string]bool{
-		"write_file": true,
+		"skill_view": true,
 		"shell":      false, // kept out by default
 		"cron_add":   false, // the config says always ask
 		"read_file":  false, // the config already decides
@@ -416,5 +416,40 @@ func TestNeverRememberAddsToWhatIsKeptOutOfAlwaysAllow(t *testing.T) {
 	g.Policy = mustPolicy(t, map[string]string{"mcp_mail_*": "allow"}, nil)
 	if p.Rememberable("mcp_mail_create_draft") {
 		t.Fatal("a rule has already decided")
+	}
+}
+
+func TestToolsWithLastingEffectsAreNeverRememberedByDefault(t *testing.T) {
+	g := &Guard{Policy: mustPolicy(t, nil, nil), Grants: &Grants{Path: filepath.Join(t.TempDir(), "g")}}
+	p := ChatPermissions{G: g, Gateway: "telegram"}
+	for _, tool := range []string{"shell", "write_file", "skill_save", "cron_add", "task_start", "goal_create", "watch_create", "watch_update", "goal_update"} {
+		if p.Rememberable(tool) {
+			t.Errorf("%s: a choice to always allow it would let it run later, or unattended, unseen", tool)
+		}
+	}
+	if !p.Rememberable("skill_delete") {
+		t.Error("the list is not everything")
+	}
+}
+
+// A grant is a line in a file. A file the agent was able to write, or one made
+// before a tool was added to no_remember, must not get round that list.
+func TestAGrantForAToolThatCannotBeRememberedIsIgnored(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "grants.json")
+	grants := &Grants{Path: path}
+	for _, tool := range []string{"shell", "write_file", "skill_delete"} {
+		if err := grants.Add("telegram:1", tool); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g := &Guard{Policy: mustPolicy(t, nil, nil), Grants: grants}
+	s := g.For("chat", "telegram", 1)
+	for _, tool := range []string{"shell", "write_file"} {
+		if v := s.Verdict(tool, true); v.Action != agent.Ask {
+			t.Errorf("%s: %+v", tool, v)
+		}
+	}
+	if v := s.Verdict("skill_delete", true); v.Action != agent.Allow || v.Via != "grant" {
+		t.Errorf("an ordinary grant still works: %+v", v)
 	}
 }

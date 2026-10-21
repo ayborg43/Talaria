@@ -314,7 +314,7 @@ func (s *fakeState) evaluate(expr string) any {
 			return val(nil)
 		}
 		s.located = ref
-		return val(map[string]any{"x": 100, "y": 50, "covered": ref == 3, "hit": `div "Cookie banner"`, "tag": e.Tag})
+		return val(map[string]any{"x": 100, "y": 50, "covered": ref == 3 && strings.Contains(s.url, "shop.test"), "hit": `div "Cookie banner"`, "tag": e.Tag})
 	case strings.HasPrefix(expr, focusJS+"("):
 		var clear bool
 		fmt.Sscanf(strings.TrimPrefix(expr, focusJS+"("), "%d, %t)", &ref, &clear)

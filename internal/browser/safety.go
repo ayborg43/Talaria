@@ -75,6 +75,13 @@ func (m *Manager) checkHost(ctx context.Context, host string) error {
 		strings.HasSuffix(lower, ".internal") || strings.HasSuffix(lower, ".local") {
 		return refuse
 	}
+	for _, r := range lower {
+		if r > 127 {
+			// Chrome reads full-width digits and dots, Unicode look-alikes and the like as ordinary ones
+			// (http://１２７.０.０.１ is 127.0.0.1), and this check cannot tell what it will make of them.
+			return fmt.Errorf("%s has characters that are not plain ASCII. Use the punycode form (xn--...) of the name, or the address as numbers, so it can be checked", host)
+		}
+	}
 	if a, err := netip.ParseAddr(strings.Trim(lower, "[]")); err == nil {
 		if privateAddr(a) {
 			return refuse
@@ -93,9 +100,11 @@ func (m *Manager) checkHost(ctx context.Context, host string) error {
 			return net.DefaultResolver.LookupHost(rctx, h)
 		}
 	}
-	addrs, err := resolve(ctx, host)
+	addrs, err := resolve(ctx, lower)
 	if err != nil {
-		return nil // an unresolvable name fails when the browser loads it, with a clearer message
+		// Not looking is not the same as safe: a name this machine cannot resolve may still resolve, to
+		// somewhere private, where the browser runs.
+		return fmt.Errorf("%s could not be looked up from here (%v), so it cannot be checked against private addresses and was not opened", host, err)
 	}
 	for _, s := range addrs {
 		if a, err := netip.ParseAddr(s); err == nil && privateAddr(a) {

@@ -14,6 +14,7 @@ import (
 	"talaria/internal/cron"
 	"talaria/internal/execenv"
 	"talaria/internal/mcp"
+	"talaria/internal/metrics"
 	"talaria/internal/oauth/oauthtest"
 	"talaria/internal/provider"
 	"talaria/internal/vault"
@@ -420,4 +421,20 @@ type funcModel func(provider.Request) provider.Message
 
 func (f funcModel) Chat(_ context.Context, req provider.Request) (provider.Message, error) {
 	return f(req), nil
+}
+
+func TestWatchPollsAreCountedByOutcome(t *testing.T) {
+	metrics.Reset()
+	w := newWatchRig(t, nil)
+	x := w.newWatch(t, nil)
+	w.poll(t, x.ID) // the baseline is quiet
+	w.mail.set("1 unread", false)
+	w.poll(t, x.ID)
+	w.mail.set("", true)
+	w.poll(t, x.ID)
+	for outcome, want := range map[string]float64{"quiet": 1, "changed": 1, "failed": 1} {
+		if got := metrics.Get("talaria_watch_polls_total", "outcome", outcome); got != want {
+			t.Errorf("%s: %v, want %v", outcome, got, want)
+		}
+	}
 }

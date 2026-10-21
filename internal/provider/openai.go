@@ -31,7 +31,7 @@ type OpenAI struct {
 }
 
 func NewOpenAI(baseURL, apiKey string) *OpenAI {
-	return &OpenAI{BaseURL: strings.TrimRight(baseURL, "/"), APIKey: apiKey, HTTP: &http.Client{}}
+	return &OpenAI{BaseURL: strings.TrimRight(baseURL, "/"), APIKey: apiKey, HTTP: newHTTPClient()}
 }
 
 type wireFunction struct {
@@ -261,6 +261,9 @@ func readOpenAIStream(body io.Reader, onText func(string)) (Message, error) {
 			onText(c.Delta.Content)
 		}
 		for _, tc := range c.Delta.ToolCalls {
+			if tc.Index < 0 || tc.Index >= maxToolCalls {
+				return fmt.Errorf("the reply numbers a tool call %d: refusing it", tc.Index)
+			}
 			for len(calls) <= tc.Index {
 				calls = append(calls, &ToolCall{})
 			}

@@ -19,7 +19,19 @@ type Tool struct {
 	// Parallel marks a tool that is safe to run at the same time as other
 	// Parallel tools called in the same model turn.
 	Parallel bool
-	Run      func(ctx context.Context, args json.RawMessage) (string, error)
+	// NeedsApprovalFor, if set, decides per call whether it needs approval, for a
+	// tool that is harmless for some arguments and not for others (a watch that is
+	// paused versus one that is deleted). NeedsApproval, if set, still applies.
+	NeedsApprovalFor func(args json.RawMessage) bool
+	// Untrusted marks a tool whose results carry text from outside: a web page, a
+	// mail, a connected service's reply. Once one has run, the conversation has
+	// read something an attacker could have written.
+	Untrusted bool
+	// Egress, if set, says whether a call could send something out, or leave
+	// something behind that acts later. After the conversation has read outside
+	// content such a call asks first, even if it would normally run without asking.
+	Egress func(args json.RawMessage) bool
+	Run    func(ctx context.Context, args json.RawMessage) (string, error)
 	// RunRich, if set, is used instead of Run, for a tool whose result has pictures.
 	RunRich func(ctx context.Context, args json.RawMessage) (Result, error)
 	// Describe, if set, says in plain words what a call will do, for the

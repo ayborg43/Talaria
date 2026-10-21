@@ -57,7 +57,9 @@ func (s *Scope) Verdict(tool string, needsApproval bool) agent.Verdict {
 		}
 		return agent.Verdict{Action: r.action, Via: "rule", Rule: name + " = " + actionName(r.action)}
 	}
-	if needsApproval && s.useGrants && s.g.Grants != nil && s.g.Grants.Allowed(grantKey(s.gateway, s.chat), tool) {
+	// A grant is only honoured for a tool it could have been made for: a file edited by hand,
+	// or a tool listed in no_remember after the grant was given, does not get round that list.
+	if needsApproval && s.useGrants && s.g.Grants != nil && s.g.Policy.Rememberable(tool) && s.g.Grants.Allowed(grantKey(s.gateway, s.chat), tool) {
 		return agent.Verdict{Action: agent.Allow, Via: "grant"}
 	}
 	if needsApproval {

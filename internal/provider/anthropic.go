@@ -28,7 +28,7 @@ type Anthropic struct {
 }
 
 func NewAnthropic(baseURL, apiKey string, maxTokens int) *Anthropic {
-	return &Anthropic{BaseURL: strings.TrimRight(baseURL, "/"), APIKey: apiKey, MaxTokens: maxTokens, HTTP: &http.Client{}}
+	return &Anthropic{BaseURL: strings.TrimRight(baseURL, "/"), APIKey: apiKey, MaxTokens: maxTokens, HTTP: newHTTPClient()}
 }
 
 type aCache struct {
@@ -254,6 +254,9 @@ func readAnthropicStream(body io.Reader, onText func(string)) (Message, error) {
 		switch ev.Type {
 		case "content_block_start":
 			if ev.ContentBlock.Type == "tool_use" {
+				if len(order) >= maxToolCalls {
+					return fmt.Errorf("the reply announces more than %d tool calls: refusing it", maxToolCalls)
+				}
 				calls[ev.Index] = &call{id: ev.ContentBlock.ID, name: ev.ContentBlock.Name}
 				order = append(order, ev.Index)
 			}

@@ -52,11 +52,11 @@ func (s *Store) Save(name, description, body string) error {
 	if len(body) > maxBody {
 		return fmt.Errorf("body too large (%d bytes, max %d)", len(body), maxBody)
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
 	doc := fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n%s\n", name, description, strings.TrimSpace(body))
-	return os.WriteFile(p, []byte(doc), 0o644)
+	return os.WriteFile(p, []byte(doc), 0o600)
 }
 
 func (s *Store) Load(name string) (Skill, error) {

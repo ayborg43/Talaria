@@ -95,10 +95,31 @@ func TestAllowPrivateOpensThem(t *testing.T) {
 	}
 }
 
-// A name that does not resolve is left to the browser, whose error is clearer.
-func TestUnresolvableNamesAreNotRefusedHere(t *testing.T) {
-	if _, err := checker(false).CheckURL(context.Background(), "http://no-such-host.example/"); err != nil {
+// A name this machine cannot look up may still resolve where the browser runs, to somewhere
+// private: not being able to check is not a pass.
+func TestNamesThatCannotBeLookedUpAreNotOpened(t *testing.T) {
+	_, err := checker(false).CheckURL(context.Background(), "http://no-such-host.example/")
+	if err == nil || !strings.Contains(err.Error(), "could not be looked up") {
 		t.Fatalf("%v", err)
+	}
+	// With private addresses allowed there is nothing to check, so nothing to fail.
+	if _, err := checker(true).CheckURL(context.Background(), "http://no-such-host.example/"); err != nil {
+		t.Fatalf("%v", err)
+	}
+}
+
+// Chrome turns full-width and look-alike characters into ordinary ones, so
+// http://１２７.０.０.１/ is the machine itself. This check cannot say what Chrome will make
+// of a name, so a name that is not plain ASCII is not opened.
+func TestNamesThatAreNotPlainASCIIAreNotOpened(t *testing.T) {
+	for _, host := range []string{"http://１２７.０.０.１/", "http://ｌｏｃａｌｈｏｓｔ/", "http://127。0。0。1/", "http://exаmple.com/", "http://例え.jp/"} {
+		_, err := checker(false).CheckURL(context.Background(), host)
+		if err == nil || !strings.Contains(err.Error(), "not plain ASCII") {
+			t.Errorf("%s: %v", host, err)
+		}
+	}
+	if _, err := checker(false).CheckURL(context.Background(), "http://xn--r8jz45g.jp/"); err == nil || strings.Contains(err.Error(), "not plain ASCII") {
+		t.Errorf("the punycode form passes the character check: %v", err)
 	}
 }
 

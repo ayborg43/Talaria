@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -293,5 +294,30 @@ func TestUseEnvironmentKeepsTheOtherTools(t *testing.T) {
 	ag.Run(context.Background(), "y")
 	if strings.Join(before, ",") != strings.Join(names, ",") {
 		t.Fatalf("switching replaces the four tools in place and adds or drops nothing:\nbefore %v\nafter  %v", before, names)
+	}
+}
+
+// Everything Talaria keeps is private to the user: the history is every conversation.
+func TestStateIsKeptOwnerOnly(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "state")
+	os.MkdirAll(home, 0o755) // made by an older version, open to others
+	rt := Open(Config{Home: home, Provider: nil}, func(string, ...any) {})
+	defer rt.Close()
+	rt.notes.Add("memory", "likes tea")
+	if fi, err := os.Stat(home); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("the home directory: %v %v", fi, err)
+	}
+	err := filepath.WalkDir(home, func(p string, d os.DirEntry, err error) error {
+		fi, _ := d.Info()
+		if fi.Mode().Perm()&0o077 != 0 {
+			t.Errorf("%s is readable by others: %v", p, fi.Mode())
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "sessions.db")); err != nil {
+		t.Fatal("the history was created")
 	}
 }

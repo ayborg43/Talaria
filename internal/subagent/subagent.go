@@ -47,7 +47,8 @@ func (l Limits) Validate() error {
 // only the main agent changes Talaria's own persistent state (notes, skills,
 // schedules) and decides what is worth keeping, and a subagent cannot start
 // more subagents, so delegation cannot run away.
-var excluded = []string{"delegate", "memory", "skill_save", "skill_delete", "cron_add", "cron_remove"}
+var excluded = []string{"delegate", "memory", "skill_save", "skill_delete", "cron_add", "cron_remove",
+	"task_start", "task_cancel", "goal_create", "goal_update", "watch_create", "watch_update"}
 
 const framing = `You are a subagent working for Talaria, a personal agent. The main agent has delegated one task to you.
 You work alone: you cannot talk to the user or ask questions, and you cannot see the main conversation, so rely only on the task and your tools.
@@ -93,6 +94,10 @@ func (p *Pool) Register(parent *agent.Agent, background func() string) {
 			"name":{"type":"string","description":"a short label for this task, shown with its progress and approval prompts"}},
 			"required":["task"]}`),
 		Parallel: true,
+		// What a subagent brings back was read from wherever it looked, and it starts with a clean
+		// slate: a conversation that has read outside content must not be able to wash it through one.
+		Untrusted: true,
+		Egress:    tool.Always,
 		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var a struct{ Task, Name string }
 			if err := json.Unmarshal(raw, &a); err != nil {
@@ -133,8 +138,10 @@ func (p *Pool) run(ctx context.Context, parent *agent.Agent, background func() s
 		MaxSteps: p.MaxSteps,
 		// A subagent is held to the same permission rules as the agent that
 		// started it, and its calls go in the same record, under its label.
-		Gate:  parent.Gate,
-		Label: label,
+		Gate:           parent.Gate,
+		GuardUntrusted: parent.GuardUntrusted,
+		BeforeModel:    parent.BeforeModel, // a subagent spends from the same budget
+		Label:          label,
 		// Calls that ask go to the user through the parent's approval, labelled so
 		// they can tell which task is asking.
 		Approve: func(tool, args string) bool {
@@ -149,6 +156,9 @@ func (p *Pool) run(ctx context.Context, parent *agent.Agent, background func() s
 				parent.OnToolStart("  ↳ ["+label+"] "+tool, args)
 			}
 		},
+	}
+	if parent.ReadOutside() {
+		sub.MarkUntrusted()
 	}
 
 	runCtx, cancel := context.WithTimeout(ctx, p.Timeout)

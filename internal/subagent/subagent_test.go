@@ -604,3 +604,75 @@ func TestSubagentsDoNotGetTheBrowser(t *testing.T) {
 		t.Fatalf("parent %v, subagent %v", parentTools, subTools)
 	}
 }
+
+// A subagent spends from the same budget of model requests as the agent that started it, and holds the same
+// guard on outside content, and starts as tainted as the conversation was.
+func TestASubagentInheritsTheBudgetAndWhatTheParentHasRead(t *testing.T) {
+	var sawSub bool
+	p := chatFunc(func(ctx context.Context, req provider.Request) (provider.Message, error) {
+		switch {
+		case isSub(req):
+			sawSub = true
+			return text("sub done"), nil
+		case lastTool(req):
+			return text("fin"), nil
+		}
+		return toolCalls(delegateCall("1", "do a thing", "w")), nil
+	})
+	pool := NewPool(Limits{})
+	a := newParent(p, pool)
+	var spent int
+	a.BeforeModel = func() error { spent++; return nil }
+	if _, err := a.Run(context.Background(), "go"); err != nil || !sawSub {
+		t.Fatalf("%v %v", err, sawSub)
+	}
+	if spent != 3 {
+		t.Fatalf("parent twice and the subagent once, all counted: %d", spent)
+	}
+
+	// A subagent that the budget refuses does not reach the model.
+	sawSub = false
+	a2 := newParent(p, pool)
+	n := 0
+	a2.BeforeModel = func() error {
+		n++
+		if n > 1 {
+			return fmt.Errorf("budget used up")
+		}
+		return nil
+	}
+	got, _ := a2.Run(context.Background(), "go")
+	if sawSub {
+		t.Fatalf("the subagent ran past the budget: %q", got)
+	}
+
+	// What the parent has read, the subagent has read.
+	var subAsked []string
+	p3 := chatFunc(func(ctx context.Context, req provider.Request) (provider.Message, error) {
+		switch {
+		case isSub(req) && lastTool(req):
+			return text("sub done"), nil
+		case isSub(req):
+			return toolCalls(provider.ToolCall{ID: "s", Name: "poster", Arguments: `{}`}), nil
+		case lastTool(req):
+			return text("fin"), nil
+		}
+		return toolCalls(delegateCall("1", "do a thing", "w")), nil
+	})
+	a3 := newParent(p3, pool)
+	a3.Tools.Register(tool.Tool{Name: "poster", Egress: tool.Always, Run: func(context.Context, json.RawMessage) (string, error) { return "posted", nil }})
+	a3.GuardUntrusted = true
+	a3.Approve = func(name, args string) bool {
+		subAsked = append(subAsked, name)
+		return strings.HasPrefix(name, "delegate")
+	}
+	a3.MarkUntrusted()
+	a3.Run(context.Background(), "go")
+	var sawFlagged bool
+	for _, n := range subAsked {
+		sawFlagged = sawFlagged || strings.Contains(n, "poster (after reading outside content) (subagent w)")
+	}
+	if !sawFlagged {
+		t.Fatalf("a subagent of a conversation that read outside content asks before something that could send it out, with its own label on it too: %v", subAsked)
+	}
+}

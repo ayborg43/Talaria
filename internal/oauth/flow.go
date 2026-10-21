@@ -133,6 +133,9 @@ func (l Login) Run(ctx context.Context) (*vault.OAuthData, error) {
 
 	// The page the browser ends up on carries the code.
 	got := make(chan callback, 2)
+	// Only an answer that carries the state Talaria made is heard. Anything else, such as a web
+	// page probing this port, is turned away and the wait goes on: it must not be able to end the sign-in.
+	ours := func(cb callback) bool { return subtle.ConstantTimeCompare([]byte(cb.state), []byte(state)) == 1 }
 	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/callback" {
 			http.NotFound(w, r)
@@ -140,6 +143,11 @@ func (l Login) Run(ctx context.Context) (*vault.OAuthData, error) {
 		}
 		cb := parseCallback(r.URL.Query())
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if !ours(cb) {
+			w.WriteHeader(http.StatusBadRequest)
+			io.WriteString(w, "<h1>Not a sign-in Talaria started</h1>")
+			return
+		}
 		if cb.err != "" {
 			fmt.Fprintf(w, "<h1>Sign-in failed</h1><p>%s</p><p>You can close this tab.</p>", html.EscapeString(cb.err))
 		} else {
@@ -171,9 +179,11 @@ func (l Login) Run(ctx context.Context) (*vault.OAuthData, error) {
 				if perr != nil {
 					return
 				}
-				select {
-				case got <- parseCallback(u.Query()):
-				default:
+				if cb := parseCallback(u.Query()); ours(cb) {
+					select {
+					case got <- cb:
+					default:
+					}
 				}
 			}
 		}()
@@ -194,8 +204,6 @@ func (l Login) Run(ctx context.Context) (*vault.OAuthData, error) {
 	switch {
 	case cb.err != "":
 		return nil, fmt.Errorf("the server refused the sign-in: %s", cb.err)
-	case subtle.ConstantTimeCompare([]byte(cb.state), []byte(state)) != 1:
-		return nil, errors.New("the sign-in came back with the wrong state, so it was not one Talaria started: ignoring it")
 	case cb.code == "":
 		return nil, errors.New("the sign-in came back without a code")
 	}
