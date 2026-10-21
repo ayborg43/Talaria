@@ -1,0 +1,343 @@
+// Package agent runs the model <-> tools loop.
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"talaria/internal/provider"
+	"talaria/internal/tool"
+)
+
+const (
+	defaultMaxSteps = 25
+	maxToolOutput   = 32 << 10
+)
+
+// Action is what to do with a tool call.
+type Action int
+
+const (
+	Allow Action = iota // run it
+	Ask                 // run it if the user approves
+	Deny                // do not run it
+)
+
+// Verdict is a Gate's ruling on a call.
+type Verdict struct {
+	Action Action
+	// Via says where the ruling came from, for the activity log: "auto" (the
+	// tool's own default), "rule" (a permission rule), or "grant" (the user chose
+	// to always allow this tool in this chat).
+	Via  string
+	Rule string // the rule that matched, if any
+}
+
+// Entry is one tool call as the activity log records it.
+type Entry struct {
+	Tool, Args string
+	Label      string // the subagent that made the call, if one did
+	Allowed    bool
+	Via        string // "auto", "rule", "grant", "prompt", or "unknown tool"
+	Rule       string
+	Status     string // "ok", "error", or "not run"
+	Result     string
+	Took       time.Duration
+}
+
+// Gate is the permission layer around tools: it rules on each call before it
+// runs, scrubs what comes back, and keeps a record. A nil Gate leaves things as
+// they were: tools that need approval ask, the rest run.
+type Gate interface {
+	// Verdict rules on a call to the named tool. needsApproval is the tool's own
+	// default: true means that, with no rule, it asks.
+	Verdict(tool string, needsApproval bool) Verdict
+	// Scrub removes secrets from text on its way to the model or to storage.
+	Scrub(text string) string
+	// Record notes a finished (or refused) call.
+	Record(Entry)
+}
+
+// Labelled names a tool as a subagent's call to it appears in an approval
+// prompt: "write_file (subagent notes)". BaseTool undoes it.
+func Labelled(tool, label string) string { return tool + " (subagent " + label + ")" }
+
+// BaseTool is the tool a possibly Labelled name refers to.
+func BaseTool(name string) string {
+	if i := strings.Index(name, " (subagent "); i > 0 {
+		return name[:i]
+	}
+	return name
+}
+
+// Agent holds one conversation and drives it to a final answer.
+type Agent struct {
+	Provider provider.Provider
+	Model    string
+	Tools    *tool.Registry
+	System   string
+	MaxSteps int
+	// Context, if set, returns extra text for the system prompt. It is asked for
+	// on every model call and is not kept in the conversation, so it can change
+	// as the conversation goes on (for instance when the user moves the agent's
+	// tools to another environment) without the history ever contradicting it.
+	Context func() string
+
+	// Approve is asked before any call the Gate says to ask about (by default,
+	// tools with NeedsApproval). Nil means deny.
+	Approve func(name, args string) bool
+	// Gate, if set, rules on every tool call, scrubs results and keeps a record.
+	Gate Gate
+	// Label names this agent in the record when it is a subagent.
+	Label string
+	// OnToolStart, if set, is called just before a tool runs, after any approval.
+	// Parallel tools run at once, so it may be called from several goroutines.
+	OnToolStart func(name, args string)
+	// OnToolCall, if set, is told about each tool call and its outcome.
+	OnToolCall func(name, args, result string)
+	// OnMessage, if set, sees every message added to the conversation (for persistence).
+	OnMessage func(provider.Message)
+	// OnText, if set, makes the model stream: it receives reply text as it is
+	// generated, including text said before tool calls.
+	OnText func(delta string)
+
+	messages []provider.Message
+}
+
+func (a *Agent) add(m provider.Message) {
+	a.messages = append(a.messages, m)
+	if a.OnMessage != nil {
+		a.OnMessage(m)
+	}
+}
+
+// Run appends the user's input, loops until the model answers without tool
+// calls, and returns that final answer. History is kept across calls.
+func (a *Agent) Run(ctx context.Context, input string) (string, error) {
+	if len(a.messages) == 0 && a.System != "" {
+		a.messages = append(a.messages, provider.Message{Role: provider.RoleSystem, Content: a.System})
+	}
+	a.add(provider.Message{Role: provider.RoleUser, Content: input})
+
+	steps := a.MaxSteps
+	if steps <= 0 {
+		steps = defaultMaxSteps
+	}
+
+	for i := 0; i < steps; i++ {
+		reply, err := a.Provider.Chat(ctx, provider.Request{
+			Model:    a.Model,
+			Messages: a.requestMessages(),
+			Tools:    a.Tools.Specs(),
+			OnText:   a.OnText,
+		})
+		if err != nil {
+			return "", err
+		}
+		a.add(reply)
+		if len(reply.ToolCalls) == 0 {
+			return reply.Content, nil
+		}
+
+		a.runCalls(ctx, reply.ToolCalls)
+	}
+	return "", fmt.Errorf("stopped after %d steps without a final answer", steps)
+}
+
+// requestMessages is the conversation as the model should see it: the stored
+// history, with Context added to the system prompt.
+func (a *Agent) requestMessages() []provider.Message {
+	history := a.dropOldImages(a.messages)
+	if a.Context == nil {
+		return history
+	}
+	extra := a.Context()
+	if extra == "" {
+		return history
+	}
+	msgs := slices.Clone(history) // the history itself stays as it was
+	if len(msgs) > 0 && msgs[0].Role == provider.RoleSystem {
+		msgs[0].Content += "\n\n" + extra
+		return msgs
+	}
+	return append([]provider.Message{{Role: provider.RoleSystem, Content: extra}}, msgs...)
+}
+
+// maxImagesKept is how many of the most recent pictures the model is sent. A
+// picture costs far more than the text around it, and the model has long since
+// acted on an old screenshot; the stored conversation keeps them all.
+const maxImagesKept = 2
+
+const oldImageNote = "[an earlier image was left out to save space]"
+
+// dropOldImages returns msgs with only the newest pictures left in.
+func (a *Agent) dropOldImages(msgs []provider.Message) []provider.Message {
+	keep := maxImagesKept
+	var out []provider.Message
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if len(msgs[i].Images) == 0 {
+			continue
+		}
+		if keep > 0 {
+			keep -= len(msgs[i].Images)
+			continue
+		}
+		if out == nil {
+			out = slices.Clone(msgs) // copy only when something must change
+		}
+		out[i].Images = nil
+		out[i].Content = strings.TrimSpace(out[i].Content + "\n" + oldImageNote)
+	}
+	if out == nil {
+		return msgs
+	}
+	return out
+}
+
+// runCalls executes one turn's tool calls. A run of consecutive Parallel tools
+// goes at once; everything else runs one at a time, in order. Results are
+// recorded in the order the model asked for them either way.
+func (a *Agent) runCalls(ctx context.Context, calls []provider.ToolCall) {
+	finish := func(call provider.ToolCall, result execResult) {
+		if a.OnToolCall != nil {
+			a.OnToolCall(call.Name, call.Arguments, result.text)
+		}
+		a.add(provider.Message{Role: provider.RoleTool, ToolCallID: call.ID, Content: result.text, Images: result.images})
+	}
+
+	for i := 0; i < len(calls); {
+		j := i
+		for j < len(calls) && a.parallel(calls[j]) {
+			j++
+		}
+		if j-i < 2 { // nothing to overlap with
+			finish(calls[i], a.execute(ctx, calls[i]))
+			i++
+			continue
+		}
+
+		results := make([]execResult, j-i)
+		var wg sync.WaitGroup
+		for k := i; k < j; k++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				results[k-i] = a.execute(ctx, calls[k])
+			}()
+		}
+		wg.Wait()
+		for k := i; k < j; k++ {
+			finish(calls[k], results[k-i])
+		}
+		i = j
+	}
+}
+
+func (a *Agent) parallel(call provider.ToolCall) bool {
+	t, ok := a.Tools.Get(call.Name)
+	return ok && t.Parallel
+}
+
+// Call runs one tool call that did not come from the model, through the same
+// rules as one that did (the Gate's verdict, scrubbing, the activity log), but
+// without ever asking anyone: a call that would need approval is refused. A
+// watch uses it to poll a service on its own. An error is the tool's own
+// message, or why it was refused.
+func (a *Agent) Call(ctx context.Context, name string, args json.RawMessage) (string, error) {
+	quiet := *a
+	quiet.Approve = nil
+	if len(args) == 0 {
+		args = json.RawMessage(`{}`)
+	}
+	res := quiet.execute(ctx, provider.ToolCall{ID: "direct", Name: name, Arguments: string(args)})
+	if msg, failed := strings.CutPrefix(res.text, "error: "); failed {
+		return "", errors.New(msg)
+	}
+	return res.text, nil
+}
+
+// execResult is what one tool call came to: text, and any pictures.
+type execResult struct {
+	text   string
+	images []provider.Image
+}
+
+// execute never returns an error: failures go back to the model as text so it can recover.
+func (a *Agent) execute(ctx context.Context, call provider.ToolCall) (res execResult) {
+	entry := Entry{Tool: call.Name, Args: call.Arguments, Label: a.Label, Status: "not run"}
+	defer func() {
+		entry.Result = res.text
+		if a.Gate != nil {
+			a.Gate.Record(entry)
+		}
+	}()
+
+	t, ok := a.Tools.Get(call.Name)
+	if !ok {
+		entry.Via = "unknown tool"
+		return execResult{text: fmt.Sprintf("error: unknown tool %q", call.Name)}
+	}
+
+	if t.LogArgs != nil {
+		entry.Args = t.LogArgs([]byte(call.Arguments))
+	}
+	verdict := Verdict{Via: "auto"}
+	if a.Gate != nil {
+		verdict = a.Gate.Verdict(call.Name, t.NeedsApproval)
+	} else if t.NeedsApproval {
+		verdict.Action = Ask
+	}
+	entry.Via, entry.Rule = verdict.Via, verdict.Rule
+	switch verdict.Action {
+	case Deny:
+		return execResult{text: "error: the permission rules do not allow this tool"}
+	case Ask:
+		entry.Via = "prompt"
+		shown := call.Arguments
+		if t.Describe != nil { // what the user is asked about is what the call will do, not its raw arguments
+			if d := t.Describe([]byte(call.Arguments)); d != "" {
+				shown = d
+			}
+		}
+		if a.Approve == nil || !a.Approve(call.Name, shown) {
+			return execResult{text: "error: the user denied this tool call"}
+		}
+	}
+	entry.Allowed = true
+
+	defer func() { // a crashing tool must not take the whole agent down
+		if r := recover(); r != nil {
+			entry.Status = "error"
+			res = execResult{text: fmt.Sprintf("error: the tool crashed: %v", r)}
+		}
+	}()
+	if a.OnToolStart != nil {
+		a.OnToolStart(call.Name, call.Arguments)
+	}
+	start := time.Now()
+	out, err := t.Execute(ctx, []byte(call.Arguments))
+	entry.Took = time.Since(start)
+	if err != nil {
+		entry.Status = "error"
+		return execResult{text: a.scrub("error: " + err.Error())}
+	}
+	entry.Status = "ok"
+	text := a.scrub(out.Text) // before cutting, so a secret is never left half-shown
+	if len(text) > maxToolOutput {
+		text = text[:maxToolOutput] + "\n[truncated]"
+	}
+	return execResult{text: text, images: out.Images}
+}
+
+func (a *Agent) scrub(s string) string {
+	if a.Gate == nil {
+		return s
+	}
+	return a.Gate.Scrub(s)
+}

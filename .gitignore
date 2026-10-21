@@ -1,0 +1,13 @@
+# built binaries
+/tal
+/cmd/tal/tal
+*.test
+*.out
+
+# Talaria's own state and secrets, should anyone point TALARIA_HOME here
+.talaria/
+*.enc
+vault.key
+.env
+.env.*
+config.json
