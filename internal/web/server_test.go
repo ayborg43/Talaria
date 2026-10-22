@@ -656,3 +656,45 @@ func TestTheAddressBehindAProxyIsTheOneItAdded(t *testing.T) {
 		t.Fatalf("%s", got)
 	}
 }
+
+// Installing has to be offered where people will see it, and explained where the browser offers no button.
+func TestInstallingIsOfferedAtTheTopAndExplainedWhereTheBrowserHasNoButton(t *testing.T) {
+	read := func(name string) string {
+		b, err := os.ReadFile(filepath.Join("static", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	html, js := read("index.html"), read("app.js")
+	for _, want := range []string{`id="install"`, `id="install-go"`, `id="install-close"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("the page has no %s", want)
+		}
+	}
+	for _, want := range []string{"beforeinstallprompt", "appinstalled", "Install app", "Add to Home Screen", "renderInstall()"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("the script lost %q", want)
+		}
+	}
+	var m struct {
+		Display string
+		Icons   []struct{ Sizes, Type, Purpose string }
+		Start   string `json:"start_url"`
+		Name    string
+	}
+	if err := json.Unmarshal([]byte(read("manifest.webmanifest")), &m); err != nil {
+		t.Fatal(err)
+	}
+	has := func(size string) bool {
+		for _, i := range m.Icons {
+			if i.Sizes == size && i.Type == "image/png" && (i.Purpose == "" || strings.Contains(i.Purpose, "any")) {
+				return true
+			}
+		}
+		return false
+	}
+	if m.Name == "" || m.Start == "" || m.Display != "standalone" || !has("192x192") || !has("512x512") {
+		t.Errorf("the manifest does not meet what Chrome needs to offer installing: %+v", m)
+	}
+}

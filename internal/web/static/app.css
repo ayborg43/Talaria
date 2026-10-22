@@ -224,6 +224,15 @@ b,strong{font-weight:600}
 .steps{margin:6px 0 0;padding-left:20px;font-size:13.5px;color:var(--ink2)}.steps li+li{margin-top:4px}
 .foot{text-align:center;font-family:var(--mono);font-size:11px;color:var(--faint);padding:8px 0}
 
+/* install banner */
+.install{position:fixed;left:12px;right:12px;top:calc(env(safe-area-inset-top) + 10px);z-index:40;max-width:616px;margin:0 auto;display:flex;align-items:center;gap:12px;padding:10px 8px 10px 12px;border-radius:20px;background:var(--card);border:1px solid var(--brass-line);box-shadow:0 10px 30px rgba(23,21,15,.18)}
+.install-icon{width:40px;height:40px;border-radius:12px;background:var(--logo);display:flex;align-items:center;justify-content:center;flex:none}
+.install-icon svg{width:24px;height:24px}
+.install-text{flex:1;min-width:0;display:flex;flex-direction:column;font-size:13px;line-height:1.3;color:var(--muted)}
+.install-text b{color:var(--ink);font-size:14.5px;font-weight:600}
+.install .btn{height:40px;padding:0 16px;font-size:14px;border-radius:12px}
+.install .icon-btn{width:36px;height:36px}
+
 /* small pieces */
 .grow{flex:1;min-width:0}
 .toast{position:fixed;left:50%;bottom:calc(var(--tabh) + env(safe-area-inset-bottom) + 16px);transform:translate(-50%,20px);max-width:min(90vw,420px);padding:11px 16px;border-radius:14px;background:var(--ink);color:var(--bg);font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:50}

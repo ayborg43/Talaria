@@ -95,7 +95,8 @@ $('#login-form').addEventListener('submit', async (e) => {
   try {
     await api('/api/login', { method: 'POST', body: { password: $('#password').value } });
     $('#password').value = '';
-    await start();
+    await renderInstall();
+start();
   } catch (x) { err.textContent = x.message; err.hidden = false; }
   btn.disabled = false;
 });
@@ -602,12 +603,37 @@ async function notifyCard(c) {
   else card.append(h('div', { class: 'note', text: 'Get a notification when something needs your OK, even when the app is closed.' }), h('p', null, h('button', { class: 'btn primary big', type: 'button', text: 'Turn on notifications', onclick: async (e) => { e.target.disabled = true; await enablePush(); done(); } })));
   return card;
 }
-window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installEvent = e; if (S.tab === 'control') renderControl(); });
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installEvent = e; renderInstall(); if (S.tab === 'control') renderControl(); });
+window.addEventListener('appinstalled', () => { S.installEvent = null; renderInstall(); if (S.tab === 'control') renderControl(); });
+
+// A banner at the top, so installing is never buried: a button where the browser allows it, and where it does not
+// (Safari) the two taps that do it. It goes away once the app is installed or for as long as this page stays open.
+let installDismissed = false;
+function renderInstall() {
+  const bar = $('#install');
+  const ios = isIOS();
+  const show = !standalone() && !installDismissed && (S.installEvent || ios);
+  bar.hidden = !show;
+  if (!show) return;
+  $('#install-go').hidden = !S.installEvent;
+  $('#install-hint').textContent = S.installEvent ? 'Add it to your home screen to open it like an app.' : 'Tap Share, then “Add to Home Screen”.';
+}
+$('#install-go').addEventListener('click', async () => {
+  if (!S.installEvent) return;
+  S.installEvent.prompt();
+  try { await S.installEvent.userChoice; } catch { /* the browser closed it */ }
+  S.installEvent = null; renderInstall(); if (S.tab === 'control') renderControl();
+});
+$('#install-close').addEventListener('click', () => { installDismissed = true; renderInstall(); });
 function installCard() {
   if (standalone()) return null;
   const card = h('div', { class: 'card' }, h('h2', null, 'Install the app'));
   if (S.installEvent) return (card.append(h('div', { class: 'note', text: 'Add Talaria to your home screen to open it like any app.' }), h('p', null, h('button', { class: 'btn primary big', type: 'button', text: 'Install', onclick: async () => { S.installEvent.prompt(); await S.installEvent.userChoice; S.installEvent = null; renderControl(); } }))), card);
   if (isIOS()) return (card.append(h('ol', { class: 'steps' }, h('li', { text: 'Tap the Share button in Safari.' }), h('li', { text: 'Choose “Add to Home Screen”.' }), h('li', { text: 'Open Talaria from your Home Screen.' }))), card);
+  // Chrome on Android offers installing from its own menu even when it has not offered a button yet.
+  if (/android/i.test(navigator.userAgent)) return (card.append(h('div', { class: 'note', text: 'Your browser has not offered an Install button yet. You can still do it by hand:' }),
+    h('ol', { class: 'steps' }, h('li', { text: 'Tap the ⋮ menu at the top right of Chrome.' }), h('li', { text: 'Choose “Install app” (or “Add to Home screen”).' }), h('li', { text: 'Open Talaria from your home screen.' })),
+    h('div', { class: 'note', text: 'If you opened this link inside another app (Telegram, Gmail, Facebook), open it in Chrome first: that is where installing works.' })), card);
   return null;
 }
 
