@@ -26,6 +26,11 @@ services:
       # Optional: read-only calendars, as name=address pairs (the secret iCal address of each), and the zone to show times in.
       TALARIA_CALENDARS: ${TALARIA_CALENDARS:-}
       TALARIA_TIMEZONE: ${TALARIA_TIMEZONE:-}
+      # Optional: a mailbox to read (read-only): its address, an app password, and the IMAP server if it is not a common provider.
+      TALARIA_EMAIL: ${TALARIA_EMAIL:-}
+      TALARIA_EMAIL_PASSWORD: ${TALARIA_EMAIL_PASSWORD:-}
+      TALARIA_EMAIL_SERVER: ${TALARIA_EMAIL_SERVER:-}
+      TALARIA_EMAIL_USER: ${TALARIA_EMAIL_USER:-}
       # Optional: opens the saved-logins vault without anyone present, and extra settings as JSON.
       TALARIA_VAULT_PASSPHRASE: ${TALARIA_VAULT_PASSPHRASE:-}
       TALARIA_CONFIG_JSON: ${TALARIA_CONFIG_JSON:-}

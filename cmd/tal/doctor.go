@@ -111,6 +111,19 @@ func runDoctor(cfg *config.Config, cfgPath, home string, getenv func(string) str
 		}
 	}
 
+	if m, problems, configured := mailConfig(getenv); configured {
+		fmt.Fprintln(out, "\nEmail")
+		for _, pr := range problems {
+			bad("%s", pr)
+		}
+		if len(problems) == 0 {
+			ok("mailbox %s, read-only, over an encrypted connection to %s", m.Address, m.Server)
+			if m.microsoft() {
+				note("Microsoft has mostly turned off app-password sign-in for IMAP: if sign-in is refused, this account may need OAuth, which Talaria does not do yet")
+			}
+		}
+	}
+
 	fmt.Fprintln(out, "\nSafety")
 	if cfg.Policy.GuardUntrusted() {
 		ok("after reading outside content, anything that could send something out asks first")

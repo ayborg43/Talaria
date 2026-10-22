@@ -47,6 +47,17 @@ environment (named in the config, never written in it), removed from the environ
 from output and history, fetched over https only and never from a private address, and never put in an error message. What is on a
 calendar is written by others and is treated as outside content. The tool cannot change a calendar.
 
+## Email
+
+A mailbox is read over IMAP with an app password, which is kept in the environment, removed from the environment of the agent's
+shell commands, scrubbed from output and history, and sent only over a verified TLS connection. The client can send seven commands
+and none can change a mailbox (folders are opened with EXAMINE, messages fetched with BODY.PEEK); anything that is not on that list is
+refused in code, and a test checks what the server is sent. Text from the model goes into a search only after control characters are
+refused and quotes escaped, or as a length-prefixed literal, so it cannot end a command and start another. What the server sends back
+is treated as hostile: lines, blocks of data and whole answers have size limits, and nesting has a depth limit. Mail is written by
+others and is treated as outside content: invisible characters are removed, the real sender address is always shown, and the agent has
+no tool that sends mail. Attachments are named, never opened.
+
 ## Known gaps
 
 - **Discovery of a sign-in server is checked by name, not by where the address leads.** A public name that resolves to a

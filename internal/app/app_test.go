@@ -10,6 +10,7 @@ import (
 
 	"talaria/internal/calendar"
 	"talaria/internal/execenv"
+	"talaria/internal/mailbox"
 	"talaria/internal/memory"
 	"talaria/internal/provider"
 	"talaria/internal/subagent"
@@ -333,6 +334,37 @@ func TestTheCalendarToolIsOfferedOnlyWhenACalendarIsSetUp(t *testing.T) {
 	without := Open(Config{Home: t.TempDir(), Provider: nil}, func(string, ...any) {})
 	defer without.Close()
 	if _, ok := without.NewAgent(AgentOptions{}).Tools.Get("calendar_events"); ok || without.HasCalendars() {
+		t.Fatal("a tool for something that is not there")
+	}
+}
+
+func TestTheMailToolsAreOfferedOnlyWhenAMailboxIsSetUpAndNeverAskNorSend(t *testing.T) {
+	with := Open(Config{Home: t.TempDir(), Provider: nil, Mail: &mailbox.Service{Address: "me@example.com", Password: "pw", Server: "imap.example.com:993"}}, func(string, ...any) {})
+	defer with.Close()
+	if !with.HasMail() {
+		t.Fatal("HasMail is false though a mailbox is set up")
+	}
+	tools := with.NewAgent(AgentOptions{}).Tools
+	for _, name := range []string{"email_list", "email_read", "email_folders"} {
+		tl, ok := tools.Get(name)
+		if !ok {
+			t.Fatalf("%s is missing though a mailbox is set up", name)
+		}
+		if !tl.Untrusted {
+			t.Fatalf("%s: mail is written by other people, so reading it must count as reading outside content", name)
+		}
+		if tl.NeedsApproval || tl.Egress != nil {
+			t.Fatalf("%s: a reading tool asks nobody and sends nothing", name)
+		}
+	}
+	for _, name := range []string{"email_send", "email_delete", "email_move", "email_mark"} {
+		if _, ok := tools.Get(name); ok {
+			t.Fatalf("%s exists: the mailbox is read-only", name)
+		}
+	}
+	without := Open(Config{Home: t.TempDir(), Provider: nil}, func(string, ...any) {})
+	defer without.Close()
+	if _, ok := without.NewAgent(AgentOptions{}).Tools.Get("email_list"); ok || without.HasMail() {
 		t.Fatal("a tool for something that is not there")
 	}
 }

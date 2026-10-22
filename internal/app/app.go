@@ -19,6 +19,7 @@ import (
 	"talaria/internal/execenv"
 	"talaria/internal/goal"
 	"talaria/internal/guard"
+	"talaria/internal/mailbox"
 	"talaria/internal/mcp"
 	"talaria/internal/memory"
 	"talaria/internal/provider"
@@ -66,6 +67,8 @@ type Config struct {
 	Goals *goal.Store
 	// Calendars lets the agent read the user's calendars. Nil turns the calendar tool off.
 	Calendars *calendar.Service
+	// Mail lets the agent read the user's mailbox, and only read it. Nil turns the mail tools off.
+	Mail *mailbox.Service
 	// Watches keeps what chats have asked to be told about in connected services.
 	// Nil turns watches off.
 	Watches *watch.Store
@@ -156,6 +159,9 @@ func (rt *Runtime) Goals() *goal.Store { return rt.cfg.Goals }
 
 // HasCalendars reports whether the agent can read calendars.
 func (rt *Runtime) HasCalendars() bool { return rt.cfg.Calendars != nil }
+
+// HasMail reports whether the agent can read a mailbox.
+func (rt *Runtime) HasMail() bool { return rt.cfg.Mail != nil }
 
 // Watches returns the watch store, nil if watches are off.
 func (rt *Runtime) Watches() *watch.Store { return rt.cfg.Watches }
@@ -282,6 +288,9 @@ func (rt *Runtime) NewAgent(o AgentOptions) *agent.Agent {
 	rt.mcp.Register(tools)
 	if rt.cfg.Calendars != nil {
 		calendar.RegisterTools(tools, rt.cfg.Calendars)
+	}
+	if rt.cfg.Mail != nil {
+		mailbox.RegisterTools(tools, rt.cfg.Mail)
 	}
 
 	system := SystemPrompt
