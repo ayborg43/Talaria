@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	defaultMaxSteps = 25
+	defaultMaxSteps = 100
 	maxToolOutput   = 32 << 10
 )
 
