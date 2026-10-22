@@ -472,6 +472,8 @@ func TestApprovalButtons(t *testing.T) {
 			if _, err := os.Stat(target); (err == nil) != tc.allow {
 				t.Fatalf("file written=%v, want %v", err == nil, tc.allow)
 			}
+			// The agent can be told, and finish, a moment before the press is answered: wait for the answer.
+			f.waitFor("the prompt to be updated", func() bool { return len(f.callbackLog()) >= 3 })
 			cb = f.callbackLog()[2]
 			if cb.Type != 7 || !cb.Cleared || cb.Content != prompt.Text+"\n\n"+tc.verdict {
 				t.Fatalf("the prompt should be updated in place, without buttons, to show %q: %+v", tc.verdict, cb)
