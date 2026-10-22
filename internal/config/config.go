@@ -28,6 +28,23 @@ import (
 	"talaria/internal/subagent"
 )
 
+// Write saves cfg to path as a JSON file with mode 0600 (replacing any older
+// file). It is used by the settings API to keep secrets in the config file.
+func Write(path string, cfg *Config) error {
+	data, err := json.MarshalIndent(cfg, "", "\t")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
 // Profile is one way to reach a model.
 type Profile struct {
 	Type      string `json:"type,omitempty"`        // "openai" (default), "anthropic" or "deepseek"

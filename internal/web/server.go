@@ -12,9 +12,13 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"sort"
+	"talaria/internal/config"
 
 	"talaria/internal/gateway/chat"
 )
@@ -93,6 +97,9 @@ type Server struct {
 	// TrustProxy says the address of a request is the last one a front proxy put in X-Forwarded-For.
 	TrustProxy bool
 
+	ConfigPath string
+	Cfg        *config.Config
+
 	cacheMu   sync.Mutex
 	todayAt   time.Time
 	todayJSON []byte
@@ -120,6 +127,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/logout", s.authed(s.logout))
 	mux.HandleFunc("GET /api/state", s.authed(s.state))
+	mux.HandleFunc("GET /api/settings", s.authed(s.settingsGet))
+	mux.HandleFunc("POST /api/settings", s.authed(s.settingsPost))
 	mux.HandleFunc("GET /api/events", s.authed(s.events))
 	mux.HandleFunc("POST /api/send", s.authed(s.send))
 	mux.HandleFunc("POST /api/approve", s.authed(s.approve))
@@ -295,6 +304,107 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	msgs, seq, epoch, running := s.Hub.Snapshot()
 	paused := s.Pause != nil && s.Pause.Paused()
 	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs, "seq": seq, "epoch": epoch, "running": running, "agents": s.Hub.Workers(), "model": s.Model, "version": s.Version, "paused": paused, "zone": s.zone().String()})
+}
+
+// ---- settings ----
+
+// settingsView is what the settings page shows: everything except actual API keys.
+type settingsView struct {
+	DefaultProfile  string            `json:"default_profile"`
+	Profiles        []settingsProfile `json:"profiles"`
+	HasDefaultKey   bool              `json:"has_default_key"` // TALARIA_API_KEY is set
+	DefaultKeyEnv   string            `json:"default_key_env"`
+	DefaultKeySet   bool              `json:"default_key_set"`
+	KeyEnvs         []string          `json:"key_envs"`
+	SubagentMaxSteps int               `json:"subagent_max_steps"`
+	SubagentMaxParallel int              `json:"subagent_max_parallel"`
+}
+
+type settingsProfile struct {
+	Name       string `json:"name"`
+	Type       string `json:"type,omitempty"`
+	BaseURL    string `json:"base_url,omitempty"`
+	Model      string `json:"model,omitempty"`
+	APIKeyEnv  string `json:"api_key_env,omitempty"`
+	HasKey     bool   `json:"has_key"`       // a key is configured for this profile
+	KeySource  string `json:"key_source,omitempty"`
+}
+
+func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
+	if s.Cfg == nil {
+		fail(w, http.StatusInternalServerError, "no configuration loaded")
+		return
+	}
+	view := settingsView{
+		DefaultProfile:    s.Cfg.DefaultProfile,
+		SubagentMaxSteps:  s.Cfg.Subagents.MaxSteps,
+		SubagentMaxParallel: s.Cfg.Subagents.MaxParallel,
+		KeyEnvs:           config.DefaultKeyEnvs(),
+	}
+	if defKeyEnv := os.Getenv("TALARIA_API_KEY"); defKeyEnv != "" {
+		view.HasDefaultKey = true
+		view.DefaultKeyEnv = "TALARIA_API_KEY"
+		view.DefaultKeySet = true
+	}
+	for name, p := range s.Cfg.Profiles {
+		sp := settingsProfile{Name: name, Type: p.Type, BaseURL: p.BaseURL, Model: p.Model, APIKeyEnv: p.APIKeyEnv}
+		if p.APIKey != "" {
+			sp.HasKey = true
+			sp.KeySource = "api_key in the config file"
+		}
+		view.Profiles = append(view.Profiles, sp)
+	}
+	sort.Slice(view.Profiles, func(i, j int) bool { return view.Profiles[i].Name < view.Profiles[j].Name })
+	writeJSON(w, http.StatusOK, view)
+}
+
+// settingsUpdateRequest is the payload for POST /api/settings.
+type settingsUpdateRequest struct {
+	Name       string `json:"name"`
+	Type       string `json:"type,omitempty"`
+	BaseURL    string `json:"base_url,omitempty"`
+	Model      string `json:"model,omitempty"`
+	APIKey     string `json:"api_key,omitempty"`
+	APIKeyEnv  string `json:"api_key_env,omitempty"`
+	ModelCalls int    `json:"model_calls_per_hour,omitempty"`
+	Delete     bool   `json:"_delete,omitempty"`
+}
+
+func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
+	if s.Cfg == nil || s.ConfigPath == "" {
+		fail(w, http.StatusInternalServerError, "settings cannot be saved here")
+		return
+	}
+	var in settingsUpdateRequest
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if in.Name == "" {
+		fail(w, http.StatusBadRequest, "give the profile a name")
+		return
+	}
+	if in.Delete {
+		delete(s.Cfg.Profiles, in.Name)
+	} else if p, ok := s.Cfg.Profiles[in.Name]; ok {
+		// Edit existing profile
+		if in.Type != "" { p.Type = in.Type }
+		if in.BaseURL != "" { p.BaseURL = in.BaseURL }
+		if in.Model != "" { p.Model = in.Model }
+		if in.APIKeyEnv != "" { p.APIKeyEnv = in.APIKeyEnv }
+		if in.APIKey != "" { p.APIKey = in.APIKey }
+		s.Cfg.Profiles[in.Name] = p
+	} else {
+		p := config.Profile{Type: in.Type, BaseURL: in.BaseURL, Model: in.Model, APIKeyEnv: in.APIKeyEnv}
+		if in.APIKey != "" { p.APIKey = in.APIKey }
+		if s.Cfg.Profiles == nil { s.Cfg.Profiles = map[string]config.Profile{} }
+		s.Cfg.Profiles[in.Name] = p
+	}
+	if err := config.Write(s.ConfigPath, s.Cfg); err != nil {
+		s.logf("web: settings save: %v", err)
+		fail(w, http.StatusInternalServerError, "could not save settings")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {

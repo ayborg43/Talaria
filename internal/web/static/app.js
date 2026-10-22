@@ -450,7 +450,7 @@ async function reconnect() {
 }
 
 // ---------- tabs ----------
-const TABS = ['chat', 'today', 'agents', 'needs', 'control'];
+const TABS = ['chat', 'today', 'agents', 'needs', 'control', 'settings'];
 function route() {
   const tab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'chat';
   S.tab = tab;
@@ -458,6 +458,7 @@ function route() {
   $$('#tabs a').forEach((a) => (a.getAttribute('data-tab') === tab ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
   if (tab === 'today') loadToday();
   if (tab === 'agents') loadAgentsPage();
+  if (tab === 'settings') loadSettings();
   if (tab === 'needs') renderNeeds();
   if (tab === 'control') loadControl();
   if (tab === 'chat') { const t = $('#thread'); t.scrollTop = t.scrollHeight; }
@@ -649,6 +650,112 @@ async function renderControl() {
   out.push(h('button', { class: 'btn big', type: 'button', text: 'Sign out', onclick: async () => { try { await api('/api/logout', { method: 'POST' }); } catch { /* signed out anyway */ } showLogin(); } }));
   out.push(h('div', { class: 'foot', text: 'Talaria ' + (c.version || '') }));
   $('#control-body').replaceChildren(...out);
+}
+
+// ---------- settings ----------
+let settingsEditing = null;
+
+async function loadSettings() {
+  try { S.settings = await api('/api/settings'); }
+  catch (e) { if (!(e instanceof AuthError)) toast(e.message); return; }
+  renderSettings();
+}
+
+function profileNameCard(p) {
+  const saved = p.HasKey ? h('span', { class: 'pill info', text: 'key set via ' + (p.KeySource || p.APIKeyEnv || 'config') }) : h('span', { class: 'pill', text: 'no key' });
+  const card = h('div', { class: 'card' });
+  const head = h('div', { class: 'row' });
+  head.append(h('span', { class: 'grow', text: p.Name }), saved);
+  card.append(head);
+  card.append(h('div', { class: 'field-note', text: p.Type + ' · ' + p.BaseURL + ' · model ' + p.model }));
+  const btns = h('div', { class: 'btn-row' });
+  btns.append(h('button', { class: 'btn primary', type: 'button', text: 'Edit', onclick: () => editProfile(p.Name) }));
+  btns.append(h('button', { class: 'btn danger', type: 'button', text: 'Delete', onclick: () => deleteProfile(p.Name) }));
+  card.append(btns);
+  return card;
+}
+
+function editProfile(name) {
+  settingsEditing = name;
+  const p = S.settings.profiles.find(x => x.Name === name) || { Name: name };
+  const form = h('div', { class: 'card' },
+    h('h2', null, 'Edit profile'),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Profile name' }), h('input', { id: 'prof-name', type: 'text', value: p.Name })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Type' }), h('input', { id: 'prof-type', type: 'text', value: p.Type || 'openai' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Base URL' }), h('input', { id: 'prof-baseurl', type: 'text', value: p.BaseURL || '' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Model' }), h('input', { id: 'prof-model', type: 'text', value: p.Model || '' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key env var' }), h('input', { id: 'prof-apikeyenv', type: 'text', value: p.APIKeyEnv || '' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key' }), h('input', { id: 'prof-apikey', type: 'password', placeholder: 'leave blank to keep current' })),
+    h('div', { class: 'field-note', text: 'The key is saved to config.json (mode 0600). Prefer api_key_env over pasting the key directly.' }),
+    h('div', { class: 'btn-row' },
+      h('button', { class: 'btn primary big', type: 'button', text: 'Save', onclick: saveProfile }),
+      h('button', { class: 'btn big', type: 'button', text: 'Cancel', onclick: () => { settingsEditing = null; renderSettings(); } })));
+  $('#settings-body').replaceChildren(form);
+}
+
+function newProfileForm() {
+  settingsEditing = 'new';
+  const form = h('div', { class: 'card' },
+    h('h2', null, 'Add AI profile'),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Profile name' }), h('input', { id: 'prof-name', type: 'text', placeholder: 'e.g. openrouter' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Type' }), h('input', { id: 'prof-type', type: 'text', value: 'openai' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Base URL' }), h('input', { id: 'prof-baseurl', type: 'text', placeholder: 'https://api.openai.com/v1' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Model' }), h('input', { id: 'prof-model', type: 'text', placeholder: 'gpt-4o-mini' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key env var' }), h('input', { id: 'prof-apikeyenv', type: 'text', placeholder: 'OPENROUTER_API_KEY' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key' }), h('input', { id: 'prof-apikey', type: 'password', placeholder: 'sk-...' })),
+    h('div', { class: 'field-note', text: 'Pick provider type openai, anthropic or deepseek. Keys are stored in config.json.' }),
+    h('div', { class: 'btn-row' },
+      h('button', { class: 'btn primary big', type: 'button', text: 'Add', onclick: saveProfile }),
+      h('button', { class: 'btn big', type: 'button', text: 'Cancel', onclick: () => { settingsEditing = null; renderSettings(); } })));
+  $('#settings-body').replaceChildren(form);
+}
+
+async function saveProfile() {
+  const name = $('#prof-name').value.trim();
+  const body = {
+    Name: name,
+    Type: $('#prof-type').value.trim() || undefined,
+    BaseURL: $('#prof-baseurl').value.trim() || undefined,
+    Model: $('#prof-model').value.trim() || undefined,
+    APIKeyEnv: $('#prof-apikeyenv').value.trim() || undefined,
+    APIKey: $('#prof-apikey').value.trim() || undefined,
+  };
+  try {
+    await api('/api/settings', { method: 'POST', body });
+    settingsEditing = null;
+    loadSettings();
+  } catch (e) { if (!(e instanceof AuthError)) toast(e.message); }
+}
+
+async function deleteProfile(name) {
+  if (!confirm('Delete profile "' + name + '"? This cannot be undone.')) return;
+  try {
+    await api('/api/settings', { method: 'POST', body: { Name: name, _delete: true } });
+    loadSettings();
+  } catch (e) { if (!(e instanceof AuthError)) toast(e.message); }
+}
+
+function renderSettings() {
+  const s = S.settings; if (!s || S.tab !== 'settings') return;
+  const out = [];
+
+  // Default key info
+  out.push(h('div', { class: 'card' },
+    h('h2', null, 'Default key'),
+    h('div', null,
+      s.HasDefaultKey ? h('span', { class: 'pill info', text: s.DefaultKeyEnv + ' is set' }) : h('span', { class: 'pill', text: 'no default key set' }),
+      h('div', { class: 'field-note', text: 'Set TALARIA_API_KEY in your server environment to use the default profile without a config file.' })),
+    h('button', { class: 'btn big', type: 'button', text: 'Add AI profile', onclick: newProfileForm })));
+
+  // Profiles
+  if (s.profiles.length) {
+    out.push(h('h2', null, 'Profiles'));
+    for (const p of s.profiles) out.push(profileNameCard(p));
+  } else {
+    out.push(h('div', { class: 'card' }, h('h2', null, 'Profiles'), h('div', { class: 'empty', text: 'No profiles configured yet. Add one below.' })));
+  }
+
+  $('#settings-body').replaceChildren(...out);
 }
 
 // ---------- notifications and installing ----------

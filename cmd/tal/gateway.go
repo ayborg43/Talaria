@@ -336,6 +336,8 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 			Hub: webHub, Auth: &web.Auth{Password: webSet.Password, Path: filepath.Join(home, "web_sessions.json"), Secure: webSet.Secure},
 			Engine: eng, Push: push, Pause: pause, PublicURL: webSet.PublicURL, Model: model, Version: version.String(), Started: time.Now(),
 			Sources: webSources(rt, zone, webLinks(cfg, rt, model, os.Getenv, webSet.PublicURL)), Logf: logf, TrustProxy: webSet.Secure,
+			ConfigPath: config.Path(home),
+			Cfg:        cfg,
 		}
 		s.run = func(ctx context.Context) error {
 			eng.Start(ctx)

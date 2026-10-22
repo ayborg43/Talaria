@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -810,5 +811,37 @@ func TestCalendarSettingsAreValidatedWhenLoaded(t *testing.T) {
 		if _, err := Load(write(t, bad, 0o600)); err == nil {
 			t.Errorf("%s was accepted", name)
 		}
+	}
+}
+
+
+func TestConfigWrite(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "config.json")
+	cfg := &Config{
+		DefaultProfile: "openai",
+		Profiles: map[string]Profile{
+			"openai": {Type: "openai", APIKeyEnv: "OPENAI_API_KEY", Model: "gpt-4o-mini"},
+			"claude": {Type: "anthropic", Model: "claude-sonnet"},
+		},
+	}
+	if err := Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	// Read it back
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte("openai")) || !bytes.Contains(data, []byte("claude")) {
+		t.Fatalf("config not written correctly: %s", data)
+	}
+	// Check permissions
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&0o077 != 0 {
+		t.Fatalf("config file not private: %v", fi.Mode())
 	}
 }
