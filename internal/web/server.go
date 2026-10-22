@@ -293,7 +293,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	msgs, seq, epoch, running := s.Hub.Snapshot()
 	paused := s.Pause != nil && s.Pause.Paused()
-	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs, "seq": seq, "epoch": epoch, "running": running, "model": s.Model, "version": s.Version, "paused": paused, "zone": s.zone().String()})
+	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs, "seq": seq, "epoch": epoch, "running": running, "agents": s.Hub.Workers(), "model": s.Model, "version": s.Version, "paused": paused, "zone": s.zone().String()})
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {

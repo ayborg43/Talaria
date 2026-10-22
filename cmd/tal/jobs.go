@@ -7,6 +7,7 @@ import (
 	"slices"
 	"time"
 
+	"talaria/internal/activity"
 	"talaria/internal/app"
 	"talaria/internal/cron"
 	"talaria/internal/execenv"
@@ -47,6 +48,7 @@ type jobRunner struct {
 	taskNote string // the same for a background task; taskNote if empty
 	goals    *goal.Store
 	yolo     bool
+	sink     activity.Sink // tells a page who is working, if there is one; may be nil
 }
 
 func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
@@ -88,8 +90,12 @@ func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
 		ExtraSystem: note,
 		// Only for the activity log, which says whose job made each call. A job has no
 		// cron tools: it must not schedule more jobs.
-		Origin: "job:" + j.ID, Gateway: j.Gateway, ChatID: j.ChatID, NoCron: true,
+		Origin: "job:" + j.ID, Gateway: j.Gateway, ChatID: j.ChatID, NoCron: true, Activity: r.sink,
 	})
+	if r.sink != nil {
+		id := activity.ID(ctx)
+		a.OnToolStart = func(name, _ string) { activity.Note(r.sink, id, name) }
+	}
 	if backend != nil {
 		a.Provider, a.Model = backend.Provider, backend.Model
 	}

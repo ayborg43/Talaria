@@ -368,3 +368,21 @@ func TestTheMailToolsAreOfferedOnlyWhenAMailboxIsSetUpAndNeverAskNorSend(t *test
 		t.Fatal("a tool for something that is not there")
 	}
 }
+
+type noteSink struct{}
+
+func (noteSink) Start(string, string) int64 { return 1 }
+func (noteSink) Doing(int64, string)        {}
+func (noteSink) Stop(int64)                 {}
+
+func TestAnAgentIsGivenTheSinkThatShowsWhoIsWorking(t *testing.T) {
+	rt := Open(Config{Home: t.TempDir(), Provider: nil}, func(string, ...any) {})
+	defer rt.Close()
+	sink := noteSink{}
+	if ag := rt.NewAgent(AgentOptions{Activity: sink}); ag.Activity != sink {
+		t.Fatal("the agent does not tell the sink about its helpers")
+	}
+	if ag := rt.NewAgent(AgentOptions{}); ag.Activity != nil {
+		t.Fatal("an agent with no sink has one")
+	}
+}

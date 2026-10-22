@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"talaria/internal/activity"
 	"talaria/internal/metrics"
 	"time"
 )
@@ -29,6 +30,9 @@ type Scheduler struct {
 	// Deliver sends text to a chat.
 	Deliver func(ctx context.Context, chatID int64, text string)
 	Logf    func(format string, args ...any)
+	// Activity, if set, is told when a job begins and ends, and the context given to Exec carries its
+	// worker number (activity.ID), so what runs it can say what it is doing.
+	Activity activity.Sink
 	// Paused, if set and true, holds every job: none is claimed, so each stays due and runs when
 	// the scheduler is no longer paused.
 	Paused func() bool
@@ -257,7 +261,10 @@ func (s *Scheduler) runJob(ctx, rctx context.Context, r *run, j Job) {
 	defer cancel()
 
 	started := s.timeNow()
+	id, end := activity.Begin(s.Activity, workerKind(j), j.Name)
+	runCtx = activity.With(runCtx, id)
 	reply, err := s.Exec(runCtx, j)
+	end()
 	if ctx.Err() != nil {
 		return // shutting down: not a failure of the job
 	}
@@ -312,4 +319,17 @@ func (s *Scheduler) runJob(ctx, rctx context.Context, r *run, j Job) {
 	if text != "" {
 		s.Deliver(ctx, j.ChatID, text)
 	}
+}
+
+// workerKind is how a job is named to a front end that shows who is working.
+func workerKind(j Job) string {
+	switch j.Kind {
+	case KindTask:
+		return activity.Task
+	case KindGoal:
+		return activity.Goal
+	case KindWatch:
+		return activity.Watch
+	}
+	return activity.Job
 }

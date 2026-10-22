@@ -22,14 +22,15 @@ import (
 	"talaria/internal/agent"
 	"talaria/internal/gateway/chat"
 	"talaria/internal/provider"
+	"talaria/internal/subagent"
 	"talaria/internal/tool"
 )
 
 // scripted is a model that answers from a script: "run it" makes it ask to run a command, and after the
 // command it says it is done; anything else it repeats back.
-type scripted struct{}
+type scripted struct{ gate chan struct{} }
 
-func (scripted) Chat(_ context.Context, req provider.Request) (provider.Message, error) {
+func (s scripted) Chat(ctx context.Context, req provider.Request) (provider.Message, error) {
 	last := req.Messages[len(req.Messages)-1]
 	say := func(s string) (provider.Message, error) {
 		if req.OnText != nil {
@@ -37,8 +38,21 @@ func (scripted) Chat(_ context.Context, req provider.Request) (provider.Message,
 		}
 		return provider.Message{Role: provider.RoleAssistant, Content: s}, nil
 	}
+	if strings.Contains(req.Messages[0].Content, "You are a subagent working for Talaria") { // a helper: held until released
+		if s.gate != nil {
+			select {
+			case <-s.gate:
+			case <-ctx.Done():
+				return provider.Message{}, ctx.Err()
+			}
+		}
+		return say("found it")
+	}
 	if last.Role == provider.RoleTool {
 		return say("done: " + last.Content)
+	}
+	if strings.Contains(strings.ToLower(last.Content), "delegate it") {
+		return provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "d", Name: "delegate", Arguments: `{"task":"look into it","name":"researcher"}`}}}, nil
 	}
 	if strings.Contains(strings.ToLower(last.Content), "run it") {
 		return provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "1", Name: "shell", Arguments: `{"command":"ls -la"}`}}}, nil
@@ -69,6 +83,7 @@ type rig struct {
 	agenda atomic.Int32
 	mail   atomic.Int32
 	cancel context.CancelFunc
+	gate   chan struct{}
 }
 
 func newRig(t *testing.T) *rig {
@@ -79,9 +94,13 @@ func newRig(t *testing.T) *rig {
 	reg := tool.NewRegistry()
 	reg.Register(tool.Tool{Name: "shell", Description: "x", Schema: json.RawMessage(`{"type":"object"}`), NeedsApproval: true,
 		Run: func(context.Context, json.RawMessage) (string, error) { r.ran.Add(1); return "listing", nil }})
+	r.gate = make(chan struct{})
+	pool := subagent.NewPool(subagent.Limits{})
 	eng := &chat.Engine{T: r.hub, Allowed: map[int64]bool{UserID: true}, Stream: true, EditInterval: 5 * time.Millisecond,
 		NewAgent: func(_ int64, approve func(string, string) bool) *agent.Agent {
-			return &agent.Agent{Provider: scripted{}, Model: "m", Tools: reg, MaxSteps: 4, Approve: approve}
+			ag := &agent.Agent{Provider: scripted{gate: r.gate}, Model: "m", Tools: reg, MaxSteps: 4, Approve: approve, Activity: r.hub}
+			pool.Register(ag, nil)
+			return ag
 		}}
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancel = cancel
@@ -696,5 +715,90 @@ func TestInstallingIsOfferedAtTheTopAndExplainedWhereTheBrowserHasNoButton(t *te
 	}
 	if m.Name == "" || m.Start == "" || m.Display != "standalone" || !has("192x192") || !has("512x512") {
 		t.Errorf("the manifest does not meet what Chrome needs to offer installing: %+v", m)
+	}
+}
+
+func workersOf(ev Event) string {
+	var out []string
+	for _, w := range ev.Agents {
+		out = append(out, w.Kind+":"+w.Label)
+	}
+	return strings.Join(out, ",")
+}
+
+// The agent hands a task to a helper, and the page can see both while the helper works.
+func TestThePageSeesTheAgentAndItsHelperWhileTheyWork(t *testing.T) {
+	r := newRig(t)
+	r.login()
+	_, seq, epoch := r.state()
+	ch := r.watch(seq, epoch)
+	r.do("POST", "/api/send", map[string]string{"text": "please delegate it"})
+
+	until(t, ch, "the agent and its helper", func(e Event) bool { return e.Type == "agents" && workersOf(e) == "main:Talaria,sub:researcher" })
+
+	// A page that opens now is told, too, and so is one that asks for the state.
+	_, b := r.do("GET", "/api/state", nil)
+	var st struct {
+		Agents []struct{ Kind, Label, Doing string }
+	}
+	json.Unmarshal(b, &st)
+	if len(st.Agents) != 2 || st.Agents[0].Kind != "main" || st.Agents[0].Doing != "delegate" || st.Agents[1].Kind != "sub" || st.Agents[1].Label != "researcher" {
+		t.Fatalf("%s", b)
+	}
+	_, _, epoch2 := r.state()
+	late := r.watch(0, epoch2)
+	until(t, late, "the roster for a late page", func(e Event) bool { return e.Type == "agents" && workersOf(e) == "main:Talaria,sub:researcher" })
+
+	msgs, _, _ := r.state()
+	for _, m := range msgs {
+		if m.Role == "tool" && (strings.Contains(m.Tool, "↳") || m.State == "running" && m.Tool != "delegate") {
+			t.Fatalf("a helper's progress is shown as a chip of its own: %+v", m)
+		}
+	}
+
+	close(r.gate) // the helper finishes
+	until(t, ch, "the final answer", func(e Event) bool {
+		return e.Type == "msg" && e.Msg.Role == "assistant" && e.Msg.Text == "done: found it"
+	})
+	until(t, ch, "nobody working", func(e Event) bool { return e.Type == "agents" && len(e.Agents) == 0 })
+	msgs, _, _ = r.state()
+	for _, m := range msgs {
+		if m.Role == "tool" && m.State == "running" {
+			t.Fatalf("a chip is still spinning after everything finished: %+v", m)
+		}
+	}
+	if len(r.hub.Workers()) != 0 {
+		t.Fatal("somebody is still shown working")
+	}
+}
+
+func TestStoppingTheAgentClearsItsHelpersFromThePage(t *testing.T) {
+	r := newRig(t)
+	r.login()
+	_, seq, epoch := r.state()
+	ch := r.watch(seq, epoch)
+	r.do("POST", "/api/send", map[string]string{"text": "delegate it"})
+	until(t, ch, "the helper", func(e Event) bool { return e.Type == "agents" && workersOf(e) == "main:Talaria,sub:researcher" })
+	r.do("POST", "/api/send", map[string]string{"text": "/stop"})
+	until(t, ch, "nobody working after /stop", func(e Event) bool { return e.Type == "agents" && len(e.Agents) == 0 })
+	if got := r.hub.Workers(); len(got) != 0 {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestThePageKnowsHowToShowWhoIsWorking(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("static", "app.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(b)
+	for _, want := range []string{"ev.type === 'agents'", "setAgents(d.agents)", "function renderAgents", "function nowCard", "agents working", "S.agents.length"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("the script lost %q", want)
+		}
+	}
+	h, _ := os.ReadFile(filepath.Join("static", "index.html"))
+	if !strings.Contains(string(h), `id="agents"`) {
+		t.Error("the page has nowhere to show who is working")
 	}
 }

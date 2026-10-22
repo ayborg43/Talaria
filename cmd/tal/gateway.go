@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"talaria/internal/activity"
 	"talaria/internal/agent"
 	"talaria/internal/app"
 	"talaria/internal/config"
@@ -110,6 +111,8 @@ type service struct {
 	selection func(chatID int64) (profile, environment string)
 	// sched runs this service's scheduled jobs, background tasks and goal check-ins.
 	sched *cron.Scheduler
+	// sink, if set, is told who is working for this service's chats, for a page that shows it.
+	sink activity.Sink
 }
 
 // serviceAllowlist reads who may use a service: the environment variable if
@@ -162,6 +165,8 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 	}
 	backends := gatewayBackends(cfg, res, defProvider, os.Getenv)
 
+	var webHub *web.Hub // the web app's hub, once it is made: it is also what shows who is working
+
 	// newAgent makes the function a service uses to build a chat's agent.
 	newAgent := func(s *service, note string, selection func(int64) (string, string)) func(int64, func(string, string) bool) *agent.Agent {
 		return func(chatID int64, approve func(name, args string) bool) *agent.Agent {
@@ -169,7 +174,7 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 				approve = func(string, string) bool { return true }
 			}
 			return rt.NewAgent(app.AgentOptions{
-				Approve: approve, ExtraSystem: note + agencyNote(rt), ChatID: chatID, Gateway: s.name, Tasks: s.sched,
+				Approve: approve, ExtraSystem: note + agencyNote(rt), ChatID: chatID, Gateway: s.name, Tasks: s.sched, Activity: s.sink,
 				// A job scheduled from this chat starts out with what the chat is using now.
 				Jobs: gatewayJobTargets(backends, s.envs, func() (string, string) { return selection(chatID) }),
 			})
@@ -184,12 +189,13 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 		if s.markdown {
 			note, taskText = cronNoteMarkdown, taskNoteMarkdown
 		}
-		runner := &jobRunner{rt: rt, backends: backends, envs: s.envs, allowed: s.allowed, note: note, taskNote: taskText, goals: rt.Goals(), yolo: yolo}
+		runner := &jobRunner{rt: rt, backends: backends, envs: s.envs, allowed: s.allowed, note: note, taskNote: taskText, goals: rt.Goals(), yolo: yolo, sink: s.sink}
 		s.sched = &cron.Scheduler{
-			Store:   rt.Cron,
-			Gateway: s.name,
-			Exec:    runner.run,
-			Paused:  pause.Paused,
+			Store:    rt.Cron,
+			Gateway:  s.name,
+			Exec:     runner.run,
+			Paused:   pause.Paused,
+			Activity: s.sink,
 			Deliver: func(ctx context.Context, chatID int64, text string) {
 				if s.allowed[chatID] {
 					s.send(ctx, chatID, text)
@@ -305,7 +311,6 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 		services = append(services, s)
 	}
 
-	var webHub *web.Hub
 	if webOn {
 		allowed := map[int64]bool{web.UserID: true}
 		webHub = &web.Hub{Path: filepath.Join(home, "web_log.json")}
@@ -315,7 +320,7 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 		}
 		push := &web.Pusher{Path: filepath.Join(home, "web_push.json"), Subject: subject, Logf: logf}
 		webHub.Notifier = push
-		s := &service{name: "web", allowed: allowed, markdown: true}
+		s := &service{name: "web", allowed: allowed, markdown: true, sink: webHub}
 		eng := &chat.Engine{
 			T: webHub, Allowed: allowed, Logf: logf, Stream: true, MessagesPerMinute: cfg.Limits.Messages(),
 			Environment: envDesc, Backends: backends, Prefs: &chat.FilePrefs{Path: filepath.Join(home, "web_chats.json")},

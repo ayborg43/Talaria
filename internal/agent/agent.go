@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"talaria/internal/activity"
 	"time"
 
 	"talaria/internal/metrics"
@@ -125,6 +126,8 @@ type Agent struct {
 	OnToolCall func(name, args, result string)
 	// OnMessage, if set, sees every message added to the conversation (for persistence).
 	OnMessage func(provider.Message)
+	// Activity, if set, is told about the subagents this agent starts, for a front end that shows who is working.
+	Activity activity.Sink
 	// OnText, if set, makes the model stream: it receives reply text as it is
 	// generated, including text said before tool calls.
 	OnText func(delta string)

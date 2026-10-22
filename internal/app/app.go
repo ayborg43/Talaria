@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"talaria/internal/activity"
 	"talaria/internal/agent"
 	"talaria/internal/browser"
 	"talaria/internal/calendar"
@@ -220,6 +221,8 @@ type AgentOptions struct {
 	// Tasks runs and reports on this chat's background tasks. Nil means the chat
 	// has no task tools.
 	Tasks cron.Control
+	// Activity, if set, is told when this agent hands work to a subagent, and what each does.
+	Activity activity.Sink
 }
 
 // owner names whose conversation this is, for the history: one chat on one service. The command line is
@@ -313,6 +316,7 @@ func (rt *Runtime) NewAgent(o AgentOptions) *agent.Agent {
 		Approve:        o.Approve,
 		GuardUntrusted: !rt.cfg.TrustOutsideContent,
 		BeforeModel:    rt.budget.take,
+		Activity:       o.Activity,
 	}
 	if o.ChatID != 0 && rt.cfg.Watches != nil && rt.mcp.HasTools() {
 		watch.RegisterTools(tools, rt.WatchBinding(o.Gateway, o.ChatID, tools, ag.Call, !o.NoCron))

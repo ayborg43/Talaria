@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"talaria/internal/activity"
 	"talaria/internal/metrics"
 	"testing"
 	"time"
@@ -231,5 +232,64 @@ func TestAPausedSchedulerHoldsEveryJobAndRunsThemWhenResumed(t *testing.T) {
 	h.fireAt("2026-10-20 10:31")
 	if len(h.got) != 1 || h.got[0].chat != 42 {
 		t.Fatalf("the held job did not run after resuming: %+v", h.got)
+	}
+}
+
+type workSink struct {
+	mu  sync.Mutex
+	log []string
+}
+
+func (w *workSink) add(x string) { w.mu.Lock(); w.log = append(w.log, x); w.mu.Unlock() }
+func (w *workSink) Start(kind, label string) int64 {
+	w.add("start " + kind + " " + label)
+	return 99
+}
+func (w *workSink) Doing(int64, string) {}
+func (w *workSink) Stop(id int64)       { w.add("stop") }
+func (w *workSink) lines() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]string(nil), w.log...)
+}
+
+func TestEachRunIsReportedAsWorkWhileItRunsAndItsNumberIsPassedOn(t *testing.T) {
+	var seenID int64
+	var during []string
+	var sink *workSink
+	h := newHarness(t, func(ctx context.Context, j Job) (string, error) {
+		seenID = activity.ID(ctx)
+		during = sink.lines() // what was reported by the time the job is in the middle of running
+		return "done", nil
+	})
+	sink = &workSink{}
+	h.sched.Activity = sink
+	h.store.Add(Job{Name: "inbox", Schedule: "@every 5m", Prompt: "check mail", ChatID: 42, Kind: KindTask})
+	h.fireAt("2026-10-20 10:06")
+
+	if seenID != 99 {
+		t.Fatalf("the run did not get its worker number: %d", seenID)
+	}
+	if strings.Join(during, "|") != "start task inbox" {
+		t.Fatalf("while it ran, the page had been told: %v", during)
+	}
+	if all := strings.Join(sink.lines(), "|"); all != "start task inbox|stop" {
+		t.Fatalf("%s", all)
+	}
+}
+
+func TestARunThatFailsIsStillEndedAndKindsAreNamed(t *testing.T) {
+	sink := &workSink{}
+	h := newHarness(t, func(context.Context, Job) (string, error) { return "", errors.New("boom") })
+	h.sched.Activity = sink
+	h.store.Add(Job{Name: "x", Schedule: "@every 5m", Prompt: "p", ChatID: 1})
+	h.fireAt("2026-10-20 10:06")
+	if all := strings.Join(sink.lines(), "|"); all != "start job x|stop" {
+		t.Fatalf("%s", all)
+	}
+	for kind, want := range map[string]string{KindTask: "task", KindGoal: "goal", KindWatch: "watch", "": "job"} {
+		if got := workerKind(Job{Kind: kind}); got != want {
+			t.Errorf("%q: %q", kind, got)
+		}
 	}
 }

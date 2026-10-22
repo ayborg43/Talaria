@@ -676,3 +676,157 @@ func TestASubagentInheritsTheBudgetAndWhatTheParentHasRead(t *testing.T) {
 		t.Fatalf("a subagent of a conversation that read outside content asks before something that could send it out, with its own label on it too: %v", subAsked)
 	}
 }
+
+// sink records what a front end that shows who is working would be told.
+type sink struct {
+	mu  sync.Mutex
+	log []string
+	n   int64
+}
+
+func (s *sink) add(x string) { s.mu.Lock(); s.log = append(s.log, x); s.mu.Unlock() }
+func (s *sink) Start(kind, label string) int64 {
+	s.mu.Lock()
+	s.n++
+	id := s.n
+	s.mu.Unlock()
+	s.add(fmt.Sprintf("start#%d %s %s", id, kind, label))
+	return id
+}
+func (s *sink) Doing(id int64, what string) { s.add(fmt.Sprintf("doing#%d %q", id, what)) }
+func (s *sink) Stop(id int64)               { s.add(fmt.Sprintf("stop#%d", id)) }
+func (s *sink) lines() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.log...)
+}
+
+func probeTool() tool.Tool {
+	return tool.Tool{Name: "probe", Description: "x", Schema: json.RawMessage(`{"type":"object"}`), Parallel: true,
+		Run: func(context.Context, json.RawMessage) (string, error) { return "probed", nil }}
+}
+
+func TestEachSubagentIsReportedFromWaitingToTheEnd(t *testing.T) {
+	model := chatFunc(func(_ context.Context, req provider.Request) (provider.Message, error) {
+		if isSub(req) {
+			if lastTool(req) {
+				return text("sub done"), nil
+			}
+			return toolCalls(provider.ToolCall{ID: "p", Name: "probe", Arguments: `{}`}), nil
+		}
+		if lastTool(req) {
+			return text("all done"), nil
+		}
+		return toolCalls(delegateCall("1", "look into prices", "prices")), nil
+	})
+	pool := NewPool(Limits{})
+	parent := newParent(model, pool)
+	parent.Tools.Register(probeTool())
+	s := &sink{}
+	parent.Activity = s
+	var progress []string
+	parent.OnToolStart = func(name, _ string) { progress = append(progress, name) }
+
+	if _, err := parent.Run(context.Background(), "go"); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(s.lines(), " | ")
+	want := `start#1 sub prices | doing#1 "" | doing#1 "probe" | stop#1`
+	if got != want {
+		t.Fatalf("\n got %s\nwant %s", got, want)
+	}
+	for _, p := range progress {
+		if strings.Contains(p, "↳") {
+			t.Fatalf("the progress line is also sent when a front end shows the helpers: %q", p)
+		}
+	}
+}
+
+func TestWithNoSinkTheProgressLineIsStillSent(t *testing.T) {
+	model := chatFunc(func(_ context.Context, req provider.Request) (provider.Message, error) {
+		if isSub(req) {
+			if lastTool(req) {
+				return text("sub done"), nil
+			}
+			return toolCalls(provider.ToolCall{ID: "p", Name: "probe", Arguments: `{}`}), nil
+		}
+		if lastTool(req) {
+			return text("all done"), nil
+		}
+		return toolCalls(delegateCall("1", "look into prices", "prices")), nil
+	})
+	parent := newParent(model, NewPool(Limits{}))
+	parent.Tools.Register(probeTool())
+	var progress []string
+	parent.OnToolStart = func(name, _ string) { progress = append(progress, name) }
+	if _, err := parent.Run(context.Background(), "go"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(progress, "|"), "  ↳ [prices] probe") {
+		t.Fatalf("%v", progress)
+	}
+}
+
+func TestASubagentThatFailsIsStillEnded(t *testing.T) {
+	model := chatFunc(func(_ context.Context, req provider.Request) (provider.Message, error) {
+		if isSub(req) {
+			return provider.Message{}, fmt.Errorf("the model is unreachable")
+		}
+		if lastTool(req) {
+			return text("could not"), nil
+		}
+		return toolCalls(delegateCall("1", "do it", "doomed")), nil
+	})
+	parent := newParent(model, NewPool(Limits{}))
+	s := &sink{}
+	parent.Activity = s
+	parent.Run(context.Background(), "go")
+	got := s.lines()
+	if len(got) == 0 || got[len(got)-1] != "stop#1" {
+		t.Fatalf("a failed subagent is still shown as working: %v", got)
+	}
+}
+
+func TestAHelperWaitingForAPlaceSaysSoThenCarriesOn(t *testing.T) {
+	release := make(chan struct{})
+	var started atomic.Int32
+	model := chatFunc(func(ctx context.Context, req provider.Request) (provider.Message, error) {
+		if isSub(req) {
+			if started.Add(1) == 1 {
+				select { // the first helper holds the only place until released
+				case <-release:
+				case <-ctx.Done():
+				}
+			}
+			return text("done"), nil
+		}
+		if lastTool(req) {
+			return text("both done"), nil
+		}
+		return toolCalls(delegateCall("1", "first job", "first"), delegateCall("2", "second job", "second")), nil
+	})
+	pool := NewPool(Limits{MaxParallel: 1})
+	parent := newParent(model, pool)
+	s := &sink{}
+	parent.Activity = s
+	done := make(chan struct{})
+	go func() { parent.Run(context.Background(), "go"); close(done) }()
+
+	deadline := time.After(5 * time.Second)
+	for {
+		if strings.Contains(strings.Join(s.lines(), "|"), `waiting for a free place`) {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("the helper without a place never said it was waiting: %v", s.lines())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	close(release)
+	<-done
+	all := strings.Join(s.lines(), "|")
+	if strings.Count(all, "start#") != 2 || strings.Count(all, "stop#") != 2 {
+		t.Fatalf("%v", s.lines())
+	}
+}

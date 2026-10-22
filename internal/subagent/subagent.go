@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"talaria/internal/activity"
 	"talaria/internal/agent"
 	"talaria/internal/tool"
 )
@@ -85,6 +86,9 @@ func NewPool(l Limits) *Pool {
 // model the user switched to mid-conversation is the one used. background gives
 // extra text for the subagent's system prompt (the user's notes and skills, and
 // where the tools run); it is asked for at each delegation, so it is never stale.
+//
+// If the parent has an Activity sink, it is told when each subagent starts waiting for a place, begins,
+// moves on to another tool, and finishes, so a front end can show who is working.
 func (p *Pool) Register(parent *agent.Agent, background func() string) {
 	parent.Tools.Register(tool.Tool{
 		Name:        "delegate",
@@ -115,12 +119,22 @@ func (p *Pool) run(ctx context.Context, parent *agent.Agent, background func() s
 	}
 	label := cleanLabel(name, task)
 
+	sink := parent.Activity
+	id, end := activity.Begin(sink, activity.Sub, label)
+	defer end()
 	select { // wait for a free slot
 	case p.sem <- struct{}{}:
 		defer func() { <-p.sem }()
-	case <-ctx.Done():
-		return "", ctx.Err()
+	default:
+		activity.Note(sink, id, "waiting for a free place")
+		select {
+		case p.sem <- struct{}{}:
+			defer func() { <-p.sem }()
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
 	}
+	activity.Note(sink, id, "")
 
 	system := framing
 	if background != nil {
@@ -152,6 +166,10 @@ func (p *Pool) run(ctx context.Context, parent *agent.Agent, background func() s
 		},
 		// Progress shows up wherever the parent's tool activity does.
 		OnToolStart: func(tool, args string) {
+			activity.Note(sink, id, tool)
+			if sink != nil { // a front end that shows the helpers has no use for the progress line as well
+				return
+			}
 			if parent.OnToolStart != nil {
 				parent.OnToolStart("  ↳ ["+label+"] "+tool, args)
 			}

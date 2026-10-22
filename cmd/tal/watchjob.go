@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"talaria/internal/activity"
 	"talaria/internal/app"
 	"talaria/internal/cron"
 	"talaria/internal/metrics"
@@ -28,6 +29,8 @@ func (r *jobRunner) runWatch(ctx context.Context, j cron.Job) (string, error) {
 	if err != nil || w.Status != watch.Active {
 		return "", cron.ErrDrop // deleted or paused since this was scheduled
 	}
+
+	activity.Note(r.sink, activity.ID(ctx), w.Tool)
 
 	note := r.note
 	if note == "" {

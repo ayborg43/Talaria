@@ -75,6 +75,7 @@ const S = {
   msgs: new Map(), order: [], epoch: 0, seq: 0, es: null, connected: false, running: false,
   model: '', paused: false, zone: undefined, version: '', tab: 'chat', needs: 'wait',
   today: null, control: null, blocks: new Map(), retry: 1000, installEvent: null,
+  agents: [], agentsAt: 0,
 };
 
 const fmtTime = (d) => new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: S.zone }).format(d);
@@ -272,10 +273,13 @@ $('#jump').addEventListener('click', () => { const t = $('#thread'); t.scrollTo(
 // header, badge, composer buttons
 function renderChrome() {
   const run = working();
-  $('#logo').classList.toggle('work', run);
+  const busy = run || S.agents.length > 0; // the agent, or something it started that is still going
+  $('#logo').classList.toggle('work', busy);
   const dot = $('#dot');
-  dot.className = 'dot ' + (!S.connected ? 'off' : run ? 'work' : 'on');
-  $('#status-text').textContent = !S.connected ? 'Reconnecting…' : S.paused ? 'Paused · chat still works' : run ? 'Working…' : 'Online' + (S.model ? ' · ' + S.model : '');
+  dot.className = 'dot ' + (!S.connected ? 'off' : busy ? 'work' : 'on');
+  const count = S.agents.length;
+  $('#status-text').textContent = !S.connected ? 'Reconnecting…' : S.paused ? 'Paused · chat still works'
+    : count > 1 ? `${count} agents working` : busy ? 'Working…' : 'Online' + (S.model ? ' · ' + S.model : '');
   const n = pendingAsks().length;
   const badge = $('#badge'); badge.hidden = n === 0; badge.textContent = String(n);
   const hasText = $('#input').value.trim().length > 0;
@@ -286,6 +290,48 @@ function renderChrome() {
   document.title = n ? `(${n}) Talaria` : 'Talaria';
   if (S.tab === 'needs') renderNeeds();
 }
+
+// ---------- who is working ----------
+const KINDS = { main: 'MAIN', sub: 'HELPER', task: 'TASK', goal: 'GOAL', watch: 'WATCH', job: 'JOB' };
+function setAgents(list) {
+  S.agents = Array.isArray(list) ? list : [];
+  S.agentsAt = Date.now();
+  renderAgents(); renderChrome(); updateNow();
+}
+const elapsed = (w) => {
+  const s = Math.max(0, Math.round(((w.ageMs || 0) + (Date.now() - S.agentsAt)) / 1000));
+  return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's';
+};
+const doingText = (w) => !w.doing ? 'thinking…' : /^waiting/.test(w.doing) ? w.doing : 'using ' + w.doing;
+function renderAgents() {
+  const box = $('#agents');
+  box.hidden = S.agents.length === 0;
+  box.replaceChildren(...S.agents.map((w) => h('div', { class: 'agent', 'data-id': w.id },
+    h('span', { class: 'pulse', 'aria-hidden': 'true' }),
+    h('span', { class: 'k ' + w.kind, text: KINDS[w.kind] || w.kind.toUpperCase() }),
+    h('span', { class: 'l', text: w.label }),
+    h('span', { class: 'd', text: doingText(w) }),
+    h('span', { class: 'tick', text: elapsed(w) }))));
+}
+// Times tick on the page, without asking the server.
+setInterval(() => {
+  if (!S.agents.length || document.hidden) return;
+  for (const w of S.agents) for (const t of $$(`[data-id="${w.id}"] .tick`)) t.textContent = elapsed(w);
+}, 1000);
+
+function nowCard() {
+  const card = h('div', { class: 'card', id: 'now' }, h('h2', null, 'Working now', h('small', { text: S.agents.length ? S.agents.length + ' running' : '' })));
+  if (!S.agents.length) { card.append(h('div', { class: 'empty', text: 'Nothing is working right now.' })); return card; }
+  const rows = h('div', { class: 'rows' });
+  for (const w of S.agents) {
+    rows.append(h('div', { class: 'row', 'data-id': w.id }, h('span', { class: 'k ' + w.kind, text: KINDS[w.kind] || w.kind.toUpperCase() }),
+      h('span', { class: 'grow' }, h('span', { class: 't', text: w.label }), h('span', { class: 's mono', text: doingText(w) })),
+      h('span', { class: 'when tick', text: elapsed(w) })));
+  }
+  card.append(rows);
+  return card;
+}
+function updateNow() { const el = $('#now'); if (el && S.tab === 'control') el.replaceWith(nowCard()); }
 
 // ---------- composer ----------
 const input = $('#input');
@@ -333,6 +379,7 @@ async function loadState() {
   const d = await api('/api/state');
   S.msgs.clear(); S.order = [];
   for (const m of d.messages) upsert(m);
+  setAgents(d.agents);
   S.epoch = d.epoch; S.seq = d.seq; S.running = d.running; S.model = d.model; S.paused = d.paused; S.version = d.version;
   S.zone = d.zone || S.zone;
   for (const rec of S.blocks.values()) rec.el.remove();
@@ -350,6 +397,7 @@ function connect() {
     if (ev.seq > S.seq) S.seq = ev.seq;
     if (ev.type === 'msg') { upsert(ev.msg); renderChat(); }
     else if (ev.type === 'run') { S.running = !!ev.on; renderChat(); }
+    else if (ev.type === 'agents') { setAgents(ev.agents); }
     else if (ev.type === 'reset') { loadState().then(connect).catch(() => {}); }
   };
   es.onerror = () => { es.close(); if (S.es === es) S.es = null; S.connected = false; renderChrome(); reconnect(); };
@@ -553,6 +601,7 @@ async function renderControl() {
   health.append(btn);
   out.push(health);
 
+  out.push(nowCard());
   out.push(await notifyCard(c));
   if (c.jobs.length) out.push(jobsCard(c.jobs));
   else out.push(h('div', { class: 'card' }, h('h2', null, 'Working for you'), h('div', { class: 'empty', text: 'No goals, watches or reminders yet. Ask me in chat.' })));

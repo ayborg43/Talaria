@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"talaria/internal/activity"
 	"talaria/internal/gateway/chat"
 )
 
@@ -55,7 +56,7 @@ func TestAReplyIsStreamedByEditingOneMessageAndLosesTheEnginesCursor(t *testing.
 		t.Fatalf("%+v", msgs)
 	}
 	var texts []string
-	for _, ev := range drain(ch, 4, time.Second) {
+	for _, ev := range drain(ch, 5, time.Second) { // the run state and who is working come first, then the three versions
 		if ev.Type == "msg" {
 			texts = append(texts, ev.Msg.Text)
 		}
@@ -261,11 +262,11 @@ func TestTheAgentsRunIsAnnouncedAndNewPagesAreToldWhereItStands(t *testing.T) {
 	_, _, epoch, _ := h.Snapshot()
 	ch, cancel := h.Subscribe(epoch, 0)
 	defer cancel()
-	if ev := drain(ch, 1, time.Second); len(ev) != 1 || ev[0].Type != "run" || ev[0].On {
+	if ev := drain(ch, 2, time.Second); len(ev) != 2 || ev[0].Type != "run" || ev[0].On || ev[1].Type != "agents" || len(ev[1].Agents) != 0 {
 		t.Fatalf("%+v", ev)
 	}
 	h.RunStart(ChatID)
-	if ev := drain(ch, 1, time.Second); len(ev) != 1 || ev[0].Type != "run" || !ev[0].On {
+	if ev := drain(ch, 2, time.Second); len(ev) != 2 || ev[0].Type != "run" || !ev[0].On || ev[1].Type != "agents" || len(ev[1].Agents) != 1 || ev[1].Agents[0].Kind != "main" {
 		t.Fatalf("%+v", ev)
 	}
 	if _, _, _, running := h.Snapshot(); !running {
@@ -277,4 +278,143 @@ func TestTheAgentsRunIsAnnouncedAndNewPagesAreToldWhereItStands(t *testing.T) {
 		t.Fatalf("a new page is not told the agent is working: %+v", ev)
 	}
 	h.RunEnd(ChatID)
+}
+
+func kinds(ws []activity.Worker) string {
+	var out []string
+	for _, w := range ws {
+		out = append(out, w.Kind+":"+w.Label+":"+w.Doing)
+	}
+	return strings.Join(out, ", ")
+}
+
+func TestWhoIsWorkingFollowsTheRunTheToolsAndTheHelpers(t *testing.T) {
+	now := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
+	h := &Hub{Now: func() time.Time { return now }}
+	if len(h.Workers()) != 0 {
+		t.Fatal("somebody is working before anything began")
+	}
+	h.RunStart(ChatID)
+	if got := kinds(h.Workers()); got != "main:Talaria:" {
+		t.Fatalf("%q", got)
+	}
+	h.ToolStart(ChatID, "email_list")
+	h.ToolStart(ChatID, "calendar_events")
+	if got := kinds(h.Workers()); got != "main:Talaria:calendar_events, email_list" {
+		t.Fatalf("%q", got)
+	}
+	h.ToolEnd(ChatID, "calendar_events", "ok")
+	if got := kinds(h.Workers()); got != "main:Talaria:email_list" {
+		t.Fatalf("%q", got)
+	}
+	sub := h.Start(activity.Sub, "compare prices")
+	h.Doing(sub, "web_fetch")
+	now = now.Add(90 * time.Second)
+	job := h.Start(activity.Job, "inbox check")
+	ws := h.Workers()
+	if got := kinds(ws); got != "main:Talaria:email_list, sub:compare prices:web_fetch, job:inbox check:" {
+		t.Fatalf("%q", got)
+	}
+	if ws[1].AgeMs != 90000 || ws[2].AgeMs != 0 {
+		t.Fatalf("ages %d and %d", ws[1].AgeMs, ws[2].AgeMs)
+	}
+	h.Stop(job)
+	h.Stop(job) // ending it twice is harmless
+	h.Doing(12345, "x")
+	if got := kinds(h.Workers()); !strings.Contains(got, "sub:compare prices") || strings.Contains(got, "job:") {
+		t.Fatalf("%q", got)
+	}
+	h.RunEnd(ChatID)
+	if got := kinds(h.Workers()); got != "" {
+		t.Fatalf("the run is over, and still shown working: %q", got)
+	}
+}
+
+func TestOtherWorkSurvivesTheMainRunEndingButHelpersDoNot(t *testing.T) {
+	h := &Hub{}
+	task := h.Start(activity.Task, "write report") // started by the scheduler, not by a chat message
+	h.RunStart(ChatID)
+	h.Start(activity.Sub, "helper")
+	h.RunEnd(ChatID)
+	if got := kinds(h.Workers()); got != "task:write report:" {
+		t.Fatalf("%q", got)
+	}
+	h.Stop(task)
+}
+
+func TestAHelpersProgressLineIsNotAChipThatSpinsForever(t *testing.T) {
+	h := &Hub{}
+	h.RunStart(ChatID)
+	h.ToolStart(ChatID, "delegate")
+	h.ToolStart(ChatID, "  ↳ [prices] web_fetch") // how a subagent's progress reaches its parent
+	h.ToolStart(ChatID, "  ↳ [prices] probe")
+	msgs, _, _, _ := h.Snapshot()
+	if len(msgs) != 1 || msgs[0].Tool != "delegate" {
+		t.Fatalf("a helper's progress became chips: %+v", msgs)
+	}
+	if got := kinds(h.Workers()); got != "main:Talaria:delegate" {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestWhateverIsStillSpinningWhenTheRunEndsIsMarkedAsCutShort(t *testing.T) {
+	h := &Hub{}
+	h.RunStart(ChatID)
+	h.ToolStart(ChatID, "shell")
+	h.ToolStart(ChatID, "web_fetch")
+	h.ToolEnd(ChatID, "web_fetch", "fine")
+	h.RunEnd(ChatID) // /stop, or a timeout: the shell never reported back
+	msgs, _, _, _ := h.Snapshot()
+	if msgs[0].State != "error" || msgs[1].State != "ok" {
+		t.Fatalf("%+v %+v", msgs[0], msgs[1])
+	}
+	if got := kinds(h.Workers()); got != "" {
+		t.Fatal(got)
+	}
+	h.RunStart(ChatID) // and the next run starts clean, with no tool carried over
+	if got := kinds(h.Workers()); got != "main:Talaria:" {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestThePageIsToldOnlyWhatChangedAndAWorkerNobodyEndedFadesAway(t *testing.T) {
+	now := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
+	h := &Hub{Now: func() time.Time { return now }}
+	_, _, epoch, _ := h.Snapshot()
+	ch, cancel := h.Subscribe(epoch, 0)
+	defer cancel()
+	drain(ch, 2, time.Second) // the run state and the empty roster
+	id := h.Start(activity.Sub, "helper")
+	h.Doing(id, "probe")
+	h.Doing(id, "probe") // the same again: nothing new to say
+	h.Doing(id, "web_fetch")
+	events := drain(ch, 5, 300*time.Millisecond)
+	if len(events) != 3 {
+		t.Fatalf("%d events for a start and two changes: %+v", len(events), events)
+	}
+	for _, ev := range events {
+		if ev.Type != "agents" || len(ev.Agents) != 1 {
+			t.Fatalf("%+v", ev)
+		}
+	}
+	if events[2].Agents[0].Doing != "web_fetch" {
+		t.Fatalf("%+v", events[2].Agents[0])
+	}
+	now = now.Add(pruneAfter + time.Minute) // its end was never reported
+	if got := kinds(h.Workers()); got != "" {
+		t.Fatalf("a worker that began hours ago is still shown: %q", got)
+	}
+}
+
+func TestANewPageIsToldWhoIsWorkingAtOnce(t *testing.T) {
+	h := &Hub{}
+	h.RunStart(ChatID)
+	h.Start(activity.Sub, "helper")
+	_, _, epoch, _ := h.Snapshot()
+	ch, cancel := h.Subscribe(epoch, 0)
+	defer cancel()
+	evs := drain(ch, 2, time.Second)
+	if len(evs) != 2 || evs[1].Type != "agents" || len(evs[1].Agents) != 2 {
+		t.Fatalf("%+v", evs)
+	}
 }

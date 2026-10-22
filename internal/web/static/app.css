@@ -224,6 +224,17 @@ b,strong{font-weight:600}
 .steps{margin:6px 0 0;padding-left:20px;font-size:13.5px;color:var(--ink2)}.steps li+li{margin-top:4px}
 .foot{text-align:center;font-family:var(--mono);font-size:11px;color:var(--faint);padding:8px 0}
 
+/* who is working */
+.agents{flex:none;display:flex;flex-wrap:wrap;gap:6px 8px;padding:8px 16px;max-height:112px;overflow-y:auto;border-bottom:1px solid var(--line2);background:var(--bg);max-width:640px;width:100%;margin:0 auto}
+.agent{flex:0 1 auto;display:flex;align-items:center;gap:8px;max-width:100%;min-width:0;padding:6px 12px 6px 10px;border-radius:99px;background:var(--card);border:1px solid var(--line);font-size:12.5px;line-height:1.2}
+.agent .pulse{width:8px;height:8px;border-radius:99px;background:var(--brass);flex:none;animation:blink 1.2s infinite}
+.agent .k,.k{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.06em;padding:2px 6px;border-radius:99px;background:var(--brass-tint);color:var(--brass-text);flex:none}
+.k.sub,.k.watch{background:var(--info-tint);color:var(--info)}.k.task,.k.job{background:var(--ok-tint);color:var(--ok)}
+.agent .l{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.agent .d{font-family:var(--mono);font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.agent .tick{font-family:var(--mono);font-size:11px;color:var(--faint);flex:none}
+.row .k{width:58px;text-align:center;padding:3px 0}
+
 /* install banner */
 .install{position:fixed;left:12px;right:12px;top:calc(env(safe-area-inset-top) + 10px);z-index:40;max-width:616px;margin:0 auto;display:flex;align-items:center;gap:12px;padding:10px 8px 10px 12px;border-radius:20px;background:var(--card);border:1px solid var(--brass-line);box-shadow:0 10px 30px rgba(23,21,15,.18)}
 .install-icon{width:40px;height:40px;border-radius:12px;background:var(--logo);display:flex;align-items:center;justify-content:center;flex:none}

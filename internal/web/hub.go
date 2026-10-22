@@ -10,10 +10,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"talaria/internal/activity"
 	"talaria/internal/gateway/chat"
 )
 
@@ -55,6 +57,8 @@ type Event struct {
 	Type string   `json:"type"` // msg, typing, reset
 	Msg  *Message `json:"msg,omitempty"`
 	On   bool     `json:"on,omitempty"` // run: whether the agent is working
+	// Agents is who is working, on an event of type agents. Empty (and so left out) means nobody.
+	Agents []activity.Worker `json:"agents,omitempty"`
 }
 
 // Notifier tells the person something when the page is not open.
@@ -90,7 +94,11 @@ type Hub struct {
 	changes  []change
 	subs     map[*sub]struct{}
 	running  bool
-	seen     time.Time // when the page last said it was open and in view
+	workers  map[int64]*activity.Worker // who is working now
+	lastWork int64
+	mainID   int64          // the main agent's number while it works
+	tools    map[string]int // tools the main agent is running now, and how many of each
+	seen     time.Time      // when the page last said it was open and in view
 	timers   map[int64]*time.Timer
 	activity map[int64]int // tool calls and messages per hour, by the hour's Unix time / 3600
 	saveT    *time.Timer
@@ -122,6 +130,8 @@ func (h *Hub) init() {
 	h.subs = map[*sub]struct{}{}
 	h.timers = map[int64]*time.Timer{}
 	h.activity = map[int64]int{}
+	h.workers = map[int64]*activity.Worker{}
+	h.tools = map[string]int{}
 	h.nextID = 1
 	if h.Path == "" {
 		return
@@ -361,6 +371,7 @@ func (h *Hub) Subscribe(epoch, after int64) (<-chan Event, func()) {
 		}
 	}
 	s.ch <- Event{Seq: h.seq, Type: "run", On: h.running}
+	s.ch <- Event{Seq: h.seq, Type: "agents", Agents: h.workersLocked()}
 	h.subs[s] = struct{}{}
 	return s.ch, func() {
 		h.mu.Lock()
@@ -485,23 +496,146 @@ func (h *Hub) setRunning(on bool) {
 	h.init()
 	h.running = on
 	h.fan(Event{Seq: h.seq, Type: "run", On: on})
+	if on {
+		h.mainID = h.startLocked(activity.Main, "Talaria")
+		return
+	}
+	// The run is over, so nothing it started is still going, and no tool is still running: whatever says
+	// otherwise was cut short (stopped, timed out), and must not be left spinning on the page.
+	for id, w := range h.workers {
+		if id == h.mainID || w.Kind == activity.Sub {
+			delete(h.workers, id)
+		}
+	}
+	h.mainID = 0
+	h.tools = map[string]int{}
+	for _, m := range h.msgs {
+		if m.Role == "tool" && m.State == "running" {
+			m.State = "error"
+			h.publish(m)
+		}
+	}
+	h.pushAgents()
+}
+
+// ---- activity.Sink: who is working ----
+
+// pruneAfter is how long a worker may be shown as working: a limit on how wrong the page can be if a
+// worker's end was never reported.
+const pruneAfter = 3 * time.Hour
+
+func (h *Hub) startLocked(kind, label string) int64 {
+	h.lastWork++
+	id := h.lastWork
+	h.workers[id] = &activity.Worker{ID: id, Kind: kind, Label: clipRunes(label, 60), Since: h.now()}
+	h.pushAgents()
+	return id
+}
+
+// workersLocked lists who is working: the main agent first, then the others in the order they began.
+func (h *Hub) workersLocked() []activity.Worker {
+	now := h.now()
+	out := make([]activity.Worker, 0, len(h.workers))
+	for id, w := range h.workers {
+		if now.Sub(w.Since) > pruneAfter {
+			delete(h.workers, id)
+			continue
+		}
+		c := *w
+		c.AgeMs = now.Sub(w.Since).Milliseconds()
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if (out[i].Kind == activity.Main) != (out[j].Kind == activity.Main) {
+			return out[i].Kind == activity.Main
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+func (h *Hub) pushAgents() { h.fan(Event{Seq: h.seq, Type: "agents", Agents: h.workersLocked()}) }
+
+// Workers is who is working now.
+func (h *Hub) Workers() []activity.Worker {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.init()
+	return h.workersLocked()
+}
+
+func (h *Hub) Start(kind, label string) int64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.init()
+	return h.startLocked(kind, label)
+}
+
+func (h *Hub) Doing(id int64, what string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.init()
+	if w := h.workers[id]; w != nil && w.Doing != what {
+		w.Doing = clipRunes(what, 80)
+		h.pushAgents()
+	}
+}
+
+func (h *Hub) Stop(id int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.init()
+	if _, ok := h.workers[id]; ok {
+		delete(h.workers, id)
+		h.pushAgents()
+	}
+}
+
+// toolsDoing says what the main agent is in the middle of: the tools it is running, if any.
+func (h *Hub) toolsDoing() string {
+	names := make([]string, 0, len(h.tools))
+	for n := range h.tools {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+func (h *Hub) noteMain() {
+	if w := h.workers[h.mainID]; w != nil && w.Doing != h.toolsDoing() {
+		w.Doing = clipRunes(h.toolsDoing(), 80)
+		h.pushAgents()
+	}
 }
 
 // ---- chat.ToolWatcher ----
 
 func (h *Hub) ToolStart(_ int64, name string) {
+	// A subagent's progress arrives as a tool of its parent, named "  ↳ [label] tool", and never ends as one:
+	// the helper has its own place in the roster, so it is not a chip.
+	if strings.HasPrefix(name, "  ↳") {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.init()
 	h.count()
 	m := h.add(&Message{Role: "tool", Tool: name, State: "running"})
 	m.started = h.now()
+	h.tools[name]++
+	h.noteMain()
 }
 
 func (h *Hub) ToolEnd(_ int64, name, result string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.init()
+	if h.tools[name] > 1 {
+		h.tools[name]--
+	} else {
+		delete(h.tools, name)
+	}
+	h.noteMain()
 	for _, m := range h.msgs {
 		if m.Role == "tool" && m.Tool == name && m.State == "running" {
 			m.State = "ok"

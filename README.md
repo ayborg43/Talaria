@@ -559,6 +559,11 @@ Without `TALARIA_WEB_PUBLIC_URL` it works in a browser on that machine but canno
   was sent). You get one when something **needs your OK**, and when a reply or a reminder arrives while the app is closed; none while you
   are looking at it. Tapping one opens the app at the right screen. They never carry buttons that answer: a question that could run a
   command is answered inside the app, where all of it can be read.
+- **Who is working.** While anything is working, a strip under the chat header names each worker, what it is doing right now, and for
+  how long: the main agent ("using email_list"), each subagent it has handed a task to (by the name it gave the task, with a note when
+  it is waiting for a free place), and the background tasks, goal check-ins, watches and scheduled jobs that are running. The header
+  says how many ("3 agents working"), and Control has the same list as **Working now**. It is live, survives a reload, and a helper
+  cut short by Stop disappears at once.
 - **Pausing everything.** In Control. Goals, watches and reminders stop being started and wait; what was due runs when you resume. The
   switch is kept in a file, so a restart does not quietly undo it. Chat still works while paused.
 - **Light and dark** follow your phone. **Offline,** the app opens and says so; nothing from your conversation, mail or calendar is stored
