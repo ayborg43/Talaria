@@ -528,6 +528,44 @@ until something changes.
   and says so. Search words are matched by your mail provider. It signs in afresh for each request, so it cannot push a notification the
   moment mail arrives; a watch checks every few minutes instead.
 
+## Web app (installable on your phone)
+
+Talaria has its own page, with the same four things you do all day: **Chat** (replies stream in as they are written, with a chip for each
+tool it uses), **Today** (your calendar and mail at a glance, with a countdown to your next event), **Needs you** (every question that is
+waiting for your Allow or Deny, and the history of what you decided) and **Control** (is it healthy, what it is doing on its own, what it is
+connected to, and a switch that holds everything). It works alongside Telegram, not instead of it: it is the same agent, with the same
+safety rules, and the same conversation history, goals, watches and reminders.
+
+1. **Give it a domain with https.** Point a name you own (say `talaria.example.com`) at your server with an A record, then in Dokploy open
+   the app, its **Domains** tab, and add it: service `talaria`, port `8080`, HTTPS on with a Let's Encrypt certificate. Phones refuse to
+   install the app, or to send notifications, over plain http.
+2. **Set two variables** in the Environment tab, then redeploy:
+   ```
+   TALARIA_WEB_PASSWORD=<at least 12 characters, a few random words is good>
+   TALARIA_WEB_PUBLIC_URL=https://talaria.example.com
+   ```
+3. **Open the address on your phone and sign in**, then install it. *iPhone:* in Safari tap Share, then Add to Home Screen, open it from
+   there. *Android:* tap Install in the Control tab, or the browser's menu. Then, in the Control tab, turn on notifications.
+
+On a machine of your own: set `TALARIA_WEB_PASSWORD` and run `tal gateway`; it listens on `:8080` (change it with `TALARIA_WEB_LISTEN`).
+Without `TALARIA_WEB_PUBLIC_URL` it works in a browser on that machine but cannot be installed on a phone.
+
+- **Sign in.** One password, compared in constant time. Wrong guesses are limited (five from one address locks it for 15 minutes; a flood
+  from many addresses locks everyone but a signed-in session out for a while), each wrong answer waits, and nothing about which part was
+  wrong is said. A session lasts 30 days from when you last used it, can be ended with Sign out, and is a random value of which only a
+  hash is kept, so a copy of the files cannot be used to sign in. The cookie cannot be read by scripts, is never sent from another site,
+  and, over https, is bound to your domain alone.
+- **Notifications.** Web Push, encrypted so that only your phone can read them (the push service, Google or Apple, sees only that something
+  was sent). You get one when something **needs your OK**, and when a reply or a reminder arrives while the app is closed; none while you
+  are looking at it. Tapping one opens the app at the right screen. They never carry buttons that answer: a question that could run a
+  command is answered inside the app, where all of it can be read.
+- **Pausing everything.** In Control. Goals, watches and reminders stop being started and wait; what was due runs when you resume. The
+  switch is kept in a file, so a restart does not quietly undo it. Chat still works while paused.
+- **Light and dark** follow your phone. **Offline,** the app opens and says so; nothing from your conversation, mail or calendar is stored
+  on the phone, only the app itself.
+- **What it is not.** One person, one password: there are no accounts, and no passkeys yet. It does not stream voice or open files from
+  your phone, and the dictation button appears only where the browser offers speech recognition.
+
 ## Subagents
 
 The agent can hand a self-contained task to a **subagent**: a separate assistant that works in its own empty conversation
@@ -1075,6 +1113,7 @@ and how it ended.
 | `internal/oauth` | OAuth sign-in for MCP servers: discovery, registration, PKCE login over a loopback address, token renewal; `oauthtest` is a fake service for tests |
 | `internal/watch` | watches: the store, change detection, and the `watch_*` tools |
 | `internal/mailbox` | read-only mail over IMAP: a small client that cannot send a changing command, message parsing, the `email_list`, `email_read` and `email_folders` tools |
+| `internal/web` | the web app: sign-in, the conversation as a chat transport, the page itself (embedded), Web Push, and the Today and Control data |
 | `internal/calendar` | read-only calendars from iCal feeds: parsing, repeats, time zones, safe fetching, the `calendar_events` tool |
 | `internal/guard` | permission rules, "always allow" choices, the activity log, secret scrubbing |
 | `internal/backup` | `tal backup` and `tal restore`: the state folder as one archive, safely unpacked |

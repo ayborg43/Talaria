@@ -160,6 +160,12 @@ func (rt *Runtime) Goals() *goal.Store { return rt.cfg.Goals }
 // HasCalendars reports whether the agent can read calendars.
 func (rt *Runtime) HasCalendars() bool { return rt.cfg.Calendars != nil }
 
+// Calendars returns the calendar service, nil if no calendar is set up.
+func (rt *Runtime) Calendars() *calendar.Service { return rt.cfg.Calendars }
+
+// Mail returns the mailbox service, nil if no mailbox is set up.
+func (rt *Runtime) Mail() *mailbox.Service { return rt.cfg.Mail }
+
 // HasMail reports whether the agent can read a mailbox.
 func (rt *Runtime) HasMail() bool { return rt.cfg.Mail != nil }
 

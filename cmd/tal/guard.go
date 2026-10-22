@@ -61,6 +61,9 @@ func buildFence(cfg *config.Config, cfgPath, home string) *execenv.Fence {
 	for _, n := range calendarEnvDeny(cfg) { // the addresses of private calendars are secrets too
 		add(n)
 	}
+	for _, n := range webEnvDeny() { // the web app's password too
+		add(n)
+	}
 	for _, n := range mailEnvDeny() { // and so is the mailbox's app password
 		add(n)
 	}
@@ -96,6 +99,7 @@ func collectSecrets(cfg *config.Config, getenv func(string) string, environ []st
 	secrets = append(secrets, cfg.TelegramToken(getenv), cfg.DiscordToken(getenv), getenv("TALARIA_API_KEY"))
 	secrets = append(secrets, calendarSecrets(cfg, getenv)...)
 	secrets = append(secrets, mailSecrets(getenv)...)
+	secrets = append(secrets, webSecrets(getenv)...)
 	if cfg.Vault.KeyFile != "" { // the passphrase in the key file opens the vault: it must never reach the model or a log
 		if raw, err := os.ReadFile(expandHome(cfg.Vault.KeyFile)); err == nil {
 			secrets = append(secrets, strings.TrimSpace(string(raw)))

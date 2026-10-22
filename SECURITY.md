@@ -58,6 +58,21 @@ is treated as hostile: lines, blocks of data and whole answers have size limits,
 others and is treated as outside content: invisible characters are removed, the real sender address is always shown, and the agent has
 no tool that sends mail. Attachments are named, never opened.
 
+## Web app
+
+The web app is the one part of Talaria that listens for the internet, so it is held to more than the rest. It signs in one person with a
+password (at least 12 characters, refused at start if shorter), compared in constant time. Wrong guesses are limited per address and overall,
+and each costs time. A session is a random value whose hash alone is kept; the cookie is `HttpOnly`, `SameSite=Strict` and, over https,
+`Secure` with the `__Host-` prefix. Every request that changes anything must carry a header only the app adds, and an `Origin` that is the
+app's own, so another website cannot make your browser act: this does not rest on the cookie alone. Every response carries a strict content
+policy (no inline script or style, nothing loaded from elsewhere, no framing), and the page puts anything that came from outside (replies,
+mail, calendar titles) on screen as text, never as markup: a test fails if the script ever builds markup from a string. It stores nothing
+on the phone but the app itself, and its service worker never keeps an API answer. Push messages are encrypted for the phone (RFC 8291,
+checked against the RFC's own example) and are only ever sent to a push service's own addresses, so a stolen session cannot point the
+server at the network behind it. It reaches the same chat engine as Telegram, so the same approvals, limits and outside-content rules
+apply; an approval is answered by a token that exists only while it is waiting. What it does not have: more than one user, passkeys or a
+second factor, and protection from someone who already holds your password.
+
 ## Known gaps
 
 - **Discovery of a sign-in server is checked by name, not by where the address leads.** A public name that resolves to a

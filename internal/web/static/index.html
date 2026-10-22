@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Talaria</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F6F3EC" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0B0D11" media="(prefers-color-scheme: dark)">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="Your Talaria agent">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Talaria">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="preload" href="/fonts/instrument.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/bricolage.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+
+<main id="login" class="login" hidden>
+  <div class="login-card">
+    <div class="logo logo-big" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="#F2B544" stroke-width="2.3" stroke-linecap="round"><path d="M3 21C9 21 15 18 21 9"/><path d="M7 25C13 25 20 21 27 12"/><path d="M12 28C18 28 24 24 29 17"/></svg></div>
+    <h1 class="display">Talaria</h1>
+    <p class="muted">Sign in to your agent.</p>
+    <form id="login-form" autocomplete="on">
+      <label class="sr" for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Password" required>
+      <p id="login-error" class="error" role="alert" hidden></p>
+      <button class="btn primary big" type="submit">Sign in</button>
+    </form>
+  </div>
+</main>
+
+<div id="app" class="app" hidden>
+  <div id="offline" class="offline" hidden>You are offline. What you see may be out of date.</div>
+
+  <section id="screen-chat" class="screen" aria-label="Chat">
+    <header class="bar chat-bar">
+      <div class="logo" id="logo"><span class="ring" aria-hidden="true"></span><svg viewBox="0 0 32 32" fill="none" stroke="#F2B544" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M3 21C9 21 15 18 21 9"/><path d="M7 25C13 25 20 21 27 12"/><path d="M12 28C18 28 24 24 29 17"/></svg></div>
+      <div class="bar-title">
+        <div class="display name">Talaria</div>
+        <div class="status"><span id="dot" class="dot"></span><span id="status-text">Connecting…</span></div>
+      </div>
+      <button id="new-chat" class="icon-btn" type="button" aria-label="Start a new conversation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></button>
+    </header>
+    <div id="thread" class="thread" role="log" aria-live="polite"></div>
+    <button id="jump" class="jump" type="button" hidden aria-label="Jump to the latest message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+    <div id="quick" class="quick"></div>
+    <form id="composer" class="composer">
+      <label class="sr" for="input">Message Talaria</label>
+      <textarea id="input" rows="1" placeholder="Message Talaria" enterkeyhint="send" autocomplete="off" autocapitalize="sentences"></textarea>
+      <button id="mic" class="round ghost" type="button" aria-label="Dictate" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+      <button id="send" class="round primary" type="submit" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+      <button id="stop" class="round stop" type="button" aria-label="Stop" hidden><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg></button>
+    </form>
+  </section>
+
+  <section id="screen-today" class="screen" aria-label="Today" hidden>
+    <div class="scroll" id="today-scroll">
+      <header class="page-head">
+        <div><div id="today-date" class="eyebrow"></div><h1 id="today-greeting" class="display page-title">Hello.</h1></div>
+        <button id="today-refresh" class="icon-btn" type="button" aria-label="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg></button>
+      </header>
+      <div id="today-body" class="stack"></div>
+    </div>
+  </section>
+
+  <section id="screen-needs" class="screen" aria-label="Needs you" hidden>
+    <div class="scroll">
+      <header class="page-head"><div><h1 class="display page-title">Needs you</h1><p class="muted">Nothing risky runs until you say so.</p></div></header>
+      <div class="segmented" role="tablist">
+        <button id="seg-wait" type="button" role="tab" aria-selected="true">Waiting</button>
+        <button id="seg-hist" type="button" role="tab" aria-selected="false">History</button>
+      </div>
+      <div id="needs-body" class="stack"></div>
+    </div>
+  </section>
+
+  <section id="screen-control" class="screen" aria-label="Control" hidden>
+    <div class="scroll">
+      <header class="page-head"><div><h1 class="display page-title">Control</h1><p class="muted">What Talaria is doing, and how to stop it.</p></div></header>
+      <div id="control-body" class="stack"></div>
+    </div>
+  </section>
+
+  <nav id="tabs" class="tabs" aria-label="Sections">
+    <a href="#chat" data-tab="chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.2A8 8 0 1 1 20 12z"/></svg><span>Chat</span></a>
+    <a href="#today" data-tab="today"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/></svg><span>Today</span></a>
+    <a href="#needs" data-tab="needs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg><span>Needs you</span><b id="badge" class="badge" hidden>0</b></a>
+    <a href="#control" data-tab="control"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 8h9M18 8h1M5 16h1M10 16h9"/><circle cx="16" cy="8" r="2"/><circle cx="8" cy="16" r="2"/></svg><span>Control</span></a>
+  </nav>
+</div>
+
+<noscript><p class="noscript">Talaria needs JavaScript.</p></noscript>
+<script src="/app.js" defer></script>
+</body>
+</html>

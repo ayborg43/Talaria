@@ -105,7 +105,7 @@ func TestTheComposeFileAndTheExampleAgree(t *testing.T) {
 	}
 	for _, want := range []string{"TALARIA_PROVIDER", "TALARIA_MODEL", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY",
 		"TALARIA_DISCORD_TOKEN", "TALARIA_DISCORD_ALLOWED_USERS", "TALARIA_TELEGRAM_TOKEN", "TALARIA_TELEGRAM_ALLOWED_USERS",
-		"TALARIA_VAULT_PASSPHRASE", "TALARIA_CONFIG_JSON", "TALARIA_OPS_LISTEN", "TALARIA_OPS_TOKEN", "TALARIA_CALENDARS", "TALARIA_TIMEZONE", "TALARIA_EMAIL", "TALARIA_EMAIL_PASSWORD", "TALARIA_EMAIL_SERVER", "TALARIA_EMAIL_USER"} {
+		"TALARIA_VAULT_PASSPHRASE", "TALARIA_CONFIG_JSON", "TALARIA_OPS_LISTEN", "TALARIA_OPS_TOKEN", "TALARIA_CALENDARS", "TALARIA_TIMEZONE", "TALARIA_EMAIL", "TALARIA_EMAIL_PASSWORD", "TALARIA_EMAIL_SERVER", "TALARIA_EMAIL_USER", "TALARIA_WEB_PASSWORD", "TALARIA_WEB_PUBLIC_URL", "TALARIA_WEB_LISTEN"} {
 		found := false
 		for _, p := range passed {
 			found = found || p == want
@@ -116,6 +116,14 @@ func TestTheComposeFileAndTheExampleAgree(t *testing.T) {
 		if !strings.Contains(string(example), want) {
 			t.Errorf(".env.example does not mention %s", want)
 		}
+	}
+	// The web app is reached through Dokploy's own front door, which has the certificate. Publishing the port on the
+	// host would put the same page on plain http, where a password could be read on its way.
+	if regexp.MustCompile(`(?m)^\s+ports:`).Match(compose) {
+		t.Error("the compose file publishes a port on the host")
+	}
+	if !strings.Contains(string(compose), `- "8080"`) {
+		t.Error("the compose file does not expose the web app's port to the proxy")
 	}
 	// What holds the container down.
 	for _, want := range []string{"read_only: true", "cap_drop: [ALL]", "no-new-privileges:true", "talaria-data:/data", "talaria-work:/work", "${TALARIA_PROVIDER:?"} {

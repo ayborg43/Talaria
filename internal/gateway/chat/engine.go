@@ -350,6 +350,10 @@ func (e *Engine) editInterval() time.Duration {
 }
 
 func (e *Engine) runOne(c *chat, text string) {
+	if rw, ok := e.T.(RunWatcher); ok {
+		rw.RunStart(c.id)
+		defer rw.RunEnd(c.id) // the first defer, so the last to run: after the reply is delivered
+	}
 	ctx, cancel := context.WithCancel(e.root)
 	c.mu.Lock()
 	c.cancel, c.runCtx = cancel, ctx
@@ -362,7 +366,7 @@ func (e *Engine) runOne(c *chat, text string) {
 	e.applyBackend(c, a)
 
 	defer func() {
-		a.OnText, a.OnToolStart = nil, nil
+		a.OnText, a.OnToolStart, a.OnToolCall = nil, nil, nil
 		cancel()
 		c.mu.Lock()
 		c.cancel, c.live = nil, nil
@@ -389,6 +393,17 @@ func (e *Engine) runOne(c *chat, text string) {
 		c.mu.Lock()
 		c.live = live
 		c.mu.Unlock()
+	}
+
+	if tw, ok := e.T.(ToolWatcher); ok {
+		before := a.OnToolStart
+		a.OnToolStart = func(name, args string) {
+			if before != nil {
+				before(name, args)
+			}
+			tw.ToolStart(c.id, name)
+		}
+		a.OnToolCall = func(name, _, result string) { tw.ToolEnd(c.id, name, result) }
 	}
 
 	reply, err := a.Run(ctx, text)

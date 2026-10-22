@@ -124,6 +124,21 @@ func runDoctor(cfg *config.Config, cfgPath, home string, getenv func(string) str
 		}
 	}
 
+	if w, problems, configured := webConfig(getenv); configured {
+		fmt.Fprintln(out, "\nWeb app")
+		for _, pr := range problems {
+			bad("%s", pr)
+		}
+		if len(problems) == 0 {
+			ok("served on %s, signing in with a password of %d characters", w.Listen, len([]rune(w.Password)))
+			if w.PublicURL == "" {
+				note("TALARIA_WEB_PUBLIC_URL is not set: phones need an https address to install the app and to get notifications")
+			} else {
+				ok("public address %s", w.PublicURL)
+			}
+		}
+	}
+
 	fmt.Fprintln(out, "\nSafety")
 	if cfg.Policy.GuardUntrusted() {
 		ok("after reading outside content, anything that could send something out asks first")

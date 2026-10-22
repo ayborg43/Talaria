@@ -48,6 +48,21 @@ type Transport interface {
 	SendApproval(ctx context.Context, chat int64, text, token string, always bool) (msg int64, err error)
 }
 
+// ToolWatcher is an optional extra for a Transport that shows tool calls as they happen. The engine
+// reports each call of a chat's agent: ToolStart just before it runs (after any approval), and ToolEnd
+// with its result, where a result starting "error: " is a failure.
+type ToolWatcher interface {
+	ToolStart(chat int64, name string)
+	ToolEnd(chat int64, name, result string)
+}
+
+// RunWatcher is an optional extra for a Transport that shows when the agent is working on a chat's message:
+// RunStart when it begins, and RunEnd once its reply, if any, has been delivered.
+type RunWatcher interface {
+	RunStart(chat int64)
+	RunEnd(chat int64)
+}
+
 // EditOutcome is what an Edit error means.
 type EditOutcome int
 

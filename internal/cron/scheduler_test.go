@@ -210,3 +210,26 @@ func TestJobsAreCountedByKindAndWhatBecameOfThem(t *testing.T) {
 		t.Error("an ordinary job is kind job")
 	}
 }
+
+func TestAPausedSchedulerHoldsEveryJobAndRunsThemWhenResumed(t *testing.T) {
+	h := newHarness(t, func(context.Context, Job) (string, error) { return "done", nil })
+	paused := true
+	h.sched.Paused = func() bool { return paused }
+	h.store.Add(Job{Name: "inbox", Schedule: "@every 5m", Prompt: "check mail", ChatID: 42})
+
+	h.fireAt("2026-10-20 10:06")
+	h.fireAt("2026-10-20 10:30")
+	if len(h.got) != 0 || len(h.execed) != 0 {
+		t.Fatalf("a paused scheduler ran something: %+v %v", h.got, h.execed)
+	}
+	jobs, _ := h.store.List()
+	if len(jobs) != 1 || jobs[0].LastRun.After(utc("2026-10-20 10:00")) {
+		t.Fatalf("the job was claimed while paused: %+v", jobs)
+	}
+
+	paused = false
+	h.fireAt("2026-10-20 10:31")
+	if len(h.got) != 1 || h.got[0].chat != 42 {
+		t.Fatalf("the held job did not run after resuming: %+v", h.got)
+	}
+}

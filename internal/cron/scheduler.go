@@ -29,6 +29,9 @@ type Scheduler struct {
 	// Deliver sends text to a chat.
 	Deliver func(ctx context.Context, chatID int64, text string)
 	Logf    func(format string, args ...any)
+	// Paused, if set and true, holds every job: none is claimed, so each stays due and runs when
+	// the scheduler is no longer paused.
+	Paused func() bool
 
 	Tick        time.Duration // how often to look for due jobs; default 15s
 	Timeout     time.Duration // per-run limit; default 10m
@@ -148,6 +151,9 @@ func (s *Scheduler) tick(ctx context.Context) {
 		s.sem = make(chan struct{}, n)
 		s.running = map[string]bool{}
 		s.runs = map[string]*run{}
+	}
+	if s.Paused != nil && s.Paused() {
+		return
 	}
 	due, err := s.Store.ClaimDue(s.timeNow(), s.Gateway)
 	if err != nil {

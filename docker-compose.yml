@@ -31,12 +31,20 @@ services:
       TALARIA_EMAIL_PASSWORD: ${TALARIA_EMAIL_PASSWORD:-}
       TALARIA_EMAIL_SERVER: ${TALARIA_EMAIL_SERVER:-}
       TALARIA_EMAIL_USER: ${TALARIA_EMAIL_USER:-}
+      # Optional: the web app (an installable page for your phone). A password, and the https address you give it.
+      TALARIA_WEB_PASSWORD: ${TALARIA_WEB_PASSWORD:-}
+      TALARIA_WEB_PUBLIC_URL: ${TALARIA_WEB_PUBLIC_URL:-}
+      TALARIA_WEB_LISTEN: ${TALARIA_WEB_LISTEN:-}
       # Optional: opens the saved-logins vault without anyone present, and extra settings as JSON.
       TALARIA_VAULT_PASSPHRASE: ${TALARIA_VAULT_PASSPHRASE:-}
       TALARIA_CONFIG_JSON: ${TALARIA_CONFIG_JSON:-}
       # Optional: health and metrics. Inside the container only, unless you change these.
       TALARIA_OPS_LISTEN: ${TALARIA_OPS_LISTEN:-127.0.0.1:9100}
       TALARIA_OPS_TOKEN: ${TALARIA_OPS_TOKEN:-}
+    # The web app listens on 8080 inside the network. Nothing is published on the host: give the domain to Dokploy
+    # (Domains tab: this service, port 8080, https), which puts it behind its own encrypted front door.
+    expose:
+      - "8080"
     volumes:
       - talaria-data:/data   # notes, skills, history, jobs, vault: back this one up
       - talaria-work:/work   # the agent's own files

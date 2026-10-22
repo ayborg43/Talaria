@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"talaria/internal/agent"
 	"talaria/internal/app"
@@ -24,6 +25,7 @@ import (
 	"talaria/internal/ops"
 	"talaria/internal/provider"
 	"talaria/internal/version"
+	"talaria/internal/web"
 )
 
 // gatewayPool is the set of environments chats may use, shared by every chat
@@ -127,14 +129,26 @@ func serviceAllowlist(envVar string, fromConfig []int64) (map[int64]bool, error)
 	return allowed, nil
 }
 
+func orNotSet(s string) string {
+	if s == "" {
+		return "not set"
+	}
+	return s
+}
+
 func onOff(b bool) string { return map[bool]string{true: "on", false: "off"}[b] }
 
 func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res config.Resolved, defProvider provider.Provider, home string, env execenv.Env, envName string, yolo bool) error {
 	tgToken, dcToken := cfg.TelegramToken(os.Getenv), cfg.DiscordToken(os.Getenv)
-	if tgToken == "" && dcToken == "" {
-		return errors.New("set TALARIA_TELEGRAM_TOKEN to the token from @BotFather, or TALARIA_DISCORD_TOKEN to a Discord bot's token " +
-			"(or telegram.token_env / discord.token_env in the config file)")
+	webSet, webProblems, webOn := webConfig(os.Getenv)
+	if tgToken == "" && dcToken == "" && !webOn {
+		return errors.New("set TALARIA_TELEGRAM_TOKEN to the token from @BotFather, TALARIA_DISCORD_TOKEN to a Discord bot's token, " +
+			"or TALARIA_WEB_PASSWORD to serve the web app (or telegram.token_env / discord.token_env in the config file)")
 	}
+	if len(webProblems) > 0 {
+		return errors.New(strings.Join(webProblems, "; "))
+	}
+	pause := newPauseState(home)
 	logf := func(format string, args ...any) { fmt.Fprintf(os.Stderr, format+"\n", args...) }
 
 	envDesc := ""
@@ -175,6 +189,7 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 			Store:   rt.Cron,
 			Gateway: s.name,
 			Exec:    runner.run,
+			Paused:  pause.Paused,
 			Deliver: func(ctx context.Context, chatID int64, text string) {
 				if s.allowed[chatID] {
 					s.send(ctx, chatID, text)
@@ -288,6 +303,50 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 		s.run, s.send, s.selection = g.Run, g.Send, g.Selection
 		g.Commands, g.OnUserMessage, g.StopBackground = attach(s, logf)
 		services = append(services, s)
+	}
+
+	var webHub *web.Hub
+	if webOn {
+		allowed := map[int64]bool{web.UserID: true}
+		webHub = &web.Hub{Path: filepath.Join(home, "web_log.json")}
+		subject := webSet.PublicURL
+		if subject == "" {
+			subject = "mailto:admin@localhost.invalid"
+		}
+		push := &web.Pusher{Path: filepath.Join(home, "web_push.json"), Subject: subject, Logf: logf}
+		webHub.Notifier = push
+		s := &service{name: "web", allowed: allowed, markdown: true}
+		eng := &chat.Engine{
+			T: webHub, Allowed: allowed, Logf: logf, Stream: true, MessagesPerMinute: cfg.Limits.Messages(),
+			Environment: envDesc, Backends: backends, Prefs: &chat.FilePrefs{Path: filepath.Join(home, "web_chats.json")},
+		}
+		if gd := rt.Guard(); gd != nil {
+			eng.Permissions = guard.ChatPermissions{G: gd, Gateway: s.name}
+		}
+		eng.NewAgent = newAgent(s, webNote, eng.Selection)
+		eng.Commands, eng.OnUserMessage, eng.StopBackground = attach(s, logf)
+		zone, _ := calendarZone(cfg, os.Getenv)
+		model := res.Model
+		srv := &web.Server{
+			Hub: webHub, Auth: &web.Auth{Password: webSet.Password, Path: filepath.Join(home, "web_sessions.json"), Secure: webSet.Secure},
+			Engine: eng, Push: push, Pause: pause, PublicURL: webSet.PublicURL, Model: model, Version: version.String(), Started: time.Now(),
+			Sources: webSources(rt, zone, webLinks(cfg, rt, model, os.Getenv, webSet.PublicURL)), Logf: logf, TrustProxy: webSet.Secure,
+		}
+		s.run = func(ctx context.Context) error {
+			eng.Start(ctx)
+			defer eng.Wait(5 * time.Second)
+			return srv.Serve(ctx, webSet.Listen)
+		}
+		s.send = eng.Send
+		s.selection = eng.Selection
+		logf("web: the app is on %s (public address %s), signing in with TALARIA_WEB_PASSWORD", webSet.Listen, orNotSet(webSet.PublicURL))
+		if webSet.PublicURL == "" {
+			logf("web: TALARIA_WEB_PUBLIC_URL is not set: phones need an https address to install the app and get notifications")
+		}
+		services = append(services, s)
+	}
+	if webHub != nil {
+		defer webHub.Close()
 	}
 
 	if yolo {
