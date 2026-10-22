@@ -530,7 +530,7 @@ until something changes.
 
 ## Web app (installable on your phone)
 
-Talaria has its own page, with the same four things you do all day: **Chat** (replies stream in as they are written, with a chip for each
+Talaria has its own page, with the things you do all day: **Chat** (replies stream in as they are written, with a chip for each
 tool it uses), **Today** (your calendar and mail at a glance, with a countdown to your next event), **Needs you** (every question that is
 waiting for your Allow or Deny, and the history of what you decided) and **Control** (is it healthy, what it is doing on its own, what it is
 connected to, and a switch that holds everything). It works alongside Telegram, not instead of it: it is the same agent, with the same
@@ -562,8 +562,9 @@ Without `TALARIA_WEB_PUBLIC_URL` it works in a browser on that machine but canno
 - **Who is working.** While anything is working, a strip under the chat header names each worker, what it is doing right now, and for
   how long: the main agent ("using email_list"), each subagent it has handed a task to (by the name it gave the task, with a note when
   it is waiting for a free place), and the background tasks, goal check-ins, watches and scheduled jobs that are running. The header
-  says how many ("3 agents working"), and Control has the same list as **Working now**. It is live, survives a reload, and a helper
-  cut short by Stop disappears at once.
+  says how many ("3 agents working"). The **Agents** tab in the bottom bar, with a badge counting who is working, has the full
+  picture: **Working now**, what is **set up to run on its own** (goals, watches, reminders and when they next run), and what has
+  **finished lately** with how long it took. It is live, survives a reload, and a helper cut short by Stop disappears at once.
 - **Pausing everything.** In Control. Goals, watches and reminders stop being started and wait; what was due runs when you resume. The
   switch is kept in a file, so a restart does not quietly undo it. Chat still works while paused.
 - **Light and dark** follow your phone. **Offline,** the app opens and says so; nothing from your conversation, mail or calendar is stored

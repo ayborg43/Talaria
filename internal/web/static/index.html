@@ -77,6 +77,13 @@
     </div>
   </section>
 
+  <section id="screen-agents" class="screen" aria-label="Agents" hidden>
+    <div class="scroll">
+      <header class="page-head"><div><h1 class="display page-title">Agents</h1><p class="muted">Who is working for you, now and lately.</p></div></header>
+      <div id="agents-body" class="stack"></div>
+    </div>
+  </section>
+
   <section id="screen-needs" class="screen" aria-label="Needs you" hidden>
     <div class="scroll">
       <header class="page-head"><div><h1 class="display page-title">Needs you</h1><p class="muted">Nothing risky runs until you say so.</p></div></header>
@@ -98,6 +105,7 @@
   <nav id="tabs" class="tabs" aria-label="Sections">
     <a href="#chat" data-tab="chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.2A8 8 0 1 1 20 12z"/></svg><span>Chat</span></a>
     <a href="#today" data-tab="today"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/></svg><span>Today</span></a>
+    <a href="#agents" data-tab="agents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="3.5"/><path d="M12 8V5M9 4.5h6"/><circle cx="9.5" cy="13.5" r="1" fill="currentColor"/><circle cx="14.5" cy="13.5" r="1" fill="currentColor"/><path d="M3 12.5v2M21 12.5v2"/></svg><span>Agents</span><b id="agent-badge" class="badge work" hidden>0</b></a>
     <a href="#needs" data-tab="needs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg><span>Needs you</span><b id="badge" class="badge" hidden>0</b></a>
     <a href="#control" data-tab="control"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 8h9M18 8h1M5 16h1M10 16h9"/><circle cx="16" cy="8" r="2"/><circle cx="8" cy="16" r="2"/></svg><span>Control</span></a>
   </nav>

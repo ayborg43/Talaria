@@ -282,6 +282,7 @@ function renderChrome() {
     : count > 1 ? `${count} agents working` : busy ? 'Working…' : 'Online' + (S.model ? ' · ' + S.model : '');
   const n = pendingAsks().length;
   const badge = $('#badge'); badge.hidden = n === 0; badge.textContent = String(n);
+  const ab = $('#agent-badge'); ab.hidden = S.agents.length === 0; ab.textContent = String(S.agents.length);
   const hasText = $('#input').value.trim().length > 0;
   $('#send').hidden = run && !hasText;
   $('#stop').hidden = !(run && !hasText);
@@ -294,7 +295,9 @@ function renderChrome() {
 // ---------- who is working ----------
 const KINDS = { main: 'MAIN', sub: 'HELPER', task: 'TASK', goal: 'GOAL', watch: 'WATCH', job: 'JOB' };
 function setAgents(list) {
+  const before = S.agents.length;
   S.agents = Array.isArray(list) ? list : [];
+  if (S.agents.length < before && S.tab === 'agents') loadAgentsPage(); // something ended: it is now in the finished list
   S.agentsAt = Date.now();
   renderAgents(); renderChrome(); updateNow();
 }
@@ -331,7 +334,39 @@ function nowCard() {
   card.append(rows);
   return card;
 }
-function updateNow() { const el = $('#now'); if (el && S.tab === 'control') el.replaceWith(nowCard()); }
+function updateNow() { const el = $('#now'); if (el && S.tab === 'agents') el.replaceWith(nowCard()); }
+
+// The Agents screen: who is working, what is set up to run on its own, and what has finished lately.
+let recentAgents = [], standing = [];
+async function loadAgentsPage() {
+  if (!$('#now')) $('#agents-body').replaceChildren(h('div', { class: 'skeleton' }));
+  try { const d = await api('/api/agents'); recentAgents = d.recent || []; standing = d.jobs || []; }
+  catch (e) { if (e instanceof AuthError) return; toast(e.message); }
+  renderAgentsPage();
+}
+function ago(iso) {
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso)) / 1000));
+  return s < 60 ? 'just now' : s < 3600 ? Math.floor(s / 60) + ' min ago' : s < 86400 ? Math.floor(s / 3600) + ' h ago' : fmtDay(new Date(iso));
+}
+function renderAgentsPage() {
+  if (S.tab !== 'agents') return;
+  const out = [nowCard()];
+  out.push(standing.length ? jobsCard(standing, 'Set up to run on their own')
+    : h('div', { class: 'card' }, h('h2', null, 'Set up to run on their own'), h('div', { class: 'empty', text: 'Nothing yet. Ask me for a reminder, a watch on your mail, or a goal to work on, and it will show here.' })));
+  const card = h('div', { class: 'card' }, h('h2', null, 'Finished lately'));
+  if (!recentAgents.length) card.append(h('div', { class: 'empty', text: 'Helpers and background work that finish will be listed here.' }));
+  else {
+    const rows = h('div', { class: 'rows' });
+    for (const f of recentAgents.slice(0, 15)) {
+      rows.append(h('div', { class: 'row' }, h('span', { class: 'k ' + f.kind, text: KINDS[f.kind] || f.kind.toUpperCase() }),
+        h('span', { class: 'grow' }, h('span', { class: 't', text: f.label }), h('span', { class: 's', text: (f.stopped ? 'Stopped after ' : 'Took ') + (f.seconds < 60 ? f.seconds + 's' : Math.floor(f.seconds / 60) + 'm ' + (f.seconds % 60) + 's') })),
+        h('span', { class: 'when', text: ago(f.at) })));
+    }
+    card.append(rows);
+  }
+  out.push(card);
+  $('#agents-body').replaceChildren(...out);
+}
 
 // ---------- composer ----------
 const input = $('#input');
@@ -415,13 +450,14 @@ async function reconnect() {
 }
 
 // ---------- tabs ----------
-const TABS = ['chat', 'today', 'needs', 'control'];
+const TABS = ['chat', 'today', 'agents', 'needs', 'control'];
 function route() {
   const tab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'chat';
   S.tab = tab;
   for (const t of TABS) $('#screen-' + t).hidden = t !== tab;
   $$('#tabs a').forEach((a) => (a.getAttribute('data-tab') === tab ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
   if (tab === 'today') loadToday();
+  if (tab === 'agents') loadAgentsPage();
   if (tab === 'needs') renderNeeds();
   if (tab === 'control') loadControl();
   if (tab === 'chat') { const t = $('#thread'); t.scrollTop = t.scrollHeight; }
@@ -522,8 +558,8 @@ function hero(timed, now) {
 }
 setInterval(() => { if (S.tab === 'today' && S.today && !document.hidden) renderToday(); }, 30000);
 
-function jobsCard(jobs) {
-  const card = h('div', { class: 'card' }, h('h2', null, 'Working for you'));
+function jobsCard(jobs, title = 'Working for you') {
+  const card = h('div', { class: 'card' }, h('h2', null, title));
   const rows = h('div', { class: 'rows' });
   for (const j of jobs) {
     const kind = j.kind.toLowerCase();
@@ -601,7 +637,6 @@ async function renderControl() {
   health.append(btn);
   out.push(health);
 
-  out.push(nowCard());
   out.push(await notifyCard(c));
   if (c.jobs.length) out.push(jobsCard(c.jobs));
   else out.push(h('div', { class: 'card' }, h('h2', null, 'Working for you'), h('div', { class: 'empty', text: 'No goals, watches or reminders yet. Ask me in chat.' })));

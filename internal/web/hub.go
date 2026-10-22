@@ -61,6 +61,17 @@ type Event struct {
 	Agents []activity.Worker `json:"agents,omitempty"`
 }
 
+// Finished is a helper or a piece of background work that has ended, for the Agents screen.
+type Finished struct {
+	Kind    string    `json:"kind"`
+	Label   string    `json:"label"`
+	Seconds int64     `json:"seconds"` // how long it worked
+	At      time.Time `json:"at"`
+	Stopped bool      `json:"stopped,omitempty"` // cut short when the agent was stopped, rather than finishing
+}
+
+const maxRecent = 30
+
 // Notifier tells the person something when the page is not open.
 type Notifier interface {
 	Notify(title, body, tag, path string)
@@ -94,6 +105,7 @@ type Hub struct {
 	changes  []change
 	subs     map[*sub]struct{}
 	running  bool
+	recent   []Finished                 // newest last
 	workers  map[int64]*activity.Worker // who is working now
 	lastWork int64
 	mainID   int64          // the main agent's number while it works
@@ -144,10 +156,15 @@ func (h *Hub) init() {
 		Next     int64         `json:"next"`
 		Messages []*Message    `json:"messages"`
 		Activity map[int64]int `json:"activity"`
+		Recent   []Finished    `json:"recent"`
 	}
 	if json.Unmarshal(raw, &f) != nil {
 		return
 	}
+	if len(f.Recent) > maxRecent {
+		f.Recent = f.Recent[len(f.Recent)-maxRecent:]
+	}
+	h.recent = f.Recent
 	for _, m := range f.Messages {
 		// Anything that was running or waiting when Talaria stopped is not any more.
 		switch {
@@ -175,7 +192,8 @@ func (h *Hub) save() {
 		Next     int64         `json:"next"`
 		Messages []*Message    `json:"messages"`
 		Activity map[int64]int `json:"activity"`
-	}{h.nextID, h.msgs, h.activity})
+		Recent   []Finished    `json:"recent"`
+	}{h.nextID, h.msgs, h.activity, h.recent})
 	if err != nil {
 		return
 	}
@@ -504,6 +522,7 @@ func (h *Hub) setRunning(on bool) {
 	// otherwise was cut short (stopped, timed out), and must not be left spinning on the page.
 	for id, w := range h.workers {
 		if id == h.mainID || w.Kind == activity.Sub {
+			h.finishLocked(w, true)
 			delete(h.workers, id)
 		}
 	}
@@ -530,6 +549,31 @@ func (h *Hub) startLocked(kind, label string) int64 {
 	h.workers[id] = &activity.Worker{ID: id, Kind: kind, Label: clipRunes(label, 60), Since: h.now()}
 	h.pushAgents()
 	return id
+}
+
+// finishLocked remembers that a worker has ended. The main agent is left out: it ends with every answer, and a
+// line for each would bury the helpers and the background work, which are what the list is for.
+func (h *Hub) finishLocked(w *activity.Worker, stopped bool) {
+	if w.Kind == activity.Main {
+		return
+	}
+	h.recent = append(h.recent, Finished{Kind: w.Kind, Label: w.Label, Seconds: int64(h.now().Sub(w.Since).Seconds()), At: h.now(), Stopped: stopped})
+	if len(h.recent) > maxRecent {
+		h.recent = append([]Finished(nil), h.recent[len(h.recent)-maxRecent:]...)
+	}
+	h.scheduleSave()
+}
+
+// Recent is what has finished lately, newest first.
+func (h *Hub) Recent() []Finished {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.init()
+	out := make([]Finished, len(h.recent))
+	for i, f := range h.recent {
+		out[len(h.recent)-1-i] = f
+	}
+	return out
 }
 
 // workersLocked lists who is working: the main agent first, then the others in the order they began.
@@ -585,7 +629,8 @@ func (h *Hub) Stop(id int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.init()
-	if _, ok := h.workers[id]; ok {
+	if w, ok := h.workers[id]; ok {
+		h.finishLocked(w, false)
 		delete(h.workers, id)
 		h.pushAgents()
 	}

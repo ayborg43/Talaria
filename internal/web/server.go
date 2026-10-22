@@ -125,6 +125,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/approve", s.authed(s.approve))
 	mux.HandleFunc("POST /api/presence", s.authed(s.presence))
 	mux.HandleFunc("GET /api/today", s.authed(s.today))
+	mux.HandleFunc("GET /api/agents", s.authed(s.agents))
 	mux.HandleFunc("GET /api/control", s.authed(s.control))
 	mux.HandleFunc("POST /api/pause", s.authed(s.pause))
 	mux.HandleFunc("GET /api/push/key", s.authed(s.pushKey))
@@ -471,6 +472,18 @@ func (s *Server) today(w http.ResponseWriter, r *http.Request) {
 	s.cacheMu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(raw)
+}
+
+// ---- agents ----
+
+// agents is what the Agents screen shows besides the live list, which arrives over the event stream: what is set up
+// to run on its own, and what has finished lately.
+func (s *Server) agents(w http.ResponseWriter, r *http.Request) {
+	out := map[string]any{"agents": s.Hub.Workers(), "recent": s.Hub.Recent(), "jobs": []JobInfo{}}
+	if s.Sources.Jobs != nil {
+		out["jobs"] = s.Sources.Jobs()
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ---- control ----

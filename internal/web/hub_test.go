@@ -418,3 +418,50 @@ func TestANewPageIsToldWhoIsWorkingAtOnce(t *testing.T) {
 		t.Fatalf("%+v", evs)
 	}
 }
+
+func TestWhatFinishesIsRememberedNewestFirstAndSurvivesARestart(t *testing.T) {
+	now := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "log.json")
+	h := &Hub{Path: path, Now: func() time.Time { return now }}
+
+	a := h.Start(activity.Sub, "first helper")
+	now = now.Add(14 * time.Second)
+	h.Stop(a)
+	b := h.Start(activity.Job, "inbox check")
+	now = now.Add(90 * time.Second)
+	h.Stop(b)
+	h.RunStart(ChatID) // the main agent is not listed: it ends with every answer
+	h.RunEnd(ChatID)
+
+	rec := h.Recent()
+	if len(rec) != 2 || rec[0].Label != "inbox check" || rec[0].Seconds != 90 || rec[1].Label != "first helper" || rec[1].Seconds != 14 || rec[0].Stopped {
+		t.Fatalf("%+v", rec)
+	}
+	h.Close()
+	g := &Hub{Path: path, Now: func() time.Time { return now }}
+	if got := g.Recent(); len(got) != 2 || got[0].Label != "inbox check" {
+		t.Fatalf("after a restart: %+v", got)
+	}
+}
+
+func TestAHelperCutShortByStoppingIsListedAsStopped(t *testing.T) {
+	h := &Hub{}
+	h.RunStart(ChatID)
+	h.Start(activity.Sub, "slow helper")
+	h.RunEnd(ChatID) // stopped while the helper was still working
+	rec := h.Recent()
+	if len(rec) != 1 || !rec[0].Stopped || rec[0].Label != "slow helper" {
+		t.Fatalf("%+v", rec)
+	}
+}
+
+func TestOnlyTheLatestFinishedAreKept(t *testing.T) {
+	h := &Hub{}
+	for i := 0; i < maxRecent+10; i++ {
+		id := h.Start(activity.Job, "job")
+		h.Stop(id)
+	}
+	if n := len(h.Recent()); n != maxRecent {
+		t.Fatalf("%d", n)
+	}
+}

@@ -227,7 +227,7 @@ func TestEveryRouteNeedsASignIn(t *testing.T) {
 	r := newRig(t)
 	for _, rt := range []struct{ m, p string }{
 		{"GET", "/api/state"}, {"GET", "/api/events"}, {"POST", "/api/send"}, {"POST", "/api/approve"}, {"POST", "/api/presence"}, {"GET", "/api/today"},
-		{"GET", "/api/control"}, {"POST", "/api/pause"}, {"GET", "/api/push/key"}, {"POST", "/api/push/subscribe"}, {"POST", "/api/push/unsubscribe"}, {"POST", "/api/logout"},
+		{"GET", "/api/control"}, {"GET", "/api/agents"}, {"POST", "/api/pause"}, {"GET", "/api/push/key"}, {"POST", "/api/push/subscribe"}, {"POST", "/api/push/unsubscribe"}, {"POST", "/api/logout"},
 	} {
 		resp, body := r.do(rt.m, rt.p, map[string]string{})
 		if resp.StatusCode != 401 {
@@ -800,5 +800,50 @@ func TestThePageKnowsHowToShowWhoIsWorking(t *testing.T) {
 	h, _ := os.ReadFile(filepath.Join("static", "index.html"))
 	if !strings.Contains(string(h), `id="agents"`) {
 		t.Error("the page has nowhere to show who is working")
+	}
+}
+
+func TestTheAgentsScreenGetsWhoIsWorkingWhatIsSetUpAndWhatFinished(t *testing.T) {
+	r := newRig(t)
+	r.login()
+	id := r.hub.Start("sub", "price researcher")
+	r.hub.Stop(id)
+	r.hub.Start("watch", "mail from Amina")
+	_, b := r.do("GET", "/api/agents", nil)
+	var d struct {
+		Agents []struct{ Kind, Label string }
+		Recent []struct {
+			Kind, Label string
+			Seconds     int64
+			Stopped     bool
+		}
+		Jobs []JobInfo
+	}
+	if err := json.Unmarshal(b, &d); err != nil {
+		t.Fatalf("%s", b)
+	}
+	if len(d.Agents) != 1 || d.Agents[0].Label != "mail from Amina" {
+		t.Fatalf("working now: %s", b)
+	}
+	if len(d.Recent) != 1 || d.Recent[0].Kind != "sub" || d.Recent[0].Label != "price researcher" || d.Recent[0].Stopped {
+		t.Fatalf("finished lately: %s", b)
+	}
+	if len(d.Jobs) != 1 || d.Jobs[0].Title != "g" {
+		t.Fatalf("set up to run on their own: %s", b)
+	}
+}
+
+func TestThePageHasAnAgentsTabWithALiveBadge(t *testing.T) {
+	read := func(n string) string { b, _ := os.ReadFile(filepath.Join("static", n)); return string(b) }
+	html, js := read("index.html"), read("app.js")
+	for _, want := range []string{`data-tab="agents"`, `href="#agents"`, `id="screen-agents"`, `id="agents-body"`, `id="agent-badge"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("the page lacks %s", want)
+		}
+	}
+	for _, want := range []string{"const TABS = ['chat', 'today', 'agents', 'needs', 'control'];", "loadAgentsPage", "/api/agents", "agent-badge"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("the script lacks %q", want)
+		}
 	}
 }
