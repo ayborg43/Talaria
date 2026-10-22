@@ -2,6 +2,7 @@ package execenv
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -453,5 +454,47 @@ func TestSSHIdentityFileMustExist(t *testing.T) {
 	_, err := Open(context.Background(), "box", Spec{Type: "ssh", Host: "h", IdentityFile: "/talaria/no/such/key"}, os.Getenv)
 	if err == nil || !strings.Contains(err.Error(), "identity_file /talaria/no/such/key cannot be read") {
 		t.Fatalf("a mistyped key path is an error, not a silent fallback to other keys: %v", err)
+	}
+}
+
+// A process that explains itself on standard error and exits: asked for the explanation the moment its
+// output ends, the caller must get it every time, not only when the copy happens to have finished.
+func TestStderrIsCompleteRightAfterTheOutputEnds(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	// The output ends at once (stdout is closed), and the explanation comes a moment later, then the process exits.
+	// That is the worst case of what happens by chance when a program says why it is stopping.
+	p, err := Local{}.Start(context.Background(), `exec 1>&-; sleep 0.3; echo "the browser was not found" >&2; exit 127`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	io.Copy(io.Discard, p.Out)
+	if got := p.Stderr(); got != "the browser was not found" {
+		t.Fatalf("the reason the process gave was lost: %q", got)
+	}
+	// And the ordinary case, many times over.
+	for i := 0; i < 100; i++ {
+		q, err := Local{}.Start(context.Background(), `echo "gone" >&2; exit 1`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, q.Out)
+		if got := q.Stderr(); got != "gone" {
+			t.Fatalf("round %d: %q", i, got)
+		}
+		q.Close()
+	}
+	// One that is still running is answered at once with what it has said so far.
+	r, err := Local{}.Start(context.Background(), `echo early >&2; sleep 30`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	time.Sleep(200 * time.Millisecond)
+	start := time.Now()
+	if got := r.Stderr(); got != "early" || time.Since(start) > 3*time.Second {
+		t.Fatalf("%q after %s", got, time.Since(start))
 	}
 }

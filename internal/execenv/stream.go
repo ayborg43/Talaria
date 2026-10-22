@@ -68,7 +68,22 @@ func (p *Process) Done() <-chan struct{} { return p.done }
 func (p *Process) Err() error { return p.err }
 
 // Stderr is what the process wrote to its standard error, up to a few kilobytes.
-func (p *Process) Stderr() string { return strings.TrimSpace(string(p.stderr.bytes())) }
+//
+// The output stream ends when the process does, but the copy of its standard error is only
+// complete once the process has been reaped, a moment later. A caller that has just seen the output
+// end and asks at once would otherwise sometimes get nothing, and lose the reason the process gave
+// for stopping. So this waits, briefly, for the process to finish; one still running is answered
+// with what it has said so far.
+func (p *Process) Stderr() string {
+	select {
+	case <-p.done:
+	case <-time.After(stderrSettle):
+	}
+	return strings.TrimSpace(string(p.stderr.bytes()))
+}
+
+// stderrSettle is how long Stderr waits for a process that has not finished.
+const stderrSettle = time.Second
 
 // Close stops the process: it closes its input, which most programs take as a
 // request to finish, gives it a moment, then kills it. Closing twice is harmless.
