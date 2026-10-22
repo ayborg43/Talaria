@@ -23,6 +23,9 @@ services:
       TALARIA_DISCORD_ALLOWED_USERS: ${TALARIA_DISCORD_ALLOWED_USERS:-}
       TALARIA_TELEGRAM_TOKEN: ${TALARIA_TELEGRAM_TOKEN:-}
       TALARIA_TELEGRAM_ALLOWED_USERS: ${TALARIA_TELEGRAM_ALLOWED_USERS:-}
+      # Optional: read-only calendars, as name=address pairs (the secret iCal address of each), and the zone to show times in.
+      TALARIA_CALENDARS: ${TALARIA_CALENDARS:-}
+      TALARIA_TIMEZONE: ${TALARIA_TIMEZONE:-}
       # Optional: opens the saved-logins vault without anyone present, and extra settings as JSON.
       TALARIA_VAULT_PASSPHRASE: ${TALARIA_VAULT_PASSPHRASE:-}
       TALARIA_CONFIG_JSON: ${TALARIA_CONFIG_JSON:-}

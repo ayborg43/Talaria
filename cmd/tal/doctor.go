@@ -91,6 +91,26 @@ func runDoctor(cfg *config.Config, cfgPath, home string, getenv func(string) str
 		note("no bot token is set, so `tal gateway` has nothing to serve (the command line works without one)")
 	}
 
+	if sources, problems := calendarSources(cfg, getenv); len(sources) > 0 || len(problems) > 0 {
+		fmt.Fprintln(out, "\nCalendars")
+		for _, pr := range problems {
+			bad("%s", pr)
+		}
+		if len(sources) > 0 {
+			names := make([]string, 0, len(sources))
+			for _, src := range sources {
+				names = append(names, src.Name)
+			}
+			ok("%d calendar(s), read-only: %s", len(sources), strings.Join(names, ", "))
+			if cfg.Timezone == "" && getenv("TALARIA_TIMEZONE") == "" {
+				note("no timezone is set, so calendar times are shown in UTC: set TALARIA_TIMEZONE (such as Africa/Lagos)")
+			}
+		}
+		if _, zp := calendarZone(cfg, getenv); len(zp) > 0 {
+			bad("%s", zp[0])
+		}
+	}
+
 	fmt.Fprintln(out, "\nSafety")
 	if cfg.Policy.GuardUntrusted() {
 		ok("after reading outside content, anything that could send something out asks first")

@@ -794,3 +794,21 @@ func TestProviderTypeFromTheEnvironmentNeedsNoConfigFile(t *testing.T) {
 		t.Fatal("thinking needs the deepseek type")
 	}
 }
+
+func TestCalendarSettingsAreValidatedWhenLoaded(t *testing.T) {
+	c, err := Load(write(t, `{"timezone":"Africa/Lagos","calendars":{"family":{"url_env":"FAMILY_ICS"},"nas":{"url_env":"NAS_ICS","allow_private":true}}}`, 0o600))
+	if err != nil || c.Timezone != "Africa/Lagos" || c.Calendars["family"].URLEnv != "FAMILY_ICS" || !c.Calendars["nas"].AllowPrivate || c.Calendars["family"].AllowPrivate {
+		t.Fatalf("%+v %v", c, err)
+	}
+	for name, bad := range map[string]string{
+		"no url_env":   `{"calendars":{"family":{}}}`,
+		"inline url":   `{"calendars":{"family":{"url":"https://x.example/a.ics"}}}`, // an address in the file would be a secret in the file
+		"upper case":   `{"calendars":{"Family":{"url_env":"X"}}}`,
+		"spaces":       `{"calendars":{"my cal":{"url_env":"X"}}}`,
+		"bad timezone": `{"timezone":"Mars/Olympus"}`,
+	} {
+		if _, err := Load(write(t, bad, 0o600)); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+}

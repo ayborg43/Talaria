@@ -447,6 +447,45 @@ approving the next. Only an explicit `trusted`, `auto_approve` or policy rule ov
 `tal mcp list` shows each tool's kind; `tal connect` says how many will run on their own. A guess is only a guess: if a service
 names a sending tool something unusual, it will be classified as "other" and asks, never as a read.
 
+## Calendars (read-only)
+
+The agent can look at your calendars: "what is on tomorrow?", "when is my next dentist appointment?", "am I free on Friday afternoon?". It
+reads each calendar's **secret iCal address**, so there is no sign-in, no OAuth and no vault, and nothing it can do can change a
+calendar: it cannot add, move, accept or delete an event.
+
+1. In Google Calendar, open **Settings**, pick the calendar, then **Integrate calendar**, and copy the **Secret address in iCal format**
+   (it begins `https://calendar.google.com/calendar/ical/` and contains `private-`). Apple, Outlook, Nextcloud and Proton give a similar
+   address, sometimes starting `webcal://`, which works too.
+2. Give it to Talaria as `name=address`, with several separated by commas or spaces. On a server, as the environment variable
+   `TALARIA_CALENDARS`; with your time zone in `TALARIA_TIMEZONE` (such as `Africa/Lagos`; times are shown in UTC if it is not set):
+   ```
+   TALARIA_CALENDARS=personal=https://calendar.google.com/calendar/ical/.../private-.../basic.ics
+   TALARIA_TIMEZONE=Africa/Lagos
+   ```
+   Or in the config, naming the variable that holds each address (the file never contains one):
+   `"calendars": {"personal": {"url_env": "PERSONAL_ICS"}}`, with `"timezone": "Africa/Lagos"`. A calendar you host yourself on a private
+   network needs `"allow_private": true` for that calendar.
+3. Check it without any model: `tal calendar` prints the next week, `tal calendar 14` two weeks, `tal calendar tomorrow 1` one day.
+   `tal doctor` says how many calendars it found.
+
+The agent gets one tool, `calendar_events`, with a start (today, tomorrow or a date), a number of days (up to 62), and optionally a
+calendar name and a word to look for. It handles repeating events (daily, weekly, monthly and yearly, with counts, end dates,
+exceptions and moved or cancelled single occurrences), time zones and daylight saving, all-day events, and long calendars.
+
+- **The address is a secret.** Whoever has it can read that calendar. Talaria keeps it out of errors, logs, history and the model's
+  view (it is removed from the environment of the agent's shell commands and scrubbed from output), fetches it over https only,
+  refuses addresses on this machine or a private network (checked when connecting, so a name that later points somewhere private is
+  caught too), follows at most three redirects that must stay on https, uses no proxy, and reads at most 8 MB. To cancel an address,
+  reset the secret address in your calendar.
+- **What is on a calendar was written by other people.** Anyone can invite you to something with any title and notes. Event text is
+  shown to the model as information, never instructions, with control characters removed and notes cut short, and a conversation that
+  has read a calendar counts as having read outside content (see the safety model): anything that could send something out asks first.
+- **What it cannot read.** A repeat rule using BYSETPOS, BYWEEKNO or the like, or an hourly repeat, is shown once and the answer
+  says so, instead of listing wrong dates. A time zone name it does not know (some Outlook names) is read as UTC and said. A feed is
+  reused for five minutes, so a change you just made can take that long to show.
+- **Read-only means read-only.** To let the agent create or change events you need a connector that signs in (see Connecting to a
+  service), which is a different and riskier thing.
+
 ## Subagents
 
 The agent can hand a self-contained task to a **subagent**: a separate assistant that works in its own empty conversation
@@ -980,7 +1019,7 @@ and how it ended.
 
 | Path | Role |
 |---|---|
-| `cmd/tal` | CLI entrypoint (`tal`, `tal -p`, `tal gateway`, `tal cron list`, `tal log`, `tal policy`, `tal workspace`, `tal vault`, `tal connect`, `tal backup`, `tal restore`, `tal doctor`, `tal version`, `tal config`, `tal mcp list`, `tal env`) |
+| `cmd/tal` | CLI entrypoint (`tal`, `tal -p`, `tal gateway`, `tal cron list`, `tal log`, `tal policy`, `tal workspace`, `tal vault`, `tal connect`, `tal calendar`, `tal backup`, `tal restore`, `tal doctor`, `tal version`, `tal config`, `tal mcp list`, `tal env`) |
 | `internal/app` | builds agents (tools, prompt, history) for the CLI and gateways |
 | `internal/cron` | schedule parser, job store, scheduler, `cron_*` tools |
 | `internal/execenv` | where the shell and file tools run: this machine, a Docker container, or an SSH host; also starts long-running processes there |
@@ -993,6 +1032,7 @@ and how it ended.
 | `internal/vault` | the encrypted store of saved logins, service sign-ins and where each may be used |
 | `internal/oauth` | OAuth sign-in for MCP servers: discovery, registration, PKCE login over a loopback address, token renewal; `oauthtest` is a fake service for tests |
 | `internal/watch` | watches: the store, change detection, and the `watch_*` tools |
+| `internal/calendar` | read-only calendars from iCal feeds: parsing, repeats, time zones, safe fetching, the `calendar_events` tool |
 | `internal/guard` | permission rules, "always allow" choices, the activity log, secret scrubbing |
 | `internal/backup` | `tal backup` and `tal restore`: the state folder as one archive, safely unpacked |
 | `internal/metrics`, `internal/ops` | counters in the Prometheus text format, and the health and metrics endpoint |

@@ -15,9 +15,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"talaria/internal/execenv"
 	"talaria/internal/guard"
@@ -109,6 +111,14 @@ type Discord struct {
 
 // StreamReplies reports whether replies are shown as they are written.
 func (d Discord) StreamReplies() bool { return d.Stream == nil || *d.Stream }
+
+// Calendar is one calendar feed.
+type Calendar struct {
+	// URLEnv names the environment variable holding the feed's address (https:// or webcal://).
+	URLEnv string `json:"url_env"`
+	// AllowPrivate lets the feed be on this machine or a private network, for a calendar you host yourself.
+	AllowPrivate bool `json:"allow_private,omitempty"`
+}
 
 // Ops is the health and metrics endpoint. Off unless Listen is set.
 type Ops struct {
@@ -251,6 +261,12 @@ type Config struct {
 	Subagents subagent.Limits `json:"subagents,omitzero"`
 
 	Limits Limits `json:"limits,omitzero"`
+	// Calendars are read-only calendar feeds the agent can look at, such as the secret iCal address
+	// Google Calendar gives each calendar. The address is a secret, so it is kept in an environment
+	// variable and the config names it. TALARIA_CALENDARS (name=address pairs) adds more.
+	Calendars map[string]Calendar `json:"calendars,omitempty"`
+	// Timezone is the zone calendar times are shown in, such as "Africa/Lagos". Default: TALARIA_TIMEZONE, else UTC.
+	Timezone string `json:"timezone,omitempty"`
 	// Ops serves the gateway's health and metrics for a monitor to poll.
 	Ops Ops `json:"ops,omitzero"`
 	// ProtectedPaths are places the agent's file tools may not read, list or write,
@@ -320,6 +336,19 @@ func Load(path string) (*Config, error) {
 		}
 		if p := c.Profiles[name]; (p.Type == "" || p.Type == provider.TypeOpenAI) && strings.Contains(p.BaseURL, "api.deepseek.com") {
 			c.Warnings = append(c.Warnings, fmt.Sprintf("profile %q reaches DeepSeek as a plain openai profile, which drops the reasoning DeepSeek needs back once tools are used: set \"type\": \"deepseek\"", name))
+		}
+	}
+	for name, cal := range c.Calendars {
+		if !calendarName.MatchString(name) {
+			return nil, fmt.Errorf("%s: calendar name %q: use lower-case letters, digits, - and _ (up to 32)", path, name)
+		}
+		if cal.URLEnv == "" {
+			return nil, fmt.Errorf("%s: calendar %q needs url_env, the name of the environment variable holding its address (the address is a secret and is not written in the file)", path, name)
+		}
+	}
+	if c.Timezone != "" {
+		if _, err := time.LoadLocation(c.Timezone); err != nil {
+			return nil, fmt.Errorf("%s: timezone %q is not a time zone name (such as Africa/Lagos)", path, c.Timezone)
 		}
 	}
 	if _, err := c.Policy.Parse(); err != nil {
@@ -453,6 +482,8 @@ type Resolved struct {
 	Thinking        string
 	ReasoningEffort string
 }
+
+var calendarName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
 var (
 	defaultModel  = map[string]string{provider.TypeOpenAI: "gpt-4o-mini", provider.TypeAnthropic: "claude-sonnet-5-5", provider.TypeDeepSeek: "deepseek-flash"}

@@ -40,6 +40,13 @@ trusting Talaria with something valuable, have a person who does this for a livi
 - `internal/guard`, `internal/agent` (the gate and the guard on outside content), `internal/execenv/fence.go`,
 - `internal/browser` (address checks, filling saved logins), `internal/gateway/*` (who may talk to the agent, approvals).
 
+## Calendars
+
+A calendar is read from the secret iCal address the calendar service gives out. That address is a bearer secret: it is kept in the
+environment (named in the config, never written in it), removed from the environment of the agent's shell commands, scrubbed
+from output and history, fetched over https only and never from a private address, and never put in an error message. What is on a
+calendar is written by others and is treated as outside content. The tool cannot change a calendar.
+
 ## Known gaps
 
 - **Discovery of a sign-in server is checked by name, not by where the address leads.** A public name that resolves to a

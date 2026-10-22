@@ -14,6 +14,7 @@ import (
 
 	"talaria/internal/agent"
 	"talaria/internal/browser"
+	"talaria/internal/calendar"
 	"talaria/internal/cron"
 	"talaria/internal/execenv"
 	"talaria/internal/goal"
@@ -63,6 +64,8 @@ type Config struct {
 	Fence *execenv.Fence
 	// Goals keeps the objectives chats have given the agent. Nil turns goals off.
 	Goals *goal.Store
+	// Calendars lets the agent read the user's calendars. Nil turns the calendar tool off.
+	Calendars *calendar.Service
 	// Watches keeps what chats have asked to be told about in connected services.
 	// Nil turns watches off.
 	Watches *watch.Store
@@ -150,6 +153,9 @@ func (rt *Runtime) HasVault() bool { return rt.cfg.Vault != nil }
 
 // Goals returns the goal store, nil if goals are off.
 func (rt *Runtime) Goals() *goal.Store { return rt.cfg.Goals }
+
+// HasCalendars reports whether the agent can read calendars.
+func (rt *Runtime) HasCalendars() bool { return rt.cfg.Calendars != nil }
 
 // Watches returns the watch store, nil if watches are off.
 func (rt *Runtime) Watches() *watch.Store { return rt.cfg.Watches }
@@ -274,6 +280,9 @@ func (rt *Runtime) NewAgent(o AgentOptions) *agent.Agent {
 		})
 	}
 	rt.mcp.Register(tools)
+	if rt.cfg.Calendars != nil {
+		calendar.RegisterTools(tools, rt.cfg.Calendars)
+	}
 
 	system := SystemPrompt
 	if o.ExtraSystem != "" {

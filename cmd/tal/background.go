@@ -23,6 +23,9 @@ func agencyNote(rt *app.Runtime) string {
 	if rt.Watches() != nil {
 		b.WriteString(" When the user wants to be told when something happens in a connected service (new mail from someone, a calendar change), set up a watch with watch_create on one of that service's read-only tools: it polls without using the model and only asks you when the answer changes. Use watch_list when they come up.")
 	}
+	if rt.HasCalendars() {
+		b.WriteString(" The user's calendars are readable with calendar_events: use it for questions about their schedule instead of guessing, and remember that it only reads.")
+	}
 	if rt.HasVault() {
 		b.WriteString(" Saved logins are in a vault: vault_list names them and browser_fill puts one into a page without your ever seeing it. The user adds them at the command line, so never ask them to type a password or key into this chat.")
 	}

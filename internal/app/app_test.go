@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"talaria/internal/calendar"
 	"talaria/internal/execenv"
 	"talaria/internal/memory"
 	"talaria/internal/provider"
@@ -319,5 +320,19 @@ func TestStateIsKeptOwnerOnly(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, "sessions.db")); err != nil {
 		t.Fatal("the history was created")
+	}
+}
+
+func TestTheCalendarToolIsOfferedOnlyWhenACalendarIsSetUp(t *testing.T) {
+	home := t.TempDir()
+	with := Open(Config{Home: home, Provider: nil, Calendars: &calendar.Service{Sources: []calendar.Source{{Name: "p", URL: "https://example.com/a.ics"}}}}, func(string, ...any) {})
+	defer with.Close()
+	if _, ok := with.NewAgent(AgentOptions{}).Tools.Get("calendar_events"); !ok || !with.HasCalendars() {
+		t.Fatal("the tool is missing though a calendar is set up")
+	}
+	without := Open(Config{Home: t.TempDir(), Provider: nil}, func(string, ...any) {})
+	defer without.Close()
+	if _, ok := without.NewAgent(AgentOptions{}).Tools.Get("calendar_events"); ok || without.HasCalendars() {
+		t.Fatal("a tool for something that is not there")
 	}
 }

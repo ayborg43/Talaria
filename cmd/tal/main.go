@@ -120,6 +120,8 @@ func run() error {
 			args = args[1:]
 		}
 		return runConnect(ctx, cfg, home, args, ask, os.Stdout, realConnectDeps)
+	case "calendar": // needs no model or API key
+		return runCalendar(ctx, cfg, os.Getenv, flag.Args()[1:], os.Stdout)
 	case "doctor": // needs no model or API key
 		if runDoctor(cfg, cfgPath, home, os.Getenv, os.Stdout) > 0 {
 			os.Exit(1)
@@ -140,7 +142,7 @@ func run() error {
 		return runMCPList(ctx, cfg, cfgPath, home)
 	case "", "gateway":
 	default:
-		return fmt.Errorf("unknown command %q (try: tal gateway, tal cron list, tal mcp list, tal env, tal log, tal policy, tal workspace, tal vault, tal connect, tal backup, tal restore, tal doctor, tal version, tal config)", cmd)
+		return fmt.Errorf("unknown command %q (try: tal gateway, tal cron list, tal mcp list, tal env, tal log, tal policy, tal workspace, tal vault, tal connect, tal backup, tal restore, tal doctor, tal calendar, tal version, tal config)", cmd)
 	}
 
 	res, err := cfg.Resolve(overrides, os.Getenv)
@@ -179,7 +181,11 @@ func run() error {
 	mcpServers := startMCP(ctx, cfg, vlt)
 	defer mcpServers.Close()
 	guarded.Policy.NeverRemember(mcpServers.Sensitive()...) // the Always button is never offered for a tool that sends or deletes
-	appCfg := app.Config{Home: home, Provider: p, Model: res.Model, MCP: mcpServers, Subagents: cfg.Subagents, Env: env, Guard: guarded, Fence: buildFence(cfg, cfgPath, home), TrustOutsideContent: !cfg.Policy.GuardUntrusted(), ModelCallsPerHour: cfg.Limits.ModelCalls(),
+	calSvc, calProblems := buildCalendars(cfg, os.Getenv)
+	for _, p := range calProblems {
+		warn("%s", p)
+	}
+	appCfg := app.Config{Home: home, Provider: p, Model: res.Model, MCP: mcpServers, Subagents: cfg.Subagents, Env: env, Guard: guarded, Fence: buildFence(cfg, cfgPath, home), Calendars: calSvc, TrustOutsideContent: !cfg.Policy.GuardUntrusted(), ModelCallsPerHour: cfg.Limits.ModelCalls(),
 		Browser: browserConfig(cfg), Goals: &goal.Store{Path: filepath.Join(home, "goals.json")},
 		Watches: &watch.Store{Path: filepath.Join(home, "watches.json")}}
 	if vlt != nil {
