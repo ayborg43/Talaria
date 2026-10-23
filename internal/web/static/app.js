@@ -24,6 +24,13 @@ function add(el, kids) {
     el.append(k instanceof Node ? k : document.createTextNode(String(k)));
   }
 }
+// Rebuilding a page must not move the reader: run fn, then put the scroll back where it was.
+function keepScroll(body, fn) {
+  const sc = body.closest('.scroll');
+  const top = sc ? sc.scrollTop : 0;
+  fn();
+  if (sc) sc.scrollTop = top;
+}
 const ICONS = {
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
   x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
@@ -334,7 +341,7 @@ function nowCard() {
   card.append(rows);
   return card;
 }
-function updateNow() { const el = $('#now'); if (el && S.tab === 'agents') el.replaceWith(nowCard()); }
+function updateNow() { const el = $('#now'); if (el && S.tab === 'agents') keepScroll(el, () => el.replaceWith(nowCard())); }
 
 // The Agents screen: who is working, what is set up to run on its own, and what has finished lately.
 let recentAgents = [], standing = [];
@@ -365,7 +372,8 @@ function renderAgentsPage() {
     card.append(rows);
   }
   out.push(card);
-  $('#agents-body').replaceChildren(...out);
+  const agentsBody = $('#agents-body');
+  keepScroll(agentsBody, () => agentsBody.replaceChildren(...out));
 }
 
 // ---------- composer ----------
@@ -564,7 +572,8 @@ function renderToday() {
   }
 
   if (d.jobs && d.jobs.length) out.push(jobsCard(d.jobs));
-  $('#today-body').replaceChildren(...out);
+  const todayBody = $('#today-body');
+  keepScroll(todayBody, () => todayBody.replaceChildren(...out));
 }
 
 function hero(timed, now) {
@@ -632,7 +641,8 @@ function renderNeeds() {
       out.push(h('div', { class: 'card' }, rows));
     }
   }
-  $('#needs-body').replaceChildren(...out);
+  const needsBody = $('#needs-body');
+  keepScroll(needsBody, () => needsBody.replaceChildren(...out));
 }
 
 // ---------- control ----------
@@ -679,7 +689,8 @@ async function renderControl() {
   const inst = installCard(); if (inst) out.push(inst);
   out.push(h('button', { class: 'btn big', type: 'button', text: 'Sign out', onclick: async () => { try { await api('/api/logout', { method: 'POST' }); } catch { /* signed out anyway */ } showLogin(); } }));
   out.push(h('div', { class: 'foot', text: 'Talaria ' + (c.version || '') }));
-  $('#control-body').replaceChildren(...out);
+  const controlBody = $('#control-body');
+  keepScroll(controlBody, () => controlBody.replaceChildren(...out));
 }
 
 // ---------- settings ----------
@@ -720,7 +731,8 @@ function editProfile(name) {
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn primary big', type: 'button', text: 'Save', onclick: saveProfile }),
       h('button', { class: 'btn big', type: 'button', text: 'Cancel', onclick: () => { settingsEditing = null; renderSettings(); } })));
-  $('#settings-body').replaceChildren(form);
+  const editBody = $('#settings-body');
+  keepScroll(editBody, () => editBody.replaceChildren(form));
 }
 
 function newProfileForm() {
@@ -737,7 +749,8 @@ function newProfileForm() {
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn primary big', type: 'button', text: 'Add', onclick: saveProfile }),
       h('button', { class: 'btn big', type: 'button', text: 'Cancel', onclick: () => { settingsEditing = null; renderSettings(); } })));
-  $('#settings-body').replaceChildren(form);
+  const newBody = $('#settings-body');
+  keepScroll(newBody, () => newBody.replaceChildren(form));
 }
 
 async function saveProfile() {
@@ -785,7 +798,8 @@ function renderSettings() {
     out.push(h('div', { class: 'card' }, h('h2', null, 'Profiles'), h('div', { class: 'empty', text: 'No profiles configured yet. Add one below.' })));
   }
 
-  $('#settings-body').replaceChildren(...out);
+  const settingsBody = $('#settings-body');
+  keepScroll(settingsBody, () => settingsBody.replaceChildren(...out));
 }
 
 // ---------- notifications and installing ----------
