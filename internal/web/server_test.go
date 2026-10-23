@@ -539,6 +539,24 @@ func TestAMessageGetsAnAnswerAndCommandsAreNotPartOfTheConversation(t *testing.T
 	}
 }
 
+func TestANewChatStartsEmpty(t *testing.T) {
+	r := newRig(t)
+	r.login()
+	_, seq, epoch := r.state()
+	ch := r.watch(seq, epoch)
+	r.do("POST", "/api/send", map[string]string{"text": "hello there"})
+	until(t, ch, "the answer", func(e Event) bool {
+		return e.Type == "msg" && e.Msg.Role == "assistant" && e.Msg.Text == "echo: hello there"
+	})
+	r.do("POST", "/api/send", map[string]string{"text": "/new"})
+	until(t, ch, "being told to start again", func(e Event) bool { return e.Type == "reset" })
+	until(t, ch, "the reply to /new", func(e Event) bool { return e.Type == "msg" && strings.Contains(e.Msg.Text, "new conversation") })
+	msgs, _, _ := r.state()
+	if len(msgs) != 1 || msgs[0].Role != "assistant" {
+		t.Fatalf("the old conversation is still there: %+v", msgs)
+	}
+}
+
 func TestACommandIsOnlyRunWhenAllowedInWords(t *testing.T) {
 	r := newRig(t)
 	r.login()

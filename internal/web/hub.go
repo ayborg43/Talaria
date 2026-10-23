@@ -364,6 +364,27 @@ func (h *Hub) Pending() []*Message {
 	return out
 }
 
+// Reset forgets the conversation the page shows, for a new chat: open pages are told to fetch it
+// again, and a page that reconnects with an earlier epoch is told the same. What finished and the
+// activity tally are not the conversation, so they stay.
+func (h *Hub) Reset() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.init()
+	for id, t := range h.timers {
+		t.Stop()
+		delete(h.timers, id)
+	}
+	h.msgs = nil
+	h.byID = map[int64]*Message{}
+	h.changes = nil
+	h.running = false
+	h.epoch = time.Now().UnixNano()
+	h.seq++
+	h.fan(Event{Seq: h.seq, Type: "reset"})
+	h.scheduleSave()
+}
+
 // Subscribe starts a stream of changes after the given point. The first event may be a reset, which means
 // the page missed too much and must fetch the conversation again.
 func (h *Hub) Subscribe(epoch, after int64) (<-chan Event, func()) {

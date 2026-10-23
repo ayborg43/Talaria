@@ -488,6 +488,9 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	if name == "" || !s.Engine.HasCommand(name) { // a command is not part of the conversation
 		s.Hub.AddUser(text)
 	}
+	if name == "new" { // the old conversation is gone before the engine confirms it in the new one
+		s.Hub.Reset()
+	}
 	s.Engine.Incoming(ChatID, UserID, text)
 	w.WriteHeader(http.StatusNoContent)
 }

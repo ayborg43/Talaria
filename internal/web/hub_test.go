@@ -101,6 +101,36 @@ func TestAPageThatMissedSomeChangesIsCaughtUpOrToldToStartAgain(t *testing.T) {
 	}
 }
 
+func TestANewChatForgetsTheConversationAndTellsEveryPage(t *testing.T) {
+	h := &Hub{}
+	ctx := context.Background()
+	h.AddUser("hello")
+	h.Send(ctx, ChatID, "hi there")
+	_, seq, epoch, _ := h.Snapshot()
+	ch, cancel := h.Subscribe(epoch, seq)
+	defer cancel()
+	drain(ch, 2, time.Second) // the run state and who is working
+	h.Reset()
+	if msgs, _, epoch2, _ := h.Snapshot(); len(msgs) != 0 {
+		t.Fatalf("the old conversation is still there: %+v", msgs)
+	} else if epoch2 == epoch {
+		t.Fatal("the epoch did not move, so a reconnecting page would not start again")
+	}
+	if ev := drain(ch, 1, time.Second); len(ev) != 1 || ev[0].Type != "reset" {
+		t.Fatalf("an open page was told %+v", ev)
+	}
+	// What is said afterwards starts a new conversation, and a page from before it is told to start again.
+	h.Send(ctx, ChatID, "Started a new conversation.")
+	if msgs, _, _, _ := h.Snapshot(); len(msgs) != 1 || msgs[0].Text != "Started a new conversation." {
+		t.Fatalf("%+v", msgs)
+	}
+	ch2, cancel2 := h.Subscribe(epoch, 0)
+	defer cancel2()
+	if ev := drain(ch2, 1, time.Second); len(ev) != 1 || ev[0].Type != "reset" {
+		t.Fatalf("a page from before the new chat was told %+v", ev)
+	}
+}
+
 func TestAPageThatCannotKeepUpIsDroppedNotWaitedFor(t *testing.T) {
 	h := &Hub{}
 	_, _, epoch, _ := h.Snapshot()
