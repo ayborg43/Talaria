@@ -81,7 +81,8 @@ function toast(text) {
 const S = {
   msgs: new Map(), order: [], epoch: 0, seq: 0, es: null, connected: false, running: false,
   model: '', paused: false, zone: undefined, version: '', tab: 'chat', needs: 'wait',
-  today: null, control: null, blocks: new Map(), retry: 1000, installEvent: null, restoreOff: null,
+  today: null, control: null, blocks: new Map(), retry: 1000, installEvent: null,
+  pinned: true, ownTop: 0, smoothUntil: 0, lastUserScroll: 0, dirty: false, flushTimer: 0,
   agents: [], agentsAt: 0,
 };
 
@@ -229,16 +230,69 @@ function signature(b, isLast) {
   return b.m.text + '|' + b.m.state;
 }
 
+// ---------- keeping the reader's place ----------
+// The thread follows the newest message only while the reader is "pinned" to the bottom. Pinned changes
+// only when the reader scrolls, and never because something above or below changed size, so:
+//  - an update can never take a reader who scrolled up back down, however small the scroll was;
+//  - a reader at the bottom stays there while an answer streams in, a tool chip appears, or the keyboard opens;
+//  - a reader higher up keeps looking at the same message while the thread changes around it;
+//  - while a finger or wheel is moving the thread, updates wait until it stops, so they cannot interrupt it.
+const threadEl = () => $('#thread');
+const gapBelow = (t) => t.scrollHeight - t.scrollTop - t.clientHeight;
+// Every scroll the page does itself goes through here, which records exactly where it left the thread. A scroll event
+// that finds the thread anywhere else is the reader's; one that finds it where the page put it is not.
+function setTop(v) {
+  const t = threadEl();
+  t.scrollTop = v;
+  S.ownTop = t.scrollTop; // the position actually reached, after the browser has limited it
+}
+function toBottom() { setTop(threadEl().scrollHeight); }
+// The reader may have scrolled in the same frame as an update, before the page has heard about it. Whenever the thread is
+// not where the page last put it, that is the reader's doing, and it settles whether they are still at the bottom.
+function noticeReader() {
+  const t = threadEl();
+  if (performance.now() >= S.smoothUntil && Math.abs(t.scrollTop - S.ownTop) >= 2) {
+    S.lastUserScroll = performance.now();
+    S.pinned = gapBelow(t) < 24;
+  }
+}
+const interacting = () => performance.now() - S.lastUserScroll < 140;
+function flushLater() {
+  clearTimeout(S.flushTimer);
+  S.flushTimer = setTimeout(() => { if (interacting()) flushLater(); else if (S.dirty) renderChat(); }, 160);
+}
+function updateJump() { const t = threadEl(); $('#jump').hidden = S.pinned || gapBelow(t) < 200; }
+
 let renderQueued = false;
 function renderChat() {
   if (renderQueued) return;
   renderQueued = true;
-  requestAnimationFrame(() => { renderQueued = false; doRenderChat(); });
+  requestAnimationFrame(() => {
+    renderQueued = false;
+    if (interacting()) { S.dirty = true; flushLater(); return; } // the reader is mid-scroll: do it when they stop
+    S.dirty = false;
+    doRenderChat();
+  });
+}
+// Stay at the bottom, but only if the reader is still there: used by everything that moves the thread by itself.
+function followBottom() {
+  noticeReader();
+  if (S.pinned) toBottom();
 }
 function doRenderChat() {
-  const thread = $('#thread');
-  const stick = S.fresh || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 90;
-  S.fresh = false;
+  const thread = threadEl();
+  noticeReader();
+
+  // If the reader is not at the bottom, remember which message is at the top of their view, and where.
+  let anchorKey = null, anchorGap = 0;
+  if (!S.pinned) {
+    for (const el of thread.children) {
+      if (el.dataset.key && el.offsetTop + el.offsetHeight > thread.scrollTop + thread.offsetTop) {
+        anchorKey = el.dataset.key; anchorGap = el.offsetTop - thread.scrollTop; break;
+      }
+    }
+  }
+
   const blocks = groupBlocks();
   const keep = new Set();
   let prev = null;
@@ -248,17 +302,8 @@ function doRenderChat() {
     let rec = S.blocks.get(b.key);
     if (!rec || rec.sig !== sig) {
       const el = buildBlock(b, last);
-      if (rec) {
-        // A fresh node starts at its estimated size and only grows into its
-        // real one after layout. While an answer streams in, rebuilding it
-        // every token would shrink the thread under a reader sitting at the
-        // bottom, and the browser would clamp them back up. Hold the old
-        // height for one frame so the thread never collapses.
-        const h = rec.el.offsetHeight;
-        if (h) el.style.minHeight = h + 'px';
-        rec.el.replaceWith(el);
-        if (h) requestAnimationFrame(() => { el.style.minHeight = ''; });
-      }
+      el.dataset.key = b.key;
+      if (rec) rec.el.replaceWith(el);
       rec = { el, sig };
       S.blocks.set(b.key, rec);
     }
@@ -277,22 +322,39 @@ function doRenderChat() {
   else if (!need && dots) dots.remove();
   else if (need && dots) thread.append(dots);
 
-  if (stick) thread.scrollTop = thread.scrollHeight;
-  // Pin again after layout: content painted at its real size can move the
-  // bottom away from where the synchronous pin above put the reader.
-  if (stick) requestAnimationFrame(() => { thread.scrollTop = thread.scrollHeight; });
-  if (S.restoreOff != null) {
-    const off = S.restoreOff; S.restoreOff = null;
-    requestAnimationFrame(() => { thread.scrollTop = thread.scrollHeight - off; });
+  if (S.pinned) toBottom();
+  else if (anchorKey) {
+    const el = S.blocks.get(anchorKey)?.el;
+    if (el && el.isConnected) {
+      const want = el.offsetTop - anchorGap;
+      if (Math.abs(thread.scrollTop - want) > 1) setTop(want);
+    }
   }
-  $('#jump').hidden = stick || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 200;
+  updateJump();
   renderChrome();
 }
+// What the reader does with the thread, and nothing else, decides whether it follows the newest message.
 $('#thread').addEventListener('scroll', () => {
-  const t = $('#thread');
-  $('#jump').hidden = t.scrollHeight - t.scrollTop - t.clientHeight < 200;
+  const t = threadEl();
+  noticeReader();
+  if (S.dirty) flushLater();
+  updateJump();
 }, { passive: true });
-$('#jump').addEventListener('click', () => { const t = $('#thread'); t.scrollTo({ top: t.scrollHeight, behavior: 'smooth' }); });
+for (const type of ['touchmove', 'wheel']) {
+  $('#thread').addEventListener(type, () => { S.lastUserScroll = performance.now(); }, { passive: true });
+}
+$('#jump').addEventListener('click', () => {
+  const t = threadEl();
+  S.pinned = true;
+  S.smoothUntil = performance.now() + 900; // the smooth scroll passes through places that must not unpin
+  t.scrollTo({ top: t.scrollHeight, behavior: 'smooth' });
+  setTimeout(() => { if (S.pinned) toBottom(); updateJump(); }, 900);
+  updateJump();
+});
+// A change in the thread's own size (the agents strip appearing, the keyboard opening, the window turning) must not
+// move a reader who is at the bottom; and text that settles into its real font afterwards must not either.
+if ('ResizeObserver' in window) new ResizeObserver(() => { if (!$('#screen-chat').hidden) followBottom(); }).observe($('#thread'));
+document.fonts?.addEventListener?.('loadingdone', () => { if (!$('#screen-chat').hidden) followBottom(); });
 
 // header, badge, composer buttons
 function renderChrome() {
@@ -466,19 +528,15 @@ if (Rec) {
 
 // ---------- connection to the server ----------
 async function loadState() {
-  const thread = $('#thread');
-  const off = thread.scrollHeight - thread.scrollTop; // distance from the bottom; survives the rebuild below
   const d = await api('/api/state');
   S.msgs.clear(); S.order = [];
   for (const m of d.messages) upsert(m);
   setAgents(d.agents);
   S.epoch = d.epoch; S.seq = d.seq; S.running = d.running; S.model = d.model; S.paused = d.paused; S.version = d.version;
   S.zone = d.zone || S.zone;
-  for (const rec of S.blocks.values()) rec.el.remove();
-  S.blocks.clear();
-  S.fresh = S.order.length === 0; // pin to the bottom only when there is nothing to keep a place in
+  if (!S.order.length) S.pinned = true; // a conversation that starts again starts at its bottom
+  // Nothing is torn down: messages that are unchanged keep their elements, so the reader's place survives a reconnect.
   renderChat();
-  if (S.order.length) S.restoreOff = off; // doRenderChat puts the reader back after layout
 }
 function connect() {
   if (S.es) S.es.close();
@@ -519,7 +577,7 @@ function route() {
   if (tab === 'settings') loadSettings();
   if (tab === 'needs') renderNeeds();
   if (tab === 'control') loadControl();
-  if (tab === 'chat') { const t = $('#thread'); t.scrollTop = t.scrollHeight; }
+  if (tab === 'chat') { S.pinned = true; toBottom(); }
 }
 window.addEventListener('hashchange', route);
 

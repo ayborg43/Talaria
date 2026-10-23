@@ -1404,3 +1404,58 @@ func TestThePageHasAnAgentsTabWithALiveBadge(t *testing.T) {
 		}
 	}
 }
+
+// The chat thread must not move under a reader. These are the things that made it jump, and the pieces that stop it:
+// they cannot all be tested without a browser, so what can be checked here is that none of the causes comes back.
+func TestTheChatThreadHasNothingThatMovesTheReader(t *testing.T) {
+	read := func(n string) string {
+		b, err := os.ReadFile(filepath.Join("static", n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	css, js := read("app.css"), read("app.js")
+
+	// Messages drawn at a guessed height and corrected as they scroll into view shift everything around them.
+	for _, bad := range []string{"content-visibility", "contain-intrinsic-size"} {
+		if strings.Contains(css, bad) {
+			t.Errorf("the stylesheet uses %s, which makes messages change height as they scroll into view", bad)
+		}
+	}
+	if !regexp.MustCompile(`\.thread\{[^}]*overflow-anchor:none`).MatchString(css) {
+		t.Error("the thread leaves scroll anchoring to the browser, which fights the page's own handling of the reader's place")
+	}
+
+	// The reader's place is kept by an explicit pin that only the reader's own scrolling changes.
+	for _, want := range []string{"function setTop(v)", "function noticeReader()", "function followBottom()", "S.pinned = gapBelow(t) < 24", "const interacting = ", "anchorKey"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("the script lost %q", want)
+		}
+	}
+	// Whether to follow the bottom must not be worked out from layout at each update.
+	for _, bad := range []string{"< 90", "S.fresh", "restoreOff", "minHeight"} {
+		if strings.Contains(js, bad) {
+			t.Errorf("the script has %q again: a way of guessing at the reader's place from layout", bad)
+		}
+	}
+	// A reload of the conversation (after a dropped connection) must reuse what is on screen, not rebuild it.
+	i, j := strings.Index(js, "async function loadState()"), strings.Index(js, "function connect()")
+	if i < 0 || j < i {
+		t.Fatal("cannot find loadState")
+	}
+	body := js[i:j]
+	for _, bad := range []string{".remove()", "blocks.clear()", "replaceChildren"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("loadState uses %s, which throws away the conversation on screen and with it the reader's place", bad)
+		}
+	}
+	// Every scroll the page does by itself is recorded, so the reader's scrolls can be told apart.
+	for _, line := range strings.Split(js, "\n") {
+		if strings.Contains(line, ".scrollTop =") && !strings.Contains(line, "t.scrollTop = v") && !strings.Contains(line, "t.scrollTop = t.") {
+			if strings.Contains(line, "thread.scrollTop =") || strings.Contains(line, "threadEl().scrollTop =") {
+				t.Errorf("the page scrolls the thread without recording it: %s", strings.TrimSpace(line))
+			}
+		}
+	}
+}
