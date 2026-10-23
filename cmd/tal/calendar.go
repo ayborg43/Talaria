@@ -44,6 +44,10 @@ func calendarSources(cfg *config.Config, getenv func(string) string) (sources []
 	slices.Sort(names)
 	for _, n := range names {
 		c := cfg.Calendars[n]
+		if addr := strings.TrimSpace(c.URL); addr != "" {
+			add(n, addr, c.AllowPrivate, "the config file")
+			continue
+		}
 		raw := strings.TrimSpace(getenv(c.URLEnv))
 		if raw == "" {
 			problems = append(problems, fmt.Sprintf("calendar %q: $%s is not set, so it is left out", n, c.URLEnv))

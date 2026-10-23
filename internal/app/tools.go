@@ -16,6 +16,7 @@ import (
 	"talaria/internal/memory"
 	"talaria/internal/skill"
 	"talaria/internal/tool"
+	"talaria/internal/x"
 )
 
 // baseTools builds the registry of tools every conversation gets: the shell
@@ -46,6 +47,9 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 	}
 	if rt.cfg.Mail != nil {
 		mailbox.RegisterTools(tools, rt.cfg.Mail)
+	}
+	if rt.cfg.X != nil {
+		x.RegisterTools(tools, rt.cfg.X)
 	}
 	return tools
 }

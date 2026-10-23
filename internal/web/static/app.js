@@ -844,6 +844,163 @@ async function deleteProfile(name) {
   } catch (e) { if (!(e instanceof AuthError)) toast(e.message); }
 }
 
+function emailCard() {
+  const e = S.settings.email || {};
+  const head = h('div', { class: 'row' });
+  head.append(h('span', { class: 'grow', text: 'Email' }));
+  head.append(e.available ? h('span', { class: 'pill ok', text: 'connected' }) : h('span', { class: 'pill', text: e.configured ? 'needs attention' : 'not connected' }));
+  const card = h('div', { class: 'card' }, h('h2', null, 'Email'), head);
+  if (e.status) card.append(h('div', { class: 'field-note', text: e.status + (e.password_source ? ' (key from ' + e.password_source + ')' : '') }));
+  card.append(
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Address', for: 'mail-address' }), h('input', { id: 'mail-address', autocomplete: 'off', type: 'text', value: e.address || '' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Sign-in name, if not the address', for: 'mail-user' }), h('input', { id: 'mail-user', autocomplete: 'off', type: 'text', value: e.user || '' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Server (found automatically for common providers)', for: 'mail-server' }), h('input', { id: 'mail-server', autocomplete: 'off', type: 'text', value: e.server || '' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'App password', for: 'mail-password' }), h('input', { id: 'mail-password', autocomplete: 'off', type: 'password', placeholder: e.has_password ? 'leave blank to keep' : 'an app password, not your normal password' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Or a variable holding it', for: 'mail-passwordenv' }), h('input', { id: 'mail-passwordenv', autocomplete: 'off', type: 'text', placeholder: 'leave blank' })),
+    h('div', { class: 'field-note', text: 'Clear everything to disconnect. Read-only: mail is never sent, deleted or marked.' }));
+  const btns = h('div', { class: 'btn-row' });
+  btns.append(h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: saveEmail }));
+  if (e.configured) btns.append(h('button', { class: 'btn', type: 'button', text: 'Test', onclick: testEmail }));
+  card.append(btns);
+  return card;
+}
+
+async function saveEmail() {
+  const val = (id) => $('#' + id).value.trim() || undefined;
+  const body = { address: val('mail-address'), user: val('mail-user'), server: val('mail-server'), password: $('#mail-password').value || undefined, password_env: val('mail-passwordenv') };
+  try {
+    const d = await api('/api/settings', { method: 'POST', body: { email: body } });
+    toast(d.restart_needed ? 'Saved. Restart the server to use the new mailbox.' : 'Mailbox saved.');
+  } catch (e) { if (!(e instanceof AuthError)) toast(e.message); return; }
+  loadSettings();
+}
+
+async function testEmail() {
+  toast('Checking the mailbox…');
+  try {
+    const d = await api('/api/settings', { method: 'POST', body: { test_email: true } });
+    toast('The mailbox answers (' + d.folders + ' folders).');
+  } catch (e) { if (!(e instanceof AuthError)) toast('Test failed: ' + e.message); }
+}
+
+function calendarsCard() {
+  const list = S.settings.calendars || [];
+  const card = h('div', { class: 'card' }, h('h2', null, 'Calendars'));
+  if (!list.length) card.append(h('div', { class: 'empty', text: 'No calendars connected yet.' }));
+  for (const c of list) {
+    const head = h('div', { class: 'row' });
+    head.append(h('span', { class: 'grow', text: c.name }));
+    if (c.builtin) head.append(h('span', { class: 'pill info', text: 'built in' }));
+    else if (c.source) head.append(h('span', { class: 'pill info', text: 'from ' + c.source }));
+    else head.append(h('span', { class: 'pill', text: 'not set up' }));
+    card.append(head);
+    if (c.status) card.append(h('div', { class: 'field-note', text: c.status }));
+    if (!c.builtin && c.source === 'settings') {
+      const btns = h('div', { class: 'btn-row' });
+      btns.append(h('button', { class: 'btn', type: 'button', text: 'Test', onclick: () => testCalendar(c.name) }));
+      btns.append(h('button', { class: 'btn', type: 'button', text: 'Change address', onclick: () => editCalendar(c.name) }));
+      btns.append(h('button', { class: 'btn danger', type: 'button', text: 'Remove', onclick: () => deleteCalendar(c.name) }));
+      card.append(btns);
+    } else if (!c.builtin && c.source === 'environment') {
+      card.append(h('div', { class: 'field-note', text: 'Managed in the environment.' }));
+    }
+  }
+  card.append(calendarForm());
+  return card;
+}
+
+function calendarForm() {
+  return h('div', null,
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Name', for: 'cal-name' }), h('input', { id: 'cal-name', autocomplete: 'off', type: 'text', placeholder: 'family' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Secret iCal address', for: 'cal-url' }), h('input', { id: 'cal-url', autocomplete: 'off', type: 'text', placeholder: 'https://…' })),
+    h('div', { class: 'field' }, h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'cal-private' }), ' On this machine or a private network')),
+    h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Add calendar', onclick: () => saveCalendar('add') })));
+}
+
+function editCalendar(name) {
+  const form = h('div', { class: 'card' },
+    h('h2', null, 'Change address'),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Name' }), h('input', { type: 'text', value: name, disabled: true })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Secret iCal address', for: 'cal-url' }), h('input', { id: 'cal-url', autocomplete: 'off', type: 'text', placeholder: 'https://…' })),
+    h('div', { class: 'field' }, h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'cal-private' }), ' On this machine or a private network')),
+    h('div', { class: 'btn-row' },
+      h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: () => saveCalendar('edit', name) }),
+      h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: renderSettings })));
+  const body = $('#settings-body');
+  keepScroll(body, () => { body.replaceChildren(form); });
+}
+
+async function saveCalendar(op, name) {
+  name = name || $('#cal-name').value.trim();
+  const body = { op, name };
+  if (op !== 'delete') {
+    body.url = $('#cal-url').value.trim();
+    body.allow_private = $('#cal-private').checked;
+  }
+  try {
+    const d = await api('/api/settings', { method: 'POST', body: { calendar: body } });
+    toast(d.restart_needed ? 'Saved. Restart the server to apply it.' : 'Calendar saved.');
+  } catch (e) { if (!(e instanceof AuthError)) toast(e.message); return; }
+  loadSettings();
+}
+
+async function deleteCalendar(name) {
+  if (!confirm('Remove the calendar ' + name + '?')) return;
+  saveCalendar('delete', name);
+}
+
+async function testCalendar(name) {
+  toast('Reading ' + name + '…');
+  try {
+    const d = await api('/api/settings', { method: 'POST', body: { test_calendar: name } });
+    toast(name + ' answers (' + d.events + ' events today).');
+  } catch (e) { if (!(e instanceof AuthError)) toast('Test failed: ' + e.message); }
+}
+
+function chatName(service) {
+  return service === 'telegram' ? 'Telegram' : service === 'discord' ? 'Discord' : 'X';
+}
+
+async function testX() {
+  toast('Checking the X sign-in…');
+  try {
+    const d = await api('/api/settings', { method: 'POST', body: { test_x: true } });
+    toast(d.account);
+  } catch (e) { if (!(e instanceof AuthError)) toast('Test failed: ' + e.message); }
+}
+
+function chatsCard() {
+  const list = S.settings.chats || [];
+  const card = h('div', { class: 'card' }, h('h2', null, 'Chat services'));
+  for (const c of list) {
+    const head = h('div', { class: 'row' });
+    head.append(h('span', { class: 'grow', text: chatName(c.service) }));
+    head.append(c.connected ? h('span', { class: 'pill ok', text: 'connected' + (c.source ? ' via ' + c.source : '') }) : h('span', { class: 'pill', text: 'not connected' }));
+    card.append(head);
+    if (c.service === 'x' && c.connected) {
+      const btns = h('div', { class: 'btn-row' });
+      btns.append(h('button', { class: 'btn', type: 'button', text: 'Test', onclick: testX }));
+      card.append(btns);
+    }
+  }
+  card.append(
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Service', for: 'chat-service' }), h('input', { id: 'chat-service', autocomplete: 'off', type: 'text', placeholder: 'telegram, discord or x' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Bot token', for: 'chat-token' }), h('input', { id: 'chat-token', autocomplete: 'off', type: 'password', placeholder: 'leave blank to disconnect' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Or a variable holding it', for: 'chat-tokenenv' }), h('input', { id: 'chat-tokenenv', autocomplete: 'off', type: 'text', placeholder: 'leave blank' })),
+    h('div', { class: 'field-note', text: 'Takes effect after a restart.' }),
+    h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: saveChatToken })));
+  return card;
+}
+
+async function saveChatToken() {
+  const val = (id) => $('#' + id).value.trim() || undefined;
+  try {
+    await api('/api/settings', { method: 'POST', body: { chat_token: { service: (val('chat-service') || '').toLowerCase(), token: $('#chat-token').value || undefined, token_env: val('chat-tokenenv') } } });
+    toast('Saved. Restart the server to apply it.');
+  } catch (e) { if (!(e instanceof AuthError)) toast(e.message); return; }
+  loadSettings();
+}
+
 function renderSettings() {
   const s = S.settings; if (!s || S.tab !== 'settings') return;
   const out = [];
@@ -864,6 +1021,12 @@ function renderSettings() {
   } else {
     out.push(h('div', { class: 'card' }, h('h2', null, 'Profiles'), h('div', { class: 'empty', text: 'No profiles configured yet. Add one below.' })));
   }
+
+  // Connections: mail, calendars, chat services
+  out.push(h('h2', null, 'Connections'));
+  out.push(emailCard());
+  out.push(calendarsCard());
+  out.push(chatsCard());
 
   const settingsBody = $('#settings-body');
   keepScroll(settingsBody, () => settingsBody.replaceChildren(...out));

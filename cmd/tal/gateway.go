@@ -343,6 +343,7 @@ func runGateway(c *cli) error {
 			Sources: webSources(c.rt, zone, webLinks(c.cfg, c.rt, model, c.getenv, webSet.PublicURL)), Logf: logf, TrustProxy: webSet.Secure,
 			ConfigPath: config.Path(c.home, c.getenv),
 			Cfg:        c.cfg,
+			Mailbox:    c.rt.Mail(), Calendars: c.rt.Calendars(), X: c.rt.X(), Getenv: c.getenv,
 		}
 		s.run = func(ctx context.Context) error {
 			eng.Start(ctx)

@@ -58,6 +58,7 @@ func buildFence(cfg *config.Config, cfgPath, home string) *execenv.Fence {
 	}
 	add(cfg.Telegram.TokenEnv)
 	add(cfg.Discord.TokenEnv)
+	add(cfg.X.TokenEnv)
 	for _, n := range calendarEnvDeny(cfg) { // the addresses of private calendars are secrets too
 		add(n)
 	}
@@ -96,7 +97,10 @@ func collectSecrets(cfg *config.Config, getenv func(string) string, environ []st
 			secrets = append(secrets, r.APIKey)
 		}
 	}
-	secrets = append(secrets, cfg.TelegramToken(getenv), cfg.DiscordToken(getenv), getenv("TALARIA_API_KEY"))
+	secrets = append(secrets, cfg.TelegramToken(getenv), cfg.DiscordToken(getenv), cfg.XToken(getenv), getenv("TALARIA_API_KEY"))
+	if p := strings.TrimSpace(cfg.Email.Password); p != "" {
+		secrets = append(secrets, p, strings.Join(strings.Fields(p), ""))
+	}
 	secrets = append(secrets, calendarSecrets(cfg, getenv)...)
 	secrets = append(secrets, mailSecrets(getenv)...)
 	secrets = append(secrets, webSecrets(getenv)...)

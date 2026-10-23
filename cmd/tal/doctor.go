@@ -88,6 +88,9 @@ func runDoctor(cfg *config.Config, cfgPath, home string, getenv func(string) str
 		services++
 		checkAllowed(out, "Discord", len(discordAllowed(cfg, getenv)), ok, note, bad)
 	}
+	if cfg.XToken(getenv) != "" {
+		ok("X is signed in, so the agent can read mentions and post (asking first)")
+	}
 	if services == 0 {
 		note("no bot token is set, so `tal gateway` has nothing to serve (the command line works without one)")
 	}
@@ -119,7 +122,7 @@ func runDoctor(cfg *config.Config, cfgPath, home string, getenv func(string) str
 		}
 	}
 
-	if m, problems, configured := mailConfig(getenv); configured {
+	if m, problems, configured := mailConfig(cfg.Email, getenv); configured {
 		fmt.Fprintln(out, "\nEmail")
 		for _, pr := range problems {
 			bad("%s", pr)

@@ -14,6 +14,7 @@ import (
 	"talaria/internal/memory"
 	"talaria/internal/provider"
 	"talaria/internal/subagent"
+	"talaria/internal/x"
 )
 
 type chatFunc func(ctx context.Context, req provider.Request) (provider.Message, error)
@@ -365,6 +366,34 @@ func TestTheMailToolsAreOfferedOnlyWhenAMailboxIsSetUpAndNeverAskNorSend(t *test
 	without := Open(Config{Home: t.TempDir(), Provider: nil})
 	defer without.Close()
 	if _, ok := without.NewAgent(AgentOptions{}).Tools.Get("email_list"); ok || without.HasMail() {
+		t.Fatal("a tool for something that is not there")
+	}
+}
+
+func TestTheXToolsAreOfferedOnlyWhenAnAccountIsSetUp(t *testing.T) {
+	with := Open(Config{Home: t.TempDir(), Provider: nil, X: &x.Service{Client: &x.Client{Token: "tok"}}})
+	defer with.Close()
+	if !with.HasX() {
+		t.Fatal("HasX is false though an account is set up")
+	}
+	tools := with.NewAgent(AgentOptions{}).Tools
+	mentions, ok := tools.Get("x_mentions")
+	if !ok {
+		t.Fatal("x_mentions is missing though an account is set up")
+	}
+	if !mentions.Untrusted || mentions.NeedsApproval {
+		t.Fatal("reading mentions is free but untrusted")
+	}
+	post, ok := tools.Get("x_post")
+	if !ok {
+		t.Fatal("x_post is missing though an account is set up")
+	}
+	if !post.NeedsApproval {
+		t.Fatal("posting speaks as the user, so it always asks first")
+	}
+	without := Open(Config{Home: t.TempDir(), Provider: nil})
+	defer without.Close()
+	if _, ok := without.NewAgent(AgentOptions{}).Tools.Get("x_mentions"); ok || without.HasX() {
 		t.Fatal("a tool for something that is not there")
 	}
 }

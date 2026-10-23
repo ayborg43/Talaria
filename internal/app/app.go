@@ -27,6 +27,7 @@ import (
 	"talaria/internal/subagent"
 	"talaria/internal/tool"
 	"talaria/internal/watch"
+	"talaria/internal/x"
 )
 
 const SystemPrompt = `You are Talaria, a fast and lightweight personal agent running on the user's machine.
@@ -69,6 +70,8 @@ type Config struct {
 	Calendars *calendar.Service
 	// Mail lets the agent read the user's mailbox, and only read it. Nil turns the mail tools off.
 	Mail *mailbox.Service
+	// X lets the agent read the user's mentions and post as them. Nil turns the X tools off.
+	X *x.Service
 	// Watches keeps what chats have asked to be told about in connected services.
 	// Nil turns watches off.
 	Watches *watch.Store
@@ -174,6 +177,12 @@ func (rt *Runtime) Mail() *mailbox.Service { return rt.cfg.Mail }
 
 // HasMail reports whether the agent can read a mailbox.
 func (rt *Runtime) HasMail() bool { return rt.cfg.Mail != nil }
+
+// X returns the X service, nil if no X account is set up.
+func (rt *Runtime) X() *x.Service { return rt.cfg.X }
+
+// HasX reports whether the agent can read and post to X.
+func (rt *Runtime) HasX() bool { return rt.cfg.X != nil }
 
 // Watches returns the watch store, nil if watches are off.
 func (rt *Runtime) Watches() *watch.Store { return rt.cfg.Watches }

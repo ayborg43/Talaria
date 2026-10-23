@@ -74,13 +74,62 @@ func (s *Service) feed(ctx context.Context, src Source) (string, error) {
 	return text, nil
 }
 
+// SetSources replaces the feeds read from elsewhere; the built-in calendar is
+// untouched. Settings calls it after a feed is added, changed or removed, so
+// it takes effect without a restart.
+func (s *Service) SetSources(sources []Source) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Sources = append([]Source(nil), sources...)
+	s.cache = map[string]cached{}
+}
+
+// SetDirect adds or replaces a feed by name, for an address kept in Settings.
+func (s *Service) SetDirect(name, url string, allowPrivate bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	keep := s.Sources[:0]
+	for _, src := range s.Sources {
+		if src.Name != name {
+			keep = append(keep, src)
+		}
+	}
+	s.Sources = append(keep, Source{Name: name, URL: url, AllowPrivate: allowPrivate})
+	s.cache = map[string]cached{}
+}
+
+// Remove forgets a feed by name, whatever holds its address.
+func (s *Service) Remove(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	keep := s.Sources[:0]
+	for _, src := range s.Sources {
+		if src.Name != name {
+			keep = append(keep, src)
+		}
+	}
+	s.Sources = keep
+	s.cache = map[string]cached{}
+}
+
+// snapshot is the feeds read from elsewhere, copied so Settings can swap them
+// while a read is going on.
+func (s *Service) snapshot() []Source {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Source(nil), s.Sources...)
+}
+
 // Names lists the calendars.
 func (s *Service) Names() []string {
 	var out []string
-	for _, src := range s.Sources {
+	for _, src := range s.snapshot() {
 		out = append(out, src.Name)
 	}
-	if s.Local != nil {
+	s.mu.Lock()
+	local := s.Local != nil
+	s.mu.Unlock()
+	if local {
 		out = append(out, LocalCalendar)
 	}
 	return out
@@ -96,13 +145,17 @@ func toDisplay(t time.Time, loc *time.Location) time.Time {
 // Events lists what is on, within [from, to), of one calendar (name, if not empty) and matching
 // query (a word in the title, place or notes, if not empty). notes says what could not be read.
 func (s *Service) Events(ctx context.Context, from, to time.Time, name, query string) (events []Event, notes []string, err error) {
-	if len(s.Sources) == 0 && s.Local == nil {
+	sources := s.snapshot()
+	s.mu.Lock()
+	local := s.Local
+	s.mu.Unlock()
+	if len(sources) == 0 && local == nil {
 		return nil, nil, fmt.Errorf("no calendar is set up")
 	}
 	display := s.zone()
 	chosen := 0
 	failed := 0
-	for _, src := range s.Sources {
+	for _, src := range sources {
 		if name != "" && !strings.EqualFold(src.Name, name) {
 			continue
 		}
@@ -124,9 +177,9 @@ func (s *Service) Events(ctx context.Context, from, to time.Time, name, query st
 		}
 		events = append(events, expand(p, src.Name, from, to, display)...)
 	}
-	if s.Local != nil && (name == "" || strings.EqualFold(name, LocalCalendar)) {
+	if local != nil && (name == "" || strings.EqualFold(name, LocalCalendar)) {
 		chosen++
-		local, lerr := s.Local.Occurrences(from, to, display)
+		local, lerr := local.Occurrences(from, to, display)
 		if lerr != nil {
 			failed++
 			notes = append(notes, fmt.Sprintf("the calendar %q could not be read: %v", LocalCalendar, lerr))

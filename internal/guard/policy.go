@@ -15,7 +15,7 @@ import (
 // outlast the conversation or run with nobody watching: a file written (a
 // startup script, a setting) acts later, and a saved skill, scheduled job, task,
 // goal or watch steers the agent when no one is there to approve what it does.
-var DefaultNoRemember = []string{"shell", "write_file", "skill_save", "cron_add", "task_start", "goal_create", "watch_create", "watch_update", "goal_update"}
+var DefaultNoRemember = []string{"shell", "write_file", "skill_save", "cron_add", "task_start", "goal_create", "watch_create", "watch_update", "goal_update", "x_post"}
 
 // DefaultSessionRemember lists the tools one approval covers for the rest of
 // the conversation, unless the config says otherwise. These are the tools an
@@ -52,6 +52,7 @@ var knownTools = map[string]bool{
 	"vault_list":   true,
 	"watch_create": true, "watch_list": true, "watch_update": true,
 	"write_file": true,
+	"x_mentions": true, "x_post": true,
 }
 
 // Policy is the configured permission rules.

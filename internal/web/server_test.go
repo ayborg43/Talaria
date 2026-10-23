@@ -20,11 +20,14 @@ import (
 	"time"
 
 	"talaria/internal/agent"
+	"talaria/internal/calendar"
 	"talaria/internal/config"
 	"talaria/internal/gateway/chat"
+	"talaria/internal/mailbox"
 	"talaria/internal/provider"
 	"talaria/internal/subagent"
 	"talaria/internal/tool"
+	"talaria/internal/x"
 )
 
 // scripted is a model that answers from a script: "run it" makes it ask to run a command, and after the
@@ -563,6 +566,196 @@ func TestProfileStrengthsRoundTrip(t *testing.T) {
 	}
 	if got := r.srv.Cfg.Profiles["coder"].BestFor; len(got) != 0 {
 		t.Fatalf("clearing leaves %v", got)
+	}
+}
+
+func TestTheMailboxIsManagedInSettings(t *testing.T) {
+	r := newRig(t)
+	r.srv.Cfg = &config.Config{}
+	r.srv.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	r.srv.Getenv = func(string) string { return "" }
+	r.login()
+
+	if resp, _ := r.do("POST", "/api/settings", map[string]any{"email": map[string]string{"address": "nope"}}); resp.StatusCode != 400 {
+		t.Fatalf("a bad address: %d", resp.StatusCode)
+	}
+	resp, b := r.do("POST", "/api/settings", map[string]any{"email": map[string]string{"address": "me@gmail.com", "password": "abcd efgh ijkl mnop"}})
+	if resp.StatusCode != 200 {
+		t.Fatalf("save: %d %s", resp.StatusCode, b)
+	}
+	var saved struct {
+		OK          bool `json:"ok"`
+		RestartNeed bool `json:"restart_needed"`
+	}
+	if err := json.Unmarshal(b, &saved); err != nil || !saved.OK || !saved.RestartNeed {
+		t.Fatalf("a first mailbox needs a restart: %s", b)
+	}
+	if got := r.srv.Cfg.Email; got.Address != "me@gmail.com" || got.Password != "abcd efgh ijkl mnop" {
+		t.Fatalf("the file keeps what was pasted: %+v", got)
+	}
+
+	_, b = r.do("GET", "/api/settings", nil)
+	var view struct {
+		Email struct {
+			Address        string `json:"address"`
+			HasPassword    bool   `json:"has_password"`
+			PasswordSource string `json:"password_source"`
+			Available      bool   `json:"available"`
+			Status         string `json:"status"`
+		} `json:"email"`
+	}
+	if err := json.Unmarshal(b, &view); err != nil {
+		t.Fatalf("bad settings json: %v", err)
+	}
+	e := view.Email
+	if e.Address != "me@gmail.com" || !e.HasPassword || e.PasswordSource != "settings" || !e.Available || !strings.Contains(e.Status, "me@gmail.com") {
+		t.Fatalf("%+v", e)
+	}
+
+	// With a live mailbox, saving swaps the sign-in at once.
+	r.srv.Mailbox = &mailbox.Service{}
+	resp, b = r.do("POST", "/api/settings", map[string]any{"email": map[string]string{"address": "me@corp.example", "user": "me-login", "server": "mail.corp.example:1993", "password": "pw"}})
+	if resp.StatusCode != 200 || strings.Contains(string(b), "restart_needed") {
+		t.Fatalf("hot swap: %d %s", resp.StatusCode, b)
+	}
+	if got := r.srv.Mailbox; got.Address != "me@corp.example" || got.User != "me-login" || got.Server != "mail.corp.example:1993" {
+		t.Fatalf("the live sign-in did not change: %+v", got)
+	}
+}
+
+func TestCalendarFeedsAreManagedInSettings(t *testing.T) {
+	r := newRig(t)
+	r.srv.Cfg = &config.Config{}
+	r.srv.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	r.srv.Calendars = &calendar.Service{}
+	r.login()
+
+	for name, body := range map[string]any{
+		"bad name":      map[string]string{"op": "add", "name": "My Cal", "url": "https://x.example/a.ics"},
+		"bad address":   map[string]string{"op": "add", "name": "a", "url": "http://x.example/a.ics"},
+		"builtin":       map[string]string{"op": "delete", "name": "Talaria"},
+		"unknown op":    map[string]string{"op": "rename", "name": "a"},
+		"unknown entry": map[string]string{"op": "delete", "name": "a"},
+	} {
+		if resp, b := r.do("POST", "/api/settings", map[string]any{"calendar": body}); resp.StatusCode != 400 {
+			t.Fatalf("%s: %d %s", name, resp.StatusCode, b)
+		}
+	}
+	if resp, b := r.do("POST", "/api/settings", map[string]any{"calendar": map[string]string{"op": "add", "name": "family", "url": "https://x.example/a.ics"}}); resp.StatusCode != 200 || strings.Contains(string(b), "restart_needed") {
+		t.Fatalf("add: %d %s", resp.StatusCode, b)
+	}
+	if _, ok := r.srv.Cfg.Calendars["family"]; !ok {
+		t.Fatal("not saved")
+	}
+	found := false
+	for _, n := range r.srv.Calendars.Names() {
+		found = found || n == "family"
+	}
+	if !found {
+		t.Fatal("the live service does not list it")
+	}
+	if resp, _ := r.do("POST", "/api/settings", map[string]any{"calendar": map[string]string{"op": "add", "name": "family", "url": "https://x.example/b.ics"}}); resp.StatusCode != 400 {
+		t.Fatalf("a duplicate: %d", resp.StatusCode)
+	}
+	if resp, _ := r.do("POST", "/api/settings", map[string]any{"calendar": map[string]string{"op": "edit", "name": "family", "url": "https://x.example/b.ics"}}); resp.StatusCode != 200 {
+		t.Fatalf("edit: %d", resp.StatusCode)
+	}
+	if r.srv.Calendars.Names()[len(r.srv.Calendars.Names())-1] == "" {
+		t.Fatal("empty name listed")
+	}
+	if resp, _ := r.do("POST", "/api/settings", map[string]any{"calendar": map[string]string{"op": "delete", "name": "family"}}); resp.StatusCode != 200 {
+		t.Fatalf("delete: %d", resp.StatusCode)
+	}
+	if _, ok := r.srv.Cfg.Calendars["family"]; ok {
+		t.Fatal("still saved")
+	}
+	for _, n := range r.srv.Calendars.Names() {
+		if n == "family" {
+			t.Fatal("the live service still lists it")
+		}
+	}
+}
+
+func TestChatTokensAreSavedForARestart(t *testing.T) {
+	r := newRig(t)
+	r.srv.Cfg = &config.Config{}
+	r.srv.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	r.login()
+
+	if resp, _ := r.do("POST", "/api/settings", map[string]any{"chat_token": map[string]string{"service": "sms", "token": "x"}}); resp.StatusCode != 400 {
+		t.Fatalf("a bad service: %d", resp.StatusCode)
+	}
+	if resp, _ := r.do("POST", "/api/settings", map[string]any{"chat_token": map[string]string{"service": "telegram", "token": "t", "token_env": "T"}}); resp.StatusCode != 400 {
+		t.Fatalf("both a token and a variable: %d", resp.StatusCode)
+	}
+	resp, b := r.do("POST", "/api/settings", map[string]any{"chat_token": map[string]string{"service": "telegram", "token": "tok"}})
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "restart_needed") {
+		t.Fatalf("save: %d %s", resp.StatusCode, b)
+	}
+	if r.srv.Cfg.Telegram.Token != "tok" {
+		t.Fatalf("%+v", r.srv.Cfg.Telegram)
+	}
+	resp, b = r.do("POST", "/api/settings", map[string]any{"chat_token": map[string]string{"service": "x", "token": "xtok"}})
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "restart_needed") {
+		t.Fatalf("save x: %d %s", resp.StatusCode, b)
+	}
+	if r.srv.Cfg.X.Token != "xtok" {
+		t.Fatalf("%+v", r.srv.Cfg.X)
+	}
+	_, b = r.do("GET", "/api/settings", nil)
+	var view struct {
+		Chats []struct {
+			Service   string `json:"service"`
+			Connected bool   `json:"connected"`
+			Source    string `json:"source"`
+		} `json:"chats"`
+	}
+	if err := json.Unmarshal(b, &view); err != nil {
+		t.Fatalf("bad settings json: %v", err)
+	}
+	if len(view.Chats) != 3 || !view.Chats[0].Connected || view.Chats[0].Source != "settings" || view.Chats[1].Connected || !view.Chats[2].Connected || view.Chats[2].Source != "settings" {
+		t.Fatalf("%+v", view.Chats)
+	}
+}
+
+func TestConnectionsTestLive(t *testing.T) {
+	r := newRig(t)
+	r.srv.Cfg = &config.Config{}
+	r.srv.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	r.login()
+
+	if resp, _ := r.do("POST", "/api/settings", map[string]bool{"test_email": true}); resp.StatusCode != 400 {
+		t.Fatalf("no mailbox: %d", resp.StatusCode)
+	}
+	r.srv.Mailbox = &mailbox.Service{Server: "127.0.0.1:1"}
+	if resp, _ := r.do("POST", "/api/settings", map[string]bool{"test_email": true}); resp.StatusCode != 502 {
+		t.Fatalf("an unreachable mailbox: %d", resp.StatusCode)
+	}
+	if resp, _ := r.do("POST", "/api/settings", map[string]string{"test_calendar": "nope"}); resp.StatusCode != 400 {
+		t.Fatalf("no calendar: %d", resp.StatusCode)
+	}
+	r.srv.Calendars = &calendar.Service{
+		Sources: []calendar.Source{{Name: "x", URL: "https://x.example/a.ics"}},
+		Client:  func(calendar.Source) *http.Client { return http.DefaultClient },
+	}
+	if resp, b := r.do("POST", "/api/settings", map[string]string{"test_calendar": "nope"}); resp.StatusCode != 502 || !strings.Contains(string(b), "no calendar named") {
+		t.Fatalf("an unknown feed: %d %s", resp.StatusCode, b)
+	}
+	if resp, _ := r.do("POST", "/api/settings", map[string]bool{"test_x": true}); resp.StatusCode != 400 {
+		t.Fatalf("no X account: %d", resp.StatusCode)
+	}
+	xback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path == "/users/me" {
+			w.Write([]byte(`{"data":{"id":"42","name":"Ada","username":"ada"}}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"errors":[{"message":"no such endpoint"}]}`))
+	}))
+	defer xback.Close()
+	r.srv.X = &x.Service{Client: &x.Client{Token: "tok", BaseURL: xback.URL, HTTP: xback.Client()}}
+	if resp, b := r.do("POST", "/api/settings", map[string]bool{"test_x": true}); resp.StatusCode != 200 || !strings.Contains(string(b), "Posting as @ada") {
+		t.Fatalf("the X sign-in should verify: %d %s", resp.StatusCode, b)
 	}
 }
 

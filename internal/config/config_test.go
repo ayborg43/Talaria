@@ -190,13 +190,18 @@ func TestTelegramToken(t *testing.T) {
 		env  func(string) string
 		want string
 	}{
-		"talaria env wins":      {env("TALARIA_TELEGRAM_TOKEN", "t", "BOT", "b"), "t"},
-		"token_env":             {env("BOT", "b"), "b"},
-		"inline as last resort": {env(), "inline"},
+		"inline wins so Settings takes effect": {env("TALARIA_TELEGRAM_TOKEN", "t", "BOT", "b"), "inline"},
 	} {
 		if got := c.TelegramToken(tc.env); got != tc.want {
 			t.Errorf("%s: got %q, want %q", name, got, tc.want)
 		}
+	}
+	bare := &Config{Telegram: Telegram{TokenEnv: "BOT"}}
+	if got := bare.TelegramToken(env("TALARIA_TELEGRAM_TOKEN", "t", "BOT", "b")); got != "t" {
+		t.Errorf("without an inline token the environment is the fallback: %q", got)
+	}
+	if got := bare.TelegramToken(env("BOT", "b")); got != "b" {
+		t.Errorf("token_env: %q", got)
 	}
 }
 
@@ -446,14 +451,16 @@ func TestDiscordToken(t *testing.T) {
 		env  func(string) string
 		want string
 	}{
-		"talaria env wins":       {env("TALARIA_DISCORD_TOKEN", "t", "BOT", "b"), "t"},
-		"token_env":              {env("BOT", "b"), "b"},
-		"inline as last resort":  {env(), "inline"},
-		"telegram's is not used": {env("TALARIA_TELEGRAM_TOKEN", "tg"), "inline"},
+		"inline wins so Settings takes effect": {env("TALARIA_DISCORD_TOKEN", "t", "BOT", "b"), "inline"},
+		"telegram's is not used":               {env("TALARIA_TELEGRAM_TOKEN", "tg"), "inline"},
 	} {
 		if got := c.DiscordToken(tc.env); got != tc.want {
 			t.Errorf("%s: got %q, want %q", name, got, tc.want)
 		}
+	}
+	bare := &Config{Discord: Discord{TokenEnv: "BOT"}}
+	if got := bare.DiscordToken(env("TALARIA_DISCORD_TOKEN", "t", "BOT", "b")); got != "t" {
+		t.Errorf("without an inline token the environment is the fallback: %q", got)
 	}
 }
 
@@ -491,6 +498,28 @@ func TestDiscordAllowedUsersAcceptStringsAndNumbers(t *testing.T) {
 		if _, err := Load(write(t, bad, 0o600)); err == nil {
 			t.Errorf("%s should be rejected", name)
 		}
+	}
+}
+
+func TestXToken(t *testing.T) {
+	c := &Config{X: X{Token: "inline", TokenEnv: "XTOK"}}
+	for name, tc := range map[string]struct {
+		env  func(string) string
+		want string
+	}{
+		"inline wins so Settings takes effect": {env("TALARIA_X_TOKEN", "t", "XTOK", "b"), "inline"},
+		"telegram's is not used":               {env("TALARIA_TELEGRAM_TOKEN", "tg"), "inline"},
+	} {
+		if got := c.XToken(tc.env); got != tc.want {
+			t.Errorf("%s: got %q, want %q", name, got, tc.want)
+		}
+	}
+	bare := &Config{X: X{TokenEnv: "XTOK"}}
+	if got := bare.XToken(env("TALARIA_X_TOKEN", "t", "XTOK", "b")); got != "t" {
+		t.Errorf("without an inline token the environment is the fallback: %q", got)
+	}
+	if got := bare.XToken(env("XTOK", "b")); got != "b" {
+		t.Errorf("token_env: %q", got)
 	}
 }
 
@@ -870,15 +899,20 @@ func TestCalendarSettingsAreValidatedWhenLoaded(t *testing.T) {
 		t.Fatalf("%+v %v", c, err)
 	}
 	for name, bad := range map[string]string{
-		"no url_env":   `{"calendars":{"family":{}}}`,
-		"inline url":   `{"calendars":{"family":{"url":"https://x.example/a.ics"}}}`, // an address in the file would be a secret in the file
-		"upper case":   `{"calendars":{"Family":{"url_env":"X"}}}`,
-		"spaces":       `{"calendars":{"my cal":{"url_env":"X"}}}`,
-		"bad timezone": `{"timezone":"Mars/Olympus"}`,
+		"neither url nor url_env": `{"calendars":{"family":{}}}`,
+		"upper case":              `{"calendars":{"Family":{"url_env":"X"}}}`,
+		"spaces":                  `{"calendars":{"my cal":{"url_env":"X"}}}`,
+		"bad timezone":            `{"timezone":"Mars/Olympus"}`,
 	} {
 		if _, err := Load(write(t, bad, 0o600)); err == nil {
 			t.Errorf("%s was accepted", name)
 		}
+	}
+	// An address kept in the file is how Settings connects a calendar; it is a
+	// secret in the file, like a pasted API key.
+	c, err = Load(write(t, `{"calendars":{"family":{"url":"https://x.example/a.ics"}}}`, 0o600))
+	if err != nil || c.Calendars["family"].URL != "https://x.example/a.ics" {
+		t.Fatalf("an inline url: %+v %v", c, err)
 	}
 }
 

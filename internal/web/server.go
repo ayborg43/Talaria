@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"os"
 	"strconv"
@@ -19,10 +20,13 @@ import (
 
 	"cmp"
 	"slices"
+	"talaria/internal/calendar"
 	"talaria/internal/config"
 
 	"talaria/internal/gateway/chat"
+	"talaria/internal/mailbox"
 	"talaria/internal/provider"
+	"talaria/internal/x"
 )
 
 //go:embed static
@@ -101,6 +105,12 @@ type Server struct {
 
 	ConfigPath string
 	Cfg        *config.Config
+	// Mailbox and Calendars are the live services Settings manages; nil when
+	// not set up. Getenv reads the environment for what Settings leaves empty.
+	Mailbox   *mailbox.Service
+	Calendars *calendar.Service
+	X         *x.Service
+	Getenv    func(string) string
 
 	cacheMu   sync.Mutex
 	todayAt   time.Time
@@ -327,17 +337,74 @@ func (s *Server) activeModel() string {
 
 // settingsView is what the settings page shows: everything except actual API keys.
 type settingsView struct {
-	DefaultProfile      string            `json:"default_profile"`
-	ActiveProfile       string            `json:"active_profile"` // the profile this chat is using; "" when switching is not set up
-	Profiles            []settingsProfile `json:"profiles"`
-	Presets             []config.Preset   `json:"presets"`         // one-click starting points for a new profile
-	Strengths           []string          `json:"strengths"`       // labels a profile can claim, so the router picks it
-	HasDefaultKey       bool              `json:"has_default_key"` // TALARIA_API_KEY is set
-	DefaultKeyEnv       string            `json:"default_key_env"`
-	DefaultKeySet       bool              `json:"default_key_set"`
-	KeyEnvs             []string          `json:"key_envs"`
-	SubagentMaxSteps    int               `json:"subagent_max_steps"`
-	SubagentMaxParallel int               `json:"subagent_max_parallel"`
+	DefaultProfile      string             `json:"default_profile"`
+	ActiveProfile       string             `json:"active_profile"` // the profile this chat is using; "" when switching is not set up
+	Profiles            []settingsProfile  `json:"profiles"`
+	Presets             []config.Preset    `json:"presets"`   // one-click starting points for a new profile
+	Strengths           []string           `json:"strengths"` // labels a profile can claim, so the router picks it
+	Email               settingsEmail      `json:"email"`
+	Calendars           []settingsCalendar `json:"calendars"`
+	Chats               []settingsChat     `json:"chats"`           // telegram and discord: status, never secrets
+	HasDefaultKey       bool               `json:"has_default_key"` // TALARIA_API_KEY is set
+	DefaultKeyEnv       string             `json:"default_key_env"`
+	DefaultKeySet       bool               `json:"default_key_set"`
+	KeyEnvs             []string           `json:"key_envs"`
+	SubagentMaxSteps    int                `json:"subagent_max_steps"`
+	SubagentMaxParallel int                `json:"subagent_max_parallel"`
+}
+
+// settingsEmail is the mailbox as Settings shows it: everything but the password.
+type settingsEmail struct {
+	Address        string `json:"address"`
+	User           string `json:"user,omitempty"`
+	Server         string `json:"server,omitempty"`
+	HasPassword    bool   `json:"has_password"`
+	PasswordSource string `json:"password_source,omitempty"` // settings or environment
+	Configured     bool   `json:"configured"`
+	Available      bool   `json:"available"`
+	Status         string `json:"status,omitempty"`
+}
+
+// settingsCalendar is one feed as Settings shows it: never the address itself.
+type settingsCalendar struct {
+	Name       string `json:"name"`
+	Builtin    bool   `json:"builtin,omitempty"` // Talaria's own calendar: not editable
+	Source     string `json:"source,omitempty"`  // settings or environment
+	HasAddress bool   `json:"has_address,omitempty"`
+	Status     string `json:"status,omitempty"`
+}
+
+// settingsChat is a chat service as Settings shows it: never any token.
+type settingsChat struct {
+	Service   string `json:"service"` // telegram, discord or x
+	Connected bool   `json:"connected"`
+	Source    string `json:"source,omitempty"` // settings or environment
+	HasToken  bool   `json:"has_token,omitempty"`
+}
+
+// emailUpdate replaces the mailbox settings wholesale: empty means unset.
+type emailUpdate struct {
+	Address     string `json:"address,omitempty"`
+	User        string `json:"user,omitempty"`
+	Server      string `json:"server,omitempty"`
+	Password    string `json:"password,omitempty"`
+	PasswordEnv string `json:"password_env,omitempty"`
+}
+
+// calendarUpdate adds, edits or deletes one feed kept in Settings.
+type calendarUpdate struct {
+	Op           string `json:"op"` // add, edit or delete
+	Name         string `json:"name"`
+	URL          string `json:"url,omitempty"`
+	AllowPrivate bool   `json:"allow_private,omitempty"`
+}
+
+// chatTokenUpdate replaces one chat service's token. It takes effect after a
+// restart: the gateway signs in when it starts.
+type chatTokenUpdate struct {
+	Service  string `json:"service"` // telegram, discord or x
+	Token    string `json:"token,omitempty"`
+	TokenEnv string `json:"token_env,omitempty"`
 }
 
 type settingsProfile struct {
@@ -356,6 +423,116 @@ type settingsProfile struct {
 	Traits    []string `json:"traits,omitempty"`    // what it can do: vision, reasoning
 }
 
+func (s *Server) getenv(k string) string {
+	return s.GetenvOrEmpty(k)
+}
+
+// GetenvOrEmpty reads the host environment through the wired lookup, or
+// empty when no lookup is wired (tests wire config directly).
+func (s *Server) GetenvOrEmpty(key string) string {
+	if s.Getenv != nil {
+		return s.Getenv(key)
+	}
+	return ""
+}
+
+// emailView describes the mailbox: everything but the password.
+func (s *Server) emailView() settingsEmail {
+	v := settingsEmail{}
+	if s.Cfg == nil {
+		return v
+	}
+	e := s.Cfg.Email
+	v.Address, v.User, v.Server = e.Address, e.User, e.Server
+	switch {
+	case strings.TrimSpace(e.Password) != "":
+		v.HasPassword, v.PasswordSource = true, "settings"
+	case strings.TrimSpace(e.PasswordEnv) != "" && strings.TrimSpace(s.getenv(e.PasswordEnv)) != "":
+		v.HasPassword, v.PasswordSource = true, "settings"
+	case strings.TrimSpace(s.getenv("TALARIA_EMAIL_PASSWORD")) != "":
+		v.HasPassword, v.PasswordSource = true, "environment"
+	}
+	addr, _, pw, srv := mailbox.Merge(e.Address, e.User, e.Password, e.PasswordEnv, e.Server, s.Getenv)
+	_, _, _, problems, configured := mailbox.Resolve(addr, pw, srv)
+	v.Configured = configured
+	v.Available = configured && len(problems) == 0
+	if len(problems) > 0 {
+		v.Status = problems[0]
+	} else if configured {
+		v.Status = "reads " + addr
+	}
+	return v
+}
+
+// calendarsView describes every feed: settings entries, environment entries,
+// and the built-in calendar. Never any address.
+func (s *Server) calendarsView() []settingsCalendar {
+	if s.Cfg == nil {
+		return nil
+	}
+	out := []settingsCalendar{{Name: calendar.LocalCalendar, Builtin: true, HasAddress: true, Status: "lives on this server"}}
+	names := make([]string, 0, len(s.Cfg.Calendars))
+	for n := range s.Cfg.Calendars {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	known := map[string]bool{calendar.LocalCalendar: true}
+	for _, n := range names {
+		c := s.Cfg.Calendars[n]
+		sc := settingsCalendar{Name: n}
+		switch {
+		case strings.TrimSpace(c.URL) != "":
+			sc.Source, sc.HasAddress, sc.Status = "settings", true, "reads when opened"
+		case strings.TrimSpace(c.URLEnv) != "" && strings.TrimSpace(s.getenv(c.URLEnv)) != "":
+			sc.Source, sc.HasAddress, sc.Status = "environment", true, "reads when opened"
+		case strings.TrimSpace(c.URLEnv) != "":
+			sc.Status = "$" + c.URLEnv + " is not set"
+		default:
+			sc.Status = "no address"
+		}
+		known[n] = true
+		out = append(out, sc)
+	}
+	if s.Calendars != nil {
+		for _, n := range s.Calendars.Names() {
+			if !known[n] {
+				out = append(out, settingsCalendar{Name: n, Source: "environment", HasAddress: true, Status: "reads when opened"})
+			}
+		}
+	}
+	return out
+}
+
+// chatsView describes the chat services: status, never any token.
+func (s *Server) chatsView() []settingsChat {
+	if s.Cfg == nil {
+		return nil
+	}
+	var out []settingsChat
+	for _, c := range []struct {
+		service string
+		token   func(func(string) string) string
+		saved   string
+	}{
+		{"telegram", s.Cfg.TelegramToken, s.Cfg.Telegram.Token},
+		{"discord", s.Cfg.DiscordToken, s.Cfg.Discord.Token},
+		{"x", s.Cfg.XToken, s.Cfg.X.Token},
+	} {
+		sc := settingsChat{Service: c.service}
+		if t := c.token(s.GetenvOrEmpty); t != "" {
+			sc.Connected, sc.HasToken = true, true
+		}
+		switch {
+		case strings.TrimSpace(c.saved) != "":
+			sc.Source = "settings"
+		case sc.Connected:
+			sc.Source = "environment"
+		}
+		out = append(out, sc)
+	}
+	return out
+}
+
 func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 	if s.Cfg == nil {
 		fail(w, http.StatusInternalServerError, "no configuration loaded")
@@ -368,6 +545,9 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 		KeyEnvs:             config.DefaultKeyEnvs(),
 		Presets:             config.Presets(),
 		Strengths:           config.ProfileStrengths,
+		Email:               s.emailView(),
+		Calendars:           s.calendarsView(),
+		Chats:               s.chatsView(),
 	}
 	var backends *chat.Backends
 	if s.Engine != nil {
@@ -411,16 +591,22 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 
 // settingsUpdateRequest is the payload for POST /api/settings.
 type settingsUpdateRequest struct {
-	Name        string   `json:"name"`
-	Type        string   `json:"type,omitempty"`
-	BaseURL     string   `json:"base_url,omitempty"`
-	Model       string   `json:"model,omitempty"`
-	APIKey      string   `json:"api_key,omitempty"`
-	APIKeyEnv   string   `json:"api_key_env,omitempty"`
-	Delete      bool     `json:"_delete,omitempty"`
-	UseProfile  string   `json:"use_profile,omitempty"`  // switch this chat to a profile, saving nothing
-	TestProfile string   `json:"test_profile,omitempty"` // send one tiny prompt through a profile, saving nothing
-	BestFor     []string `json:"best_for,omitempty"`     // what the profile is good at, for the router
+	Name         string           `json:"name"`
+	Type         string           `json:"type,omitempty"`
+	BaseURL      string           `json:"base_url,omitempty"`
+	Model        string           `json:"model,omitempty"`
+	APIKey       string           `json:"api_key,omitempty"`
+	APIKeyEnv    string           `json:"api_key_env,omitempty"`
+	Delete       bool             `json:"_delete,omitempty"`
+	UseProfile   string           `json:"use_profile,omitempty"`   // switch this chat to a profile, saving nothing
+	TestProfile  string           `json:"test_profile,omitempty"`  // send one tiny prompt through a profile, saving nothing
+	BestFor      []string         `json:"best_for,omitempty"`      // what the profile is good at, for the router
+	Email        *emailUpdate     `json:"email,omitempty"`         // replace the mailbox settings
+	Calendar     *calendarUpdate  `json:"calendar,omitempty"`      // add, edit or delete a feed
+	ChatToken    *chatTokenUpdate `json:"chat_token,omitempty"`    // replace a bot token
+	TestEmail    bool             `json:"test_email,omitempty"`    // list the mailbox's folders, saving nothing
+	TestCalendar string           `json:"test_calendar,omitempty"` // read one feed for a day, saving nothing
+	TestX        bool             `json:"test_x,omitempty"`        // check the X sign-in, saving nothing
 }
 
 func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
@@ -463,8 +649,67 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "model": be.Model, "reply": firstLine(msg.Content)})
 		return
 	}
+	if in.TestEmail {
+		if s.Mailbox == nil {
+			fail(w, http.StatusBadRequest, "no mailbox is set up")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		folders, err := s.Mailbox.Folders(ctx)
+		if err != nil {
+			fail(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "folders": len(folders)})
+		return
+	}
+	if in.TestCalendar != "" {
+		if s.Calendars == nil {
+			fail(w, http.StatusBadRequest, "no calendar is set up")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		now := time.Now().In(s.zone())
+		from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		events, _, err := s.Calendars.Events(ctx, from, from.AddDate(0, 0, 1), strings.TrimSpace(in.TestCalendar), "")
+		if err != nil {
+			fail(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "events": len(events)})
+		return
+	}
+	if in.TestX {
+		if s.X == nil {
+			fail(w, http.StatusBadRequest, "no X account is set up")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		account, err := s.X.Verify(ctx)
+		if err != nil {
+			fail(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "account": account})
+		return
+	}
 	if s.Cfg == nil || s.ConfigPath == "" {
 		fail(w, http.StatusInternalServerError, "settings cannot be saved here")
+		return
+	}
+	if in.Email != nil {
+		s.saveEmail(w, in.Email)
+		return
+	}
+	if in.Calendar != nil {
+		s.saveCalendar(w, in.Calendar)
+		return
+	}
+	if in.ChatToken != nil {
+		s.saveChatToken(w, in.ChatToken)
 		return
 	}
 	if in.Name == "" {
@@ -529,6 +774,168 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		s.Engine.Backends.Forget() // added and changed profiles work at once, with no restart
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// writeConfig saves the config file, reporting failure.
+func (s *Server) writeConfig(w http.ResponseWriter) bool {
+	if err := config.Write(s.ConfigPath, s.Cfg); err != nil {
+		s.logf("web: settings save: %v", err)
+		fail(w, http.StatusInternalServerError, "could not save settings")
+		return false
+	}
+	return true
+}
+
+// okRestart answers a save: a restart is needed when there is no live service
+// to update, or the service only reads its settings when it starts.
+func okRestart(w http.ResponseWriter, restart bool) {
+	if restart {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "restart_needed": true})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) saveEmail(w http.ResponseWriter, in *emailUpdate) {
+	if a := strings.TrimSpace(in.Address); a != "" {
+		if p, err := mail.ParseAddress(a); err != nil || p.Address != a {
+			fail(w, http.StatusBadRequest, "the address is not an email address: write it as you@example.com")
+			return
+		}
+	}
+	e := s.Cfg.Email
+	e.Address, e.User, e.Server = strings.TrimSpace(in.Address), strings.TrimSpace(in.User), strings.TrimSpace(in.Server)
+	if in.Password != "" {
+		e.Password = in.Password
+	}
+	if in.PasswordEnv != "" { // a named variable replaces a pasted password: keep secrets out of the file
+		e.PasswordEnv, e.Password = strings.TrimSpace(in.PasswordEnv), ""
+	}
+	s.Cfg.Email = e
+	if !s.writeConfig(w) {
+		return
+	}
+	restart := false
+	addr, user, pw, srv := mailbox.Merge(e.Address, e.User, e.Password, e.PasswordEnv, e.Server, s.Getenv)
+	_, _, _, problems, configured := mailbox.Resolve(addr, pw, srv)
+	if s.Mailbox != nil {
+		if configured && len(problems) == 0 {
+			s.Mailbox.Set(addr, user, pw, srv)
+		} else {
+			restart = true // the live sign-in stays until a restart
+		}
+	} else if configured && len(problems) == 0 {
+		restart = true // nothing live to update yet
+	}
+	okRestart(w, restart)
+}
+
+func (s *Server) saveCalendar(w http.ResponseWriter, in *calendarUpdate) {
+	name := strings.TrimSpace(in.Name)
+	if !config.ValidCalendarName(name) {
+		fail(w, http.StatusBadRequest, "calendar names use lower-case letters, digits, - and _ (up to 32)")
+		return
+	}
+	if in.Op != "add" && in.Op != "edit" && in.Op != "delete" {
+		fail(w, http.StatusBadRequest, "op is add, edit or delete")
+		return
+	}
+	if name == calendar.LocalCalendar {
+		fail(w, http.StatusBadRequest, "Talaria's own calendar is always there")
+		return
+	}
+	_, inCfg := s.Cfg.Calendars[name]
+	inService := false
+	if s.Calendars != nil {
+		for _, n := range s.Calendars.Names() {
+			if n == name && n != calendar.LocalCalendar && !inCfg {
+				inService = true
+			}
+		}
+	}
+	switch in.Op {
+	case "add":
+		if inCfg || inService {
+			fail(w, http.StatusBadRequest, "a calendar called "+name+" is already there")
+			return
+		}
+	case "edit":
+		if !inCfg {
+			fail(w, http.StatusBadRequest, "it comes from the environment: change it where it is set")
+			return
+		}
+	case "delete":
+		if !inCfg {
+			fail(w, http.StatusBadRequest, "it comes from the environment: remove it where it is set")
+			return
+		}
+	}
+	if in.Op == "delete" {
+		calendars := make(map[string]config.Calendar, len(s.Cfg.Calendars))
+		for k, v := range s.Cfg.Calendars {
+			if k != name {
+				calendars[k] = v
+			}
+		}
+		s.Cfg.Calendars = calendars
+		if !s.writeConfig(w) {
+			return
+		}
+		if s.Calendars != nil {
+			s.Calendars.Remove(name)
+			okRestart(w, false)
+			return
+		}
+		okRestart(w, true)
+		return
+	}
+	url, err := calendar.NormalizeURL(in.URL)
+	if err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	calendars := make(map[string]config.Calendar, len(s.Cfg.Calendars)+1)
+	for k, v := range s.Cfg.Calendars {
+		calendars[k] = v
+	}
+	calendars[name] = config.Calendar{URL: url, AllowPrivate: in.AllowPrivate}
+	s.Cfg.Calendars = calendars
+	if !s.writeConfig(w) {
+		return
+	}
+	if s.Calendars != nil {
+		s.Calendars.SetDirect(name, url, in.AllowPrivate)
+		okRestart(w, false)
+		return
+	}
+	okRestart(w, true)
+}
+
+func (s *Server) saveChatToken(w http.ResponseWriter, in *chatTokenUpdate) {
+	if in.Service != "telegram" && in.Service != "discord" && in.Service != "x" {
+		fail(w, http.StatusBadRequest, "service is telegram, discord or x")
+		return
+	}
+	if in.Token != "" && in.TokenEnv != "" {
+		fail(w, http.StatusBadRequest, "set a token or a variable holding it, not both")
+		return
+	}
+	gw := &s.Cfg.Telegram
+	if in.Service == "discord" {
+		gw = &s.Cfg.Discord
+	}
+	if in.Service == "x" {
+		gw = &s.Cfg.X
+	}
+	if in.TokenEnv != "" {
+		gw.TokenEnv, gw.Token = strings.TrimSpace(in.TokenEnv), ""
+	} else {
+		gw.Token, gw.TokenEnv = in.Token, ""
+	}
+	if !s.writeConfig(w) {
+		return
+	}
+	okRestart(w, true) // the gateway signs in when it starts
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {

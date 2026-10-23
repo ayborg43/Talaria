@@ -34,6 +34,14 @@ type Service struct {
 	mu sync.Mutex
 }
 
+// Set replaces the sign-in, for what Settings saved. It connects for each
+// request, so the next one uses the new sign-in without a restart.
+func (s *Service) Set(address, user, password, server string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Address, s.User, s.Password, s.Server = address, user, password, server
+}
+
 func (s *Service) zone() *time.Location {
 	if s.Display != nil {
 		return s.Display

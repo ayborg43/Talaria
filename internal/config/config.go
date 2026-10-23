@@ -123,7 +123,12 @@ func (g ChatGateway) StreamReplies() bool { return g.Stream == nil || *g.Stream 
 
 // token resolves the bot token: the service's variable, else the variable
 // named by token_env, else the inline token.
+// token returns the bot token: what Settings saved wins, so it takes effect;
+// the environment is the fallback for deployments that set it there.
 func (g ChatGateway) token(getenv func(string) string, envVar string) string {
+	if g.Token != "" {
+		return g.Token
+	}
 	if v := getenv(envVar); v != "" {
 		return v
 	}
@@ -132,7 +137,7 @@ func (g ChatGateway) token(getenv func(string) string, envVar string) string {
 			return v
 		}
 	}
-	return g.Token
+	return ""
 }
 
 // UserIDs is a list of numeric user IDs. In JSON each is a number or, as Discord
@@ -179,12 +184,37 @@ func (u UserIDs) MarshalJSON() ([]byte, error) {
 // environment variables override these.
 type Discord = ChatGateway
 
+// X holds the X account's settings. The TALARIA_X_* environment variables
+// override these. The token is a user-context access token: it reads the
+// account's mentions and posts as it.
+type X = ChatGateway
+
 // Calendar is one calendar feed.
 type Calendar struct {
 	// URLEnv names the environment variable holding the feed's address (https:// or webcal://).
-	URLEnv string `json:"url_env"`
+	URLEnv string `json:"url_env,omitempty"`
+	// URL is the feed's address itself, kept in this file instead of the
+	// environment. One of URL and URLEnv is required.
+	URL string `json:"url,omitempty"`
 	// AllowPrivate lets the feed be on this machine or a private network, for a calendar you host yourself.
 	AllowPrivate bool `json:"allow_private,omitempty"`
+}
+
+// Email is the mailbox the agent can read. Values set here win over the
+// TALARIA_EMAIL_* environment variables, so what Settings saves applies;
+// anything left empty falls back to the environment.
+type Email struct {
+	Address     string `json:"address,omitempty"`
+	User        string `json:"user,omitempty"`   // sign-in name, if not the address
+	Server      string `json:"server,omitempty"` // host or host:port; found from the address for common providers
+	Password    string `json:"password,omitempty"`
+	PasswordEnv string `json:"password_env,omitempty"` // variable holding an app password, instead of pasting it
+}
+
+// ValidCalendarName reports whether name fits a calendar: lower-case letters,
+// digits, - and _ (up to 32), so it survives the name=address pairs too.
+func ValidCalendarName(name string) bool {
+	return calendarName.MatchString(name)
 }
 
 // Ops is the health and metrics endpoint. Off unless Listen is set.
@@ -332,6 +362,7 @@ type Config struct {
 	Profiles       map[string]Profile `json:"profiles,omitempty"`
 	Telegram       Telegram           `json:"telegram,omitzero"`
 	Discord        Discord            `json:"discord,omitzero"`
+	X              X                  `json:"x,omitzero"`
 	Policy         Policy             `json:"policy,omitzero"`
 	Browser        Browser            `json:"browser,omitzero"`
 	Workspace      Workspace          `json:"workspace,omitzero"`
@@ -350,6 +381,9 @@ type Config struct {
 	// Google Calendar gives each calendar. The address is a secret, so it is kept in an environment
 	// variable and the config names it. TALARIA_CALENDARS (name=address pairs) adds more.
 	Calendars map[string]Calendar `json:"calendars,omitempty"`
+	// Email is the mailbox the agent can read; see Email. Empty everywhere
+	// means no mailbox, same as leaving the TALARIA_EMAIL_* variables unset.
+	Email Email `json:"email,omitempty"`
 	// Timezone is the zone calendar times are shown in, such as "Africa/Lagos". Default: TALARIA_TIMEZONE, else UTC.
 	Timezone string `json:"timezone,omitempty"`
 	// Ops serves the gateway's health and metrics for a monitor to poll.
@@ -442,8 +476,8 @@ func (c *Config) validate(path string) error {
 		if !calendarName.MatchString(name) {
 			return fmt.Errorf("%s: calendar name %q: use lower-case letters, digits, - and _ (up to 32)", path, name)
 		}
-		if cal.URLEnv == "" {
-			return fmt.Errorf("%s: calendar %q needs url_env, the name of the environment variable holding its address (the address is a secret and is not written in the file)", path, name)
+		if cal.URL == "" && cal.URLEnv == "" {
+			return fmt.Errorf("%s: calendar %q needs url or url_env: the feed's address, or the name of the environment variable holding it", path, name)
 		}
 	}
 	if c.Timezone != "" {
@@ -481,8 +515,16 @@ func (c *Config) addBuiltins() {
 }
 
 func (c *Config) hasInlineSecrets() bool {
-	if c.Telegram.Token != "" || c.Discord.Token != "" {
+	if c.Telegram.Token != "" || c.Discord.Token != "" || c.X.Token != "" {
 		return true
+	}
+	if c.Email.Password != "" {
+		return true
+	}
+	for _, cal := range c.Calendars {
+		if cal.URL != "" {
+			return true
+		}
 	}
 	for _, p := range c.Profiles {
 		if p.APIKey != "" {
@@ -734,16 +776,22 @@ func (c *Config) ProfileNames() []string {
 	return names
 }
 
-// TelegramToken returns the bot token: TALARIA_TELEGRAM_TOKEN, else the
-// variable named by telegram.token_env, else telegram.token.
+// TelegramToken returns the bot token: telegram.token when set, else
+// TALARIA_TELEGRAM_TOKEN, else the variable named by telegram.token_env.
 func (c *Config) TelegramToken(getenv func(string) string) string {
 	return c.Telegram.token(getenv, "TALARIA_TELEGRAM_TOKEN")
 }
 
-// DiscordToken returns the bot token: TALARIA_DISCORD_TOKEN, else the variable
-// named by discord.token_env, else discord.token.
+// DiscordToken returns the bot token: discord.token when set, else
+// TALARIA_DISCORD_TOKEN, else the variable named by discord.token_env.
 func (c *Config) DiscordToken(getenv func(string) string) string {
 	return c.Discord.token(getenv, "TALARIA_DISCORD_TOKEN")
+}
+
+// XToken returns the X access token: x.token when set, else TALARIA_X_TOKEN,
+// else the variable named by x.token_env.
+func (c *Config) XToken(getenv func(string) string) string {
+	return c.X.token(getenv, "TALARIA_X_TOKEN")
 }
 
 // First returns the first non-empty value: precedence in one line.
@@ -790,6 +838,9 @@ const Example = `{
     "token_env": "TALARIA_DISCORD_TOKEN",
     "allowed_users": [],
     "stream": true
+  },
+  "x": {
+    "token_env": "TALARIA_X_TOKEN"
   },
   "mcp_servers": {}
 }

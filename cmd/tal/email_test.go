@@ -22,7 +22,7 @@ func TestTheMailboxIsFoundFromTheAddressForCommonProviders(t *testing.T) {
 		"me@gmail.com": "imap.gmail.com:993", "me@googlemail.com": "imap.gmail.com:993", "me@icloud.com": "imap.mail.me.com:993",
 		"me@fastmail.com": "imap.fastmail.com:993", "me@outlook.com": "outlook.office365.com:993", "ME@GMAIL.COM": "",
 	} {
-		m, problems, configured := mailConfig(envOf(map[string]string{"TALARIA_EMAIL": addr, "TALARIA_EMAIL_PASSWORD": "pw"}))
+		m, problems, configured := mailConfig(config.Email{}, envOf(map[string]string{"TALARIA_EMAIL": addr, "TALARIA_EMAIL_PASSWORD": "pw"}))
 		if addr == "ME@GMAIL.COM" { // an address in capitals is still an address
 			if !configured || len(problems) != 0 || m.Server != "imap.gmail.com:993" {
 				t.Fatalf("%q: %+v %v", addr, m, problems)
@@ -34,7 +34,7 @@ func TestTheMailboxIsFoundFromTheAddressForCommonProviders(t *testing.T) {
 		}
 	}
 	// Nothing set is not a mistake: there is just no mailbox.
-	if _, problems, configured := mailConfig(envOf(nil)); configured || len(problems) != 0 {
+	if _, problems, configured := mailConfig(config.Email{}, envOf(nil)); configured || len(problems) != 0 {
 		t.Fatalf("%v %v", configured, problems)
 	}
 }
@@ -44,10 +44,10 @@ func TestMailSettingsThatAreWrongAreNamedAndLeaveMailOff(t *testing.T) {
 		env  map[string]string
 		want string
 	}{
-		{map[string]string{"TALARIA_EMAIL_PASSWORD": "pw"}, "TALARIA_EMAIL is not set"},
-		{map[string]string{"TALARIA_EMAIL": "me@gmail.com"}, "TALARIA_EMAIL_PASSWORD is not set"},
+		{map[string]string{"TALARIA_EMAIL_PASSWORD": "pw"}, "no address is set"},
+		{map[string]string{"TALARIA_EMAIL": "me@gmail.com"}, "no app password is set"},
 		{map[string]string{"TALARIA_EMAIL": "Me <me@gmail.com>", "TALARIA_EMAIL_PASSWORD": "pw"}, "not an email address"},
-		{map[string]string{"TALARIA_EMAIL": "me@mydomain.example", "TALARIA_EMAIL_PASSWORD": "pw"}, "TALARIA_EMAIL_SERVER is needed for mydomain.example"},
+		{map[string]string{"TALARIA_EMAIL": "me@mydomain.example", "TALARIA_EMAIL_PASSWORD": "pw"}, "a server is needed for mydomain.example"},
 		{map[string]string{"TALARIA_EMAIL": "me@x.example", "TALARIA_EMAIL_PASSWORD": "pw", "TALARIA_EMAIL_SERVER": "imap://evil.example"}, "must be a server name"},
 		{map[string]string{"TALARIA_EMAIL": "me@x.example", "TALARIA_EMAIL_PASSWORD": "pw", "TALARIA_EMAIL_SERVER": "imap.x.example/path"}, "must be a server name"},
 		{map[string]string{"TALARIA_EMAIL": "me@x.example", "TALARIA_EMAIL_PASSWORD": "pw", "TALARIA_EMAIL_SERVER": "imap.x.example:0"}, "must be a server name"},
@@ -63,13 +63,30 @@ func TestMailSettingsThatAreWrongAreNamedAndLeaveMailOff(t *testing.T) {
 }
 
 func TestAnOwnServerPortAndSignInNameAreUsedAndGooglePasswordSpacesDropped(t *testing.T) {
-	m, problems, _ := mailConfig(envOf(map[string]string{"TALARIA_EMAIL": "me@corp.example", "TALARIA_EMAIL_PASSWORD": "pw with spaces", "TALARIA_EMAIL_SERVER": "mail.corp.example:1993", "TALARIA_EMAIL_USER": "me-login"}))
+	m, problems, _ := mailConfig(config.Email{}, envOf(map[string]string{"TALARIA_EMAIL": "me@corp.example", "TALARIA_EMAIL_PASSWORD": "pw with spaces", "TALARIA_EMAIL_SERVER": "mail.corp.example:1993", "TALARIA_EMAIL_USER": "me-login"}))
 	if len(problems) != 0 || m.Server != "mail.corp.example:1993" || m.User != "me-login" || m.Password != "pw with spaces" {
 		t.Fatalf("%+v %v", m, problems)
 	}
-	g, _, _ := mailConfig(envOf(map[string]string{"TALARIA_EMAIL": "me@gmail.com", "TALARIA_EMAIL_PASSWORD": "abcd efgh ijkl mnop"}))
+	g, _, _ := mailConfig(config.Email{}, envOf(map[string]string{"TALARIA_EMAIL": "me@gmail.com", "TALARIA_EMAIL_PASSWORD": "abcd efgh ijkl mnop"}))
 	if g.Password != "abcdefghijklmnop" {
 		t.Fatalf("%q", g.Password)
+	}
+}
+
+func TestWhatSettingsSavedWinsOverTheEnvironment(t *testing.T) {
+	m, problems, configured := mailConfig(
+		config.Email{Address: "saved@example.com", Password: "saved-pw"},
+		envOf(map[string]string{"TALARIA_EMAIL": "env@example.com", "TALARIA_EMAIL_PASSWORD": "env-pw", "TALARIA_EMAIL_SERVER": "mail.env.example:993"}),
+	)
+	if !configured || len(problems) != 0 || m.Address != "saved@example.com" || m.Password != "saved-pw" {
+		t.Fatalf("%+v %v", m, problems)
+	}
+	m, _, _ = mailConfig(
+		config.Email{Password: "saved-pw"},
+		envOf(map[string]string{"TALARIA_EMAIL": "env@example.com"}),
+	)
+	if m.Address != "env@example.com" || m.Password != "saved-pw" {
+		t.Fatalf("what is left empty falls back to the environment: %+v", m)
 	}
 }
 
@@ -114,7 +131,7 @@ func TestDoctorSaysWhatItFindsAboutEmail(t *testing.T) {
 		t.Fatalf("a Microsoft mailbox is not warned about:\n%s", out)
 	}
 	out, _ = doctorOn(t, prov, map[string]string{"TALARIA_EMAIL": "me@gmail.com"}, nil)
-	if !strings.Contains(out, "TALARIA_EMAIL_PASSWORD is not set") {
+	if !strings.Contains(out, "no app password is set") {
 		t.Fatalf("%s", out)
 	}
 	out, _ = doctorOn(t, prov, nil, nil)
@@ -248,7 +265,7 @@ func TestTalEmailSaysWhatIsWrongWhenThereIsNoMailbox(t *testing.T) {
 	}
 	out.Reset()
 	err = runEmail(context.Background(), &config.Config{}, envOf(map[string]string{"TALARIA_EMAIL": "me@x.example", "TALARIA_EMAIL_PASSWORD": "pw"}), nil, &out)
-	if err == nil || !strings.Contains(out.String(), "problem: TALARIA_EMAIL_SERVER is needed for x.example") {
+	if err == nil || !strings.Contains(out.String(), "problem: a server is needed for x.example") {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
 }
