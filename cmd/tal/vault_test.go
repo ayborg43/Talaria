@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -229,13 +230,13 @@ func TestLoadVaultKeepsTheSecretsOutOfWhatTheModelSees(t *testing.T) {
 
 	vault.ForTests(t)
 	g := &guard.Guard{Redact: guard.NewRedactor(nil)}
-	var warned []string
-	warn := func(f string, a ...any) { warned = append(warned, f) }
+	var buf bytes.Buffer
+	log := newLogger(&buf, func(string) string { return "" })
 
 	t.Setenv("TALARIA_VAULT_PASSPHRASE", passphrase)
-	v := loadVault(cfg, home, g, nil, warn)
-	if v == nil || len(warned) != 0 {
-		t.Fatalf("%v %v", v, warned)
+	v := loadVault(cfg, home, g, nil, log)
+	if v == nil || buf.Len() != 0 {
+		t.Fatalf("%v %q", v, buf.String())
 	}
 	if got := g.Redact.Scrub("the password is hunter2-very-secret ok"); got != "the password is [redacted] ok" {
 		t.Fatalf("every vault secret is known to the redactor from the start: %q", got)
@@ -250,22 +251,22 @@ func TestLoadVaultKeepsTheSecretsOutOfWhatTheModelSees(t *testing.T) {
 
 	// A vault that cannot be opened is a warning, not a reason to stop.
 	t.Setenv("TALARIA_VAULT_PASSPHRASE", "the wrong one entirely")
-	warned = nil
-	if v := loadVault(cfg, home, g, nil, warn); v != nil || len(warned) != 1 || !strings.Contains(warned[0], "locked") {
-		t.Fatalf("%v %v", v, warned)
+	buf.Reset()
+	if v := loadVault(cfg, home, g, nil, log); v != nil || strings.Count(buf.String(), "\n") != 1 || !strings.Contains(buf.String(), "locked") {
+		t.Fatalf("%v %q", v, buf.String())
 	}
 	// And no vault at all is not worth a word.
-	warned = nil
-	if v := loadVault(cfg, t.TempDir(), g, nil, warn); v != nil || len(warned) != 0 {
-		t.Fatalf("%v %v", v, warned)
+	buf.Reset()
+	if v := loadVault(cfg, t.TempDir(), g, nil, log); v != nil || buf.Len() != 0 {
+		t.Fatalf("%v %q", v, buf.String())
 	}
 	// Asked at a terminal when the passphrase is not set.
 	t.Setenv("TALARIA_VAULT_PASSPHRASE", "")
-	if v := loadVault(cfg, home, g, &scripted{answers: []string{passphrase}}, warn); v == nil {
+	if v := loadVault(cfg, home, g, &scripted{answers: []string{passphrase}}, log); v == nil {
 		t.Fatal("the interactive command line may ask")
 	}
-	if v := loadVault(cfg, home, g, nil, warn); v != nil || len(warned) != 1 {
-		t.Fatalf("a gateway cannot: %v %v", v, warned)
+	if v := loadVault(cfg, home, g, nil, log); v != nil || strings.Count(buf.String(), "\n") != 1 {
+		t.Fatalf("a gateway cannot: %v %q", v, buf.String())
 	}
 }
 
@@ -275,8 +276,8 @@ func TestAgencyNoteMentionsTheVaultOnlyWhenThereIsOne(t *testing.T) {
 	cfg := &config.Config{}
 	tal(t, cfg, home, &scripted{answers: []string{passphrase, passphrase}}, "init")
 	t.Setenv("TALARIA_VAULT_PASSPHRASE", passphrase)
-	v := loadVault(cfg, home, &guard.Guard{Redact: guard.NewRedactor(nil)}, nil, func(string, ...any) {})
-	rt := app.Open(app.Config{Home: t.TempDir(), Provider: &spy{}, Model: "m", Env: execenv.Local{}, Vault: v}, func(string, ...any) {})
+	v := loadVault(cfg, home, &guard.Guard{Redact: guard.NewRedactor(nil)}, nil, slog.New(slog.DiscardHandler))
+	rt := app.Open(app.Config{Home: t.TempDir(), Provider: &spy{}, Model: "m", Env: execenv.Local{}, Vault: v})
 	defer rt.Close()
 	if n := agencyNote(rt); !strings.Contains(n, "browser_fill") || !strings.Contains(n, "never ask them to type a password") {
 		t.Fatalf("%s", n)

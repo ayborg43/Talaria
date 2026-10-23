@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -41,7 +41,7 @@ func calendarSources(cfg *config.Config, getenv func(string) string) (sources []
 	for n := range cfg.Calendars {
 		names = append(names, n)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	for _, n := range names {
 		c := cfg.Calendars[n]
 		raw := strings.TrimSpace(getenv(c.URLEnv))

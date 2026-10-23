@@ -5,12 +5,13 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -589,11 +590,15 @@ func (h *Hub) workersLocked() []activity.Worker {
 		c.AgeMs = now.Sub(w.Since).Milliseconds()
 		out = append(out, c)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if (out[i].Kind == activity.Main) != (out[j].Kind == activity.Main) {
-			return out[i].Kind == activity.Main
+	slices.SortFunc(out, func(a, b activity.Worker) int {
+		am, bm := a.Kind == activity.Main, b.Kind == activity.Main
+		if am != bm {
+			if am {
+				return -1
+			}
+			return 1
 		}
-		return out[i].ID < out[j].ID
+		return cmp.Compare(a.ID, b.ID)
 	})
 	return out
 }
@@ -642,7 +647,7 @@ func (h *Hub) toolsDoing() string {
 	for n := range h.tools {
 		names = append(names, n)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return strings.Join(names, ", ")
 }
 

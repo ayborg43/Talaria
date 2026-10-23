@@ -223,13 +223,41 @@ func TestInit(t *testing.T) {
 	}
 }
 
+func TestWriteSavesOnlyWhatLoads(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sub", "config.json")
+	if err := Write(path, &Config{Timezone: "Not/AZone"}); err == nil {
+		t.Fatal("an invalid config was saved")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("a rejected config left a file behind")
+	}
+	cfg := &Config{Profiles: map[string]Profile{"p": {Type: "openai", Model: "m"}}}
+	if err := Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode %v", fi.Mode().Perm())
+	}
+	if fi, _ := os.Stat(filepath.Dir(path)); fi.Mode().Perm() != 0o700 {
+		t.Fatalf("config dir mode %v", fi.Mode().Perm())
+	}
+	back, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Profiles["p"].Model != "m" {
+		t.Fatalf("round trip lost the profile: %+v", back.Profiles)
+	}
+}
+
 func TestPath(t *testing.T) {
-	t.Setenv("TALARIA_CONFIG", "")
-	if got := Path("/h"); got != "/h/config.json" {
+	env := map[string]string{}
+	getenv := func(k string) string { return env[k] }
+	if got := Path("/h", getenv); got != "/h/config.json" {
 		t.Fatal(got)
 	}
-	t.Setenv("TALARIA_CONFIG", "/etc/talaria.json")
-	if got := Path("/h"); got != "/etc/talaria.json" {
+	env["TALARIA_CONFIG"] = "/etc/talaria.json"
+	if got := Path("/h", getenv); got != "/etc/talaria.json" {
 		t.Fatal(got)
 	}
 }

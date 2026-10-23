@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -201,7 +201,7 @@ func runPolicy(cfg *config.Config, cfgPath, home string, args []string) error {
 	for k := range chats {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	fmt.Println("\nalways allowed by choice:")
 	if len(keys) == 0 {
 		fmt.Println("  nothing")

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"talaria/internal/activity"
@@ -99,7 +99,7 @@ func (s *Scheduler) Runs(gateway string, chatID int64) []RunInfo {
 			out = append(out, RunInfo{ID: r.job.ID, Name: r.job.Name, Kind: r.job.Kind, Running: !r.started.IsZero(), Since: since})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Since.Before(out[j].Since) })
+	slices.SortFunc(out, func(a, b RunInfo) int { return a.Since.Compare(b.Since) })
 	return out
 }
 

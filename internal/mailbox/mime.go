@@ -260,7 +260,7 @@ func plainLine(s string, n int) string {
 func parseMessage(rawMsg []byte, truncated bool) (*Message, error) {
 	msg, err := mail.ReadMessage(bytes.NewReader(rawMsg))
 	if err != nil {
-		return nil, fmt.Errorf("the message could not be read: %v", err)
+		return nil, fmt.Errorf("the message could not be read: %w", err)
 	}
 	h := msg.Header
 	m := &Message{

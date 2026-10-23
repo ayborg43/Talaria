@@ -2,7 +2,7 @@ package calendar
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -177,7 +177,7 @@ func (r *rrule) monthDays(year int, month time.Month, startDay int) []int {
 	for d := range set {
 		days = append(days, d)
 	}
-	sort.Ints(days)
+	slices.Sort(days)
 	return days
 }
 
@@ -240,7 +240,7 @@ func (r *rrule) candidates(start time.Time, k int) []time.Time {
 		for _, dr := range wds {
 			offs = append(offs, (int(dr.wd)-int(r.wkst)+7)%7)
 		}
-		sort.Ints(offs)
+		slices.Sort(offs)
 		last := -1
 		for _, off := range offs {
 			if off == last {
@@ -266,7 +266,7 @@ func (r *rrule) candidates(start time.Time, k int) []time.Time {
 			months = []int{int(sm)}
 		}
 		sorted := append([]int(nil), months...)
-		sort.Ints(sorted)
+		slices.Sort(sorted)
 		for _, mo := range sorted {
 			for _, d := range r.monthDays(sy+k*r.interval, time.Month(mo), sd) {
 				out = append(out, at(sy+k*r.interval, time.Month(mo), d))
@@ -328,6 +328,6 @@ func (e rawEvent) starts(from, to time.Time) []time.Time {
 			out = append(out, s)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Before(out[j]) })
+	slices.SortFunc(out, func(a, b time.Time) int { return a.Compare(b) })
 	return out
 }

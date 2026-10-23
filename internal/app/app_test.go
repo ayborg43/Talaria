@@ -24,7 +24,7 @@ func (f chatFunc) Chat(ctx context.Context, req provider.Request) (provider.Mess
 
 func open(t *testing.T, p provider.Provider, limits subagent.Limits) (*Runtime, string) {
 	home := t.TempDir()
-	rt := Open(Config{Home: home, Provider: p, Model: "m", Subagents: limits}, func(string, ...any) {})
+	rt := Open(Config{Home: home, Provider: p, Model: "m", Subagents: limits})
 	t.Cleanup(rt.Close)
 	return rt, home
 }
@@ -120,7 +120,7 @@ func TestTheModelIsToldWhereItsToolsRun(t *testing.T) {
 			return provider.Message{Role: provider.RoleAssistant, Content: "ok"}, nil
 		})
 		home := t.TempDir()
-		rt := Open(Config{Home: home, Provider: p, Model: "m", Env: tc.env}, func(string, ...any) {})
+		rt := Open(Config{Home: home, Provider: p, Model: "m", Env: tc.env})
 		if _, err := rt.NewAgent(AgentOptions{}).Run(context.Background(), "hi"); err != nil {
 			t.Fatal(err)
 		}
@@ -153,7 +153,7 @@ func TestSubagentsAreToldToo(t *testing.T) {
 		args, _ := json.Marshal(map[string]string{"task": "look around"})
 		return provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "1", Name: "delegate", Arguments: string(args)}}}, nil
 	})
-	rt := Open(Config{Home: t.TempDir(), Provider: p, Model: "m", Env: remoteEnv{}}, func(string, ...any) {})
+	rt := Open(Config{Home: t.TempDir(), Provider: p, Model: "m", Env: remoteEnv{}})
 	defer rt.Close()
 	if _, err := rt.NewAgent(AgentOptions{}).Run(context.Background(), "go"); err != nil {
 		t.Fatal(err)
@@ -174,7 +174,7 @@ func TestToolsRunInTheConfiguredEnvironment(t *testing.T) {
 		}
 		return provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "1", Name: "list_dir", Arguments: `{"path":"/anywhere"}`}}}, nil
 	})
-	rt := Open(Config{Home: t.TempDir(), Provider: p, Model: "m", Env: listingEnv{}}, func(string, ...any) {})
+	rt := Open(Config{Home: t.TempDir(), Provider: p, Model: "m", Env: listingEnv{}})
 	defer rt.Close()
 	if _, err := rt.NewAgent(AgentOptions{}).Run(context.Background(), "go"); err != nil {
 		t.Fatal(err)
@@ -234,7 +234,7 @@ func TestUseEnvironmentMovesALiveAgent(t *testing.T) {
 		}
 		return provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "1", Name: "list_dir", Arguments: `{"path":"/"}`}}}, nil
 	})
-	rt := Open(Config{Home: t.TempDir(), Provider: p, Model: "m", Env: namedEnv{name: "first", remote: true}}, func(string, ...any) {})
+	rt := Open(Config{Home: t.TempDir(), Provider: p, Model: "m", Env: namedEnv{name: "first", remote: true}})
 	defer rt.Close()
 	ag := rt.NewAgent(AgentOptions{})
 
@@ -286,7 +286,7 @@ func TestUseEnvironmentKeepsTheOtherTools(t *testing.T) {
 		}
 		return provider.Message{Role: provider.RoleAssistant, Content: "ok"}, nil
 	})
-	rt := Open(Config{Home: t.TempDir(), Provider: p, Model: "m"}, func(string, ...any) {})
+	rt := Open(Config{Home: t.TempDir(), Provider: p, Model: "m"})
 	defer rt.Close()
 	ag := rt.NewAgent(AgentOptions{})
 	ag.Run(context.Background(), "x")
@@ -303,7 +303,7 @@ func TestUseEnvironmentKeepsTheOtherTools(t *testing.T) {
 func TestStateIsKeptOwnerOnly(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "state")
 	os.MkdirAll(home, 0o755) // made by an older version, open to others
-	rt := Open(Config{Home: home, Provider: nil}, func(string, ...any) {})
+	rt := Open(Config{Home: home, Provider: nil})
 	defer rt.Close()
 	rt.notes.Add("memory", "likes tea")
 	if fi, err := os.Stat(home); err != nil || fi.Mode().Perm() != 0o700 {
@@ -326,12 +326,12 @@ func TestStateIsKeptOwnerOnly(t *testing.T) {
 
 func TestTheCalendarToolIsOfferedOnlyWhenACalendarIsSetUp(t *testing.T) {
 	home := t.TempDir()
-	with := Open(Config{Home: home, Provider: nil, Calendars: &calendar.Service{Sources: []calendar.Source{{Name: "p", URL: "https://example.com/a.ics"}}}}, func(string, ...any) {})
+	with := Open(Config{Home: home, Provider: nil, Calendars: &calendar.Service{Sources: []calendar.Source{{Name: "p", URL: "https://example.com/a.ics"}}}})
 	defer with.Close()
 	if _, ok := with.NewAgent(AgentOptions{}).Tools.Get("calendar_events"); !ok || !with.HasCalendars() {
 		t.Fatal("the tool is missing though a calendar is set up")
 	}
-	without := Open(Config{Home: t.TempDir(), Provider: nil}, func(string, ...any) {})
+	without := Open(Config{Home: t.TempDir(), Provider: nil})
 	defer without.Close()
 	if _, ok := without.NewAgent(AgentOptions{}).Tools.Get("calendar_events"); ok || without.HasCalendars() {
 		t.Fatal("a tool for something that is not there")
@@ -339,7 +339,7 @@ func TestTheCalendarToolIsOfferedOnlyWhenACalendarIsSetUp(t *testing.T) {
 }
 
 func TestTheMailToolsAreOfferedOnlyWhenAMailboxIsSetUpAndNeverAskNorSend(t *testing.T) {
-	with := Open(Config{Home: t.TempDir(), Provider: nil, Mail: &mailbox.Service{Address: "me@example.com", Password: "pw", Server: "imap.example.com:993"}}, func(string, ...any) {})
+	with := Open(Config{Home: t.TempDir(), Provider: nil, Mail: &mailbox.Service{Address: "me@example.com", Password: "pw", Server: "imap.example.com:993"}})
 	defer with.Close()
 	if !with.HasMail() {
 		t.Fatal("HasMail is false though a mailbox is set up")
@@ -362,7 +362,7 @@ func TestTheMailToolsAreOfferedOnlyWhenAMailboxIsSetUpAndNeverAskNorSend(t *test
 			t.Fatalf("%s exists: the mailbox is read-only", name)
 		}
 	}
-	without := Open(Config{Home: t.TempDir(), Provider: nil}, func(string, ...any) {})
+	without := Open(Config{Home: t.TempDir(), Provider: nil})
 	defer without.Close()
 	if _, ok := without.NewAgent(AgentOptions{}).Tools.Get("email_list"); ok || without.HasMail() {
 		t.Fatal("a tool for something that is not there")
@@ -376,7 +376,7 @@ func (noteSink) Doing(int64, string)        {}
 func (noteSink) Stop(int64)                 {}
 
 func TestAnAgentIsGivenTheSinkThatShowsWhoIsWorking(t *testing.T) {
-	rt := Open(Config{Home: t.TempDir(), Provider: nil}, func(string, ...any) {})
+	rt := Open(Config{Home: t.TempDir(), Provider: nil})
 	defer rt.Close()
 	sink := noteSink{}
 	if ag := rt.NewAgent(AgentOptions{Activity: sink}); ag.Activity != sink {

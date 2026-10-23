@@ -4,10 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
+	"log/slog"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -24,7 +23,6 @@ import (
 	"talaria/internal/guard"
 	"talaria/internal/metrics"
 	"talaria/internal/ops"
-	"talaria/internal/provider"
 	"talaria/internal/version"
 	"talaria/internal/web"
 )
@@ -33,7 +31,7 @@ import (
 // service so that one container serves them all. Environments start when first
 // asked for; the default one, which Talaria has already started, is in it from
 // the beginning. Closing the pool stops what it started, and the default too.
-func gatewayPool(cfg *config.Config, defName string, def execenv.Env, fence *execenv.Fence, getenv func(string) string, logf func(string, ...any)) *execenv.Pool {
+func gatewayPool(cfg *config.Config, defName string, def execenv.Env, fence *execenv.Fence, getenv func(string) string, log *slog.Logger) *execenv.Pool {
 	if def == nil {
 		def = execenv.Local{Fence: fence}
 	}
@@ -45,12 +43,12 @@ func gatewayPool(cfg *config.Config, defName string, def execenv.Env, fence *exe
 		if !ok {
 			return nil, fmt.Errorf("no environment named %q", name)
 		}
-		logf("environment %s: starting (%s)", name, spec.Summary())
+		log.Info(fmt.Sprintf("environment %s: starting (%s)", name, spec.Summary()))
 		env, err := execenv.Open(ctx, name, spec, getenv)
 		if err != nil {
 			return nil, err
 		}
-		logf("environment %s: ready: %s", name, env.Describe())
+		log.Info(fmt.Sprintf("environment %s: ready: %s", name, env.Describe()))
 		return env, nil
 	})
 	pool.Put(defName, def)
@@ -66,7 +64,7 @@ func gatewayEnvironments(cfg *config.Config, offered []string, defName string, p
 		return nil
 	}
 	names := append([]string{defName}, offered...)
-	sort.Strings(names)
+	slices.Sort(names)
 	names = slices.Compact(names)
 
 	return &chat.Environments{
@@ -117,9 +115,9 @@ type service struct {
 
 // serviceAllowlist reads who may use a service: the environment variable if
 // set, else the config file.
-func serviceAllowlist(envVar string, fromConfig []int64) (map[int64]bool, error) {
+func serviceAllowlist(getenv func(string) string, envVar string, fromConfig []int64) (map[int64]bool, error) {
 	allowed := map[int64]bool{}
-	if v := os.Getenv(envVar); v != "" {
+	if v := getenv(envVar); v != "" {
 		var err error
 		if allowed, err = parseIDs(v); err != nil {
 			return nil, fmt.Errorf("%s: %w", envVar, err)
@@ -141,9 +139,10 @@ func orNotSet(s string) string {
 
 func onOff(b bool) string { return map[bool]string{true: "on", false: "off"}[b] }
 
-func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res config.Resolved, defProvider provider.Provider, home string, env execenv.Env, envName string, yolo bool) error {
-	tgToken, dcToken := cfg.TelegramToken(os.Getenv), cfg.DiscordToken(os.Getenv)
-	webSet, webProblems, webOn := webConfig(os.Getenv)
+func runGateway(c *cli) error {
+	ctx := c.ctx
+	tgToken, dcToken := c.cfg.TelegramToken(c.getenv), c.cfg.DiscordToken(c.getenv)
+	webSet, webProblems, webOn := webConfig(c.getenv)
 	if tgToken == "" && dcToken == "" && !webOn {
 		return errors.New("set TALARIA_TELEGRAM_TOKEN to the token from @BotFather, TALARIA_DISCORD_TOKEN to a Discord bot's token, " +
 			"or TALARIA_WEB_PASSWORD to serve the web app (or telegram.token_env / discord.token_env in the config file)")
@@ -151,30 +150,32 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 	if len(webProblems) > 0 {
 		return errors.New(strings.Join(webProblems, "; "))
 	}
-	pause := newPauseState(home)
-	logf := func(format string, args ...any) { fmt.Fprintf(os.Stderr, format+"\n", args...) }
+	pause := newPauseState(c.home)
+	// logf speaks the Logf dialect the gateways, the web server and the
+	// schedulers take, reporting through the process logger.
+	logf := func(format string, args ...any) { c.log.Info(fmt.Sprintf(format, args...)) }
 
 	envDesc := ""
-	if env != nil {
-		envDesc = env.Describe()
+	if c.env != nil {
+		envDesc = c.env.Describe()
 	}
 	var pool *execenv.Pool
-	if len(cfg.Telegram.Environments) > 0 || len(cfg.Discord.Environments) > 0 {
-		pool = gatewayPool(cfg, envName, env, buildFence(cfg, config.Path(home), home), os.Getenv, logf)
+	if len(c.cfg.Telegram.Environments) > 0 || len(c.cfg.Discord.Environments) > 0 {
+		pool = gatewayPool(c.cfg, c.defEnv, c.env, buildFence(c.cfg, config.Path(c.home, c.getenv), c.home), c.getenv, c.log)
 		defer pool.Close() // stops every environment the chats started, and the default one too
 	}
-	backends := gatewayBackends(cfg, res, defProvider, os.Getenv)
+	backends := gatewayBackends(c.cfg, c.res, c.p, c.getenv)
 
 	var webHub *web.Hub // the web app's hub, once it is made: it is also what shows who is working
 
 	// newAgent makes the function a service uses to build a chat's agent.
 	newAgent := func(s *service, note string, selection func(int64) (string, string)) func(int64, func(string, string) bool) *agent.Agent {
 		return func(chatID int64, approve func(name, args string) bool) *agent.Agent {
-			if yolo {
+			if c.yolo {
 				approve = func(string, string) bool { return true }
 			}
-			return rt.NewAgent(app.AgentOptions{
-				Approve: approve, ExtraSystem: note + agencyNote(rt), ChatID: chatID, Gateway: s.name, Tasks: s.sched, Activity: s.sink,
+			return c.rt.NewAgent(app.AgentOptions{
+				Approve: approve, ExtraSystem: note + agencyNote(c.rt), ChatID: chatID, Gateway: s.name, Tasks: s.sched, Activity: s.sink,
 				// A job scheduled from this chat starts out with what the chat is using now.
 				Jobs: gatewayJobTargets(backends, s.envs, func() (string, string) { return selection(chatID) }),
 			})
@@ -189,9 +190,9 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 		if s.markdown {
 			note, taskText = cronNoteMarkdown, taskNoteMarkdown
 		}
-		runner := &jobRunner{rt: rt, backends: backends, envs: s.envs, allowed: s.allowed, note: note, taskNote: taskText, goals: rt.Goals(), yolo: yolo, sink: s.sink}
+		runner := &jobRunner{rt: c.rt, backends: backends, envs: s.envs, allowed: s.allowed, note: note, taskNote: taskText, goals: c.rt.Goals(), yolo: c.yolo, sink: s.sink}
 		s.sched = &cron.Scheduler{
-			Store:    rt.Cron,
+			Store:    c.rt.Cron,
 			Gateway:  s.name,
 			Exec:     runner.run,
 			Paused:   pause.Paused,
@@ -205,29 +206,29 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 		}
 		cmds := map[string]chat.Command{
 			"tasks": {Help: "lists the background tasks running for this chat (cancel one with: tasks cancel ID, or all)", Run: func(chatID int64, args []string) string {
-				return tasksCommand(rt.Cron, s.sched, s.name, chatID, args)
+				return tasksCommand(c.rt.Cron, s.sched, s.name, chatID, args)
 			}},
 		}
-		if gs := rt.Goals(); gs != nil {
+		if gs := c.rt.Goals(); gs != nil {
 			cmds["goals"] = chat.Command{Help: "lists your goals (also: goals show ID, pause ID, resume ID, done ID, drop ID)", Run: func(chatID int64, args []string) string {
-				return goalsCommand(gs, rt.Cron, s.name, chatID, args)
+				return goalsCommand(gs, c.rt.Cron, s.name, chatID, args)
 			}}
 		}
-		if rt.Watches() != nil {
+		if c.rt.Watches() != nil {
 			cmds["watches"] = chat.Command{Help: "lists what I am watching for you (also: watches pause ID, resume ID, delete ID)", Run: func(chatID int64, args []string) string {
-				return watchesCommand(rt.WatchBinding(s.name, chatID, nil, nil, false), args)
+				return watchesCommand(c.rt.WatchBinding(s.name, chatID, nil, nil, false), args)
 			}}
 		}
 		onUser := func(chatID int64) {
-			if ws := rt.Watches(); ws != nil {
+			if ws := c.rt.Watches(); ws != nil {
 				ws.ResetTriggers(s.name, chatID) // the user is here: watches get a fresh allowance of changes
 			}
-			if gs := rt.Goals(); gs != nil {
+			if gs := c.rt.Goals(); gs != nil {
 				gs.ResetCheckins(s.name, chatID) // the user is here: goals get a fresh allowance of check-ins
 			}
 		}
 		stop := func(chatID int64) int {
-			n, _ := cron.CancelTasks(rt.Cron, s.sched, s.name, chatID, "all")
+			n, _ := cron.CancelTasks(c.rt.Cron, s.sched, s.name, chatID, "all")
 			return n
 		}
 		return cmds, onUser, stop
@@ -236,12 +237,12 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 	var services []*service
 
 	if tgToken != "" {
-		allowed, err := serviceAllowlist("TALARIA_TELEGRAM_ALLOWED_USERS", cfg.Telegram.AllowedUsers)
+		allowed, err := serviceAllowlist(c.getenv, "TALARIA_TELEGRAM_ALLOWED_USERS", c.cfg.Telegram.AllowedUsers)
 		if err != nil {
 			return err
 		}
 		api := telegram.NewAPI(tgToken)
-		if base := os.Getenv("TALARIA_TELEGRAM_API_BASE"); base != "" { // self-hosted Bot API server or a test double
+		if base := c.getenv("TALARIA_TELEGRAM_API_BASE"); base != "" { // self-hosted Bot API server or a test double
 			api.Base = strings.TrimRight(base, "/")
 		}
 		me, err := api.GetMe(ctx)
@@ -253,19 +254,19 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 			logf("telegram: message @%s with /whoami to get your user ID, then restart with it set.", me.Username)
 		} else {
 			logf("telegram: serving @%s for %d allowed user(s), default profile %s (%s), streaming %s",
-				me.Username, len(allowed), res.Name, res.Model, onOff(cfg.Telegram.StreamReplies()))
+				me.Username, len(allowed), c.res.Name, c.res.Model, onOff(c.cfg.Telegram.StreamReplies()))
 			sharedWarning(len(allowed), func(m string) { logf("telegram: %s", m) })
 		}
 
 		s := &service{name: "telegram", allowed: allowed}
-		s.envs = gatewayEnvironments(cfg, cfg.Telegram.Environments, envName, pool, rt.UseEnvironment)
+		s.envs = gatewayEnvironments(c.cfg, c.cfg.Telegram.Environments, c.defEnv, pool, c.rt.UseEnvironment)
 		g := &telegram.Gateway{
 			API: api, Allowed: allowed, Logf: logf,
-			MessagesPerMinute: cfg.Limits.Messages(), Stream: cfg.Telegram.StreamReplies(), Environment: envDesc, Environments: s.envs, Backends: backends,
-			Prefs:      &chat.FilePrefs{Path: filepath.Join(home, "telegram_chats.json")},
-			OffsetPath: filepath.Join(home, "telegram_offset.json"),
+			MessagesPerMinute: c.cfg.Limits.Messages(), Stream: c.cfg.Telegram.StreamReplies(), Environment: envDesc, Environments: s.envs, Backends: backends,
+			Prefs:      &chat.FilePrefs{Path: filepath.Join(c.home, "telegram_chats.json")},
+			OffsetPath: filepath.Join(c.home, "telegram_offset.json"),
 		}
-		if gd := rt.Guard(); gd != nil {
+		if gd := c.rt.Guard(); gd != nil {
 			g.Permissions = guard.ChatPermissions{G: gd, Gateway: s.name}
 		}
 		g.NewAgent = newAgent(s, telegramNote, g.Selection)
@@ -275,12 +276,12 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 	}
 
 	if dcToken != "" {
-		allowed, err := serviceAllowlist("TALARIA_DISCORD_ALLOWED_USERS", cfg.Discord.AllowedUsers)
+		allowed, err := serviceAllowlist(c.getenv, "TALARIA_DISCORD_ALLOWED_USERS", c.cfg.Discord.AllowedUsers)
 		if err != nil {
 			return err
 		}
 		api := discord.NewAPI(dcToken)
-		if base := os.Getenv("TALARIA_DISCORD_API_BASE"); base != "" { // a test double
+		if base := c.getenv("TALARIA_DISCORD_API_BASE"); base != "" { // a test double
 			api.Base = strings.TrimRight(base, "/")
 		}
 		me, err := api.GetMe(ctx)
@@ -292,18 +293,18 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 			logf("discord: send %s a direct message saying !whoami to get your user ID, then restart with it set.", me.Username)
 		} else {
 			logf("discord: serving %s for %d allowed user(s), default profile %s (%s), streaming %s",
-				me.Username, len(allowed), res.Name, res.Model, onOff(cfg.Discord.StreamReplies()))
+				me.Username, len(allowed), c.res.Name, c.res.Model, onOff(c.cfg.Discord.StreamReplies()))
 			sharedWarning(len(allowed), func(m string) { logf("discord: %s", m) })
 		}
 
 		s := &service{name: "discord", allowed: allowed, markdown: true}
-		s.envs = gatewayEnvironments(cfg, cfg.Discord.Environments, envName, pool, rt.UseEnvironment)
+		s.envs = gatewayEnvironments(c.cfg, c.cfg.Discord.Environments, c.defEnv, pool, c.rt.UseEnvironment)
 		g := &discord.Gateway{
 			API: api, Allowed: allowed, Logf: logf,
-			MessagesPerMinute: cfg.Limits.Messages(), Stream: cfg.Discord.StreamReplies(), Environment: envDesc, Environments: s.envs, Backends: backends,
-			Prefs: &chat.FilePrefs{Path: filepath.Join(home, "discord_chats.json")},
+			MessagesPerMinute: c.cfg.Limits.Messages(), Stream: c.cfg.Discord.StreamReplies(), Environment: envDesc, Environments: s.envs, Backends: backends,
+			Prefs: &chat.FilePrefs{Path: filepath.Join(c.home, "discord_chats.json")},
 		}
-		if gd := rt.Guard(); gd != nil {
+		if gd := c.rt.Guard(); gd != nil {
 			g.Permissions = guard.ChatPermissions{G: gd, Gateway: s.name}
 		}
 		g.NewAgent = newAgent(s, discordNote, g.Selection)
@@ -314,31 +315,31 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 
 	if webOn {
 		allowed := map[int64]bool{web.UserID: true}
-		webHub = &web.Hub{Path: filepath.Join(home, "web_log.json")}
+		webHub = &web.Hub{Path: filepath.Join(c.home, "web_log.json")}
 		subject := webSet.PublicURL
 		if subject == "" {
 			subject = "mailto:admin@localhost.invalid"
 		}
-		push := &web.Pusher{Path: filepath.Join(home, "web_push.json"), Subject: subject, Logf: logf}
+		push := &web.Pusher{Path: filepath.Join(c.home, "web_push.json"), Subject: subject, Logf: logf}
 		webHub.Notifier = push
 		s := &service{name: "web", allowed: allowed, markdown: true, sink: webHub}
 		eng := &chat.Engine{
-			T: webHub, Allowed: allowed, Logf: logf, Stream: true, MessagesPerMinute: cfg.Limits.Messages(),
-			Environment: envDesc, Backends: backends, Prefs: &chat.FilePrefs{Path: filepath.Join(home, "web_chats.json")},
+			T: webHub, Allowed: allowed, Logf: logf, Stream: true, MessagesPerMinute: c.cfg.Limits.Messages(),
+			Environment: envDesc, Backends: backends, Prefs: &chat.FilePrefs{Path: filepath.Join(c.home, "web_chats.json")},
 		}
-		if gd := rt.Guard(); gd != nil {
+		if gd := c.rt.Guard(); gd != nil {
 			eng.Permissions = guard.ChatPermissions{G: gd, Gateway: s.name}
 		}
 		eng.NewAgent = newAgent(s, webNote, eng.Selection)
 		eng.Commands, eng.OnUserMessage, eng.StopBackground = attach(s, logf)
-		zone, _ := calendarZone(cfg, os.Getenv)
-		model := res.Model
+		zone, _ := calendarZone(c.cfg, c.getenv)
+		model := c.res.Model
 		srv := &web.Server{
-			Hub: webHub, Auth: &web.Auth{Password: webSet.Password, Path: filepath.Join(home, "web_sessions.json"), Secure: webSet.Secure},
+			Hub: webHub, Auth: &web.Auth{Password: webSet.Password, Path: filepath.Join(c.home, "web_sessions.json"), Secure: webSet.Secure},
 			Engine: eng, Push: push, Pause: pause, PublicURL: webSet.PublicURL, Model: model, Version: version.String(), Started: time.Now(),
-			Sources: webSources(rt, zone, webLinks(cfg, rt, model, os.Getenv, webSet.PublicURL)), Logf: logf, TrustProxy: webSet.Secure,
-			ConfigPath: config.Path(home),
-			Cfg:        cfg,
+			Sources: webSources(c.rt, zone, webLinks(c.cfg, c.rt, model, c.getenv, webSet.PublicURL)), Logf: logf, TrustProxy: webSet.Secure,
+			ConfigPath: config.Path(c.home, c.getenv),
+			Cfg:        c.cfg,
 		}
 		s.run = func(ctx context.Context) error {
 			eng.Start(ctx)
@@ -357,13 +358,13 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 		defer webHub.Close()
 	}
 
-	if yolo {
+	if c.yolo {
 		logf("WARNING: -yolo is on, so allowed users can run shell commands without approval.")
 	}
 	for _, s := range services {
 		if s.envs != nil {
-			logf("%s: chats may switch environments among: %s (default %s)", s.name, strings.Join(s.envs.Names, ", "), envName)
-			if yolo && slices.Contains(s.envs.Names, execenv.LocalName) && envName != execenv.LocalName {
+			logf("%s: chats may switch environments among: %s (default %s)", s.name, strings.Join(s.envs.Names, ", "), c.defEnv)
+			if c.yolo && slices.Contains(s.envs.Names, execenv.LocalName) && c.defEnv != execenv.LocalName {
 				logf("WARNING: -yolo is on and %s chats may switch to %q, which runs commands on this machine with no approval", s.name, execenv.LocalName)
 			}
 		}
@@ -390,7 +391,7 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 		cancel()
 	}
 	metrics.Set("talaria_build_info", 1, "version", version.String())
-	opsAddr, opsToken, err := opsSettings(cfg, os.Getenv)
+	opsAddr, opsToken, err := opsSettings(c.cfg, c.getenv)
 	if err != nil {
 		return err
 	}

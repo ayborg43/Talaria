@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -92,13 +93,13 @@ func openVault(cfg *config.Config, home string, ask prompter, onLoad func([]stri
 // loadVault opens the vault for a running Talaria. A missing vault is not a
 // problem; one that cannot be unlocked is reported, and the agent goes on
 // without saved logins.
-func loadVault(cfg *config.Config, home string, g *guard.Guard, ask prompter, warn func(string, ...any)) *vault.Vault {
+func loadVault(cfg *config.Config, home string, g *guard.Guard, ask prompter, log *slog.Logger) *vault.Vault {
 	v, err := openVault(cfg, home, ask, func(secrets []string) { g.Redact.Add(secrets...) })
 	switch {
 	case errors.Is(err, vault.ErrNoVault):
 		return nil
 	case err != nil:
-		warn("the vault is locked, so saved logins are not available: %v", err)
+		log.Warn(fmt.Sprintf("the vault is locked, so saved logins are not available: %v", err))
 		return nil
 	}
 	return v

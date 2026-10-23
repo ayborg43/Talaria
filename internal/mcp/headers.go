@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -42,7 +42,7 @@ func mirroredParams(schema json.RawMessage) ([]paramHeader, error) {
 		for n := range props {
 			names = append(names, n)
 		}
-		sort.Strings(names)
+		slices.Sort(names)
 
 		for _, n := range names {
 			sub, _ := props[n].(map[string]any)

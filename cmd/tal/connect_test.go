@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -254,7 +255,7 @@ func TestSendingToolsAreNeverRememberedWhenStarted(t *testing.T) {
 	v, _ := vault.Open(vaultPath(home), passphrase, nil)
 
 	g, _ := buildGuard(cfg, home, os.Getenv, nil)
-	m := startMCP(context.Background(), cfg, v)
+	m := startMCP(context.Background(), cfg, v, slog.New(slog.DiscardHandler))
 	defer m.Close()
 	g.Policy.NeverRemember(m.Sensitive()...)
 	if got := strings.Join(m.Sensitive(), ","); !strings.Contains(got, "mcp_mail_send_email") || !strings.Contains(got, "mcp_mail_delete_event") || strings.Contains(got, "list_events") {

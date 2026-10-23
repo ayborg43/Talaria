@@ -27,7 +27,7 @@ func openGuarded(t *testing.T, p provider.Provider, rules map[string]string) (*R
 		Audit:  &guard.Log{Path: filepath.Join(home, "audit.log")},
 		Redact: guard.NewRedactor([]string{"hunter2hunter2"}),
 	}
-	rt := Open(Config{Home: home, Provider: p, Model: "m", Guard: g}, func(string, ...any) {})
+	rt := Open(Config{Home: home, Provider: p, Model: "m", Guard: g})
 	t.Cleanup(rt.Close)
 	return rt, home, g
 }
@@ -184,7 +184,7 @@ func TestRulesBindSubagentsToo(t *testing.T) {
 	home := t.TempDir()
 	pol, _ := guard.ParsePolicy(map[string]string{"write_file": "deny"}, nil)
 	g := &guard.Guard{Policy: pol, Audit: &guard.Log{Path: filepath.Join(home, "audit.log")}}
-	rt := Open(Config{Home: home, Provider: p, Model: "m", Guard: g, Subagents: subagent.Limits{}}, func(string, ...any) {})
+	rt := Open(Config{Home: home, Provider: p, Model: "m", Guard: g, Subagents: subagent.Limits{}})
 	defer rt.Close()
 	a := rt.NewAgent(AgentOptions{Approve: func(string, string) bool { t.Error("asked about a denied tool"); return true }})
 	if _, err := a.Run(context.Background(), "go"); err != nil {

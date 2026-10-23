@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"talaria/internal/agent"
+	"talaria/internal/tool"
 )
 
 // Guard ties the permission rules, the user's grants, the activity log and
@@ -28,7 +28,7 @@ type Scope struct {
 	useGrants bool
 }
 
-// For makes the agent.Gate for one conversation.
+// For makes the tool.Gate for one conversation.
 //
 //	origin   "cli", "chat" or "job:<id>", for the log
 //	gateway  the chat service, "" for the command line
@@ -47,32 +47,32 @@ func grantKey(gateway string, chat int64) string {
 	return fmt.Sprintf("%s:%d", gateway, chat)
 }
 
-// Verdict implements agent.Gate. A permission rule decides first. Failing that,
+// Verdict implements tool.Gate. A permission rule decides first. Failing that,
 // a grant allows; failing that, the tool's own default applies.
-func (s *Scope) Verdict(tool string, needsApproval bool) agent.Verdict {
-	if r, ok := s.g.Policy.match(tool); ok {
-		name := r.pattern
+func (s *Scope) Verdict(name string, needsApproval bool) tool.Verdict {
+	if r, ok := s.g.Policy.match(name); ok {
+		rule := r.pattern
 		if r.prefix {
-			name += "*"
+			rule += "*"
 		}
-		return agent.Verdict{Action: r.action, Via: "rule", Rule: name + " = " + actionName(r.action)}
+		return tool.Verdict{Action: r.action, Via: "rule", Rule: rule + " = " + actionName(r.action)}
 	}
 	// A grant is only honoured for a tool it could have been made for: a file edited by hand,
 	// or a tool listed in no_remember after the grant was given, does not get round that list.
-	if needsApproval && s.useGrants && s.g.Grants != nil && s.g.Policy.Rememberable(tool) && s.g.Grants.Allowed(grantKey(s.gateway, s.chat), tool) {
-		return agent.Verdict{Action: agent.Allow, Via: "grant"}
+	if needsApproval && s.useGrants && s.g.Grants != nil && s.g.Policy.Rememberable(name) && s.g.Grants.Allowed(grantKey(s.gateway, s.chat), name) {
+		return tool.Verdict{Action: tool.Allow, Via: "grant"}
 	}
 	if needsApproval {
-		return agent.Verdict{Action: agent.Ask, Via: "auto"}
+		return tool.Verdict{Action: tool.Ask, Via: "auto"}
 	}
-	return agent.Verdict{Action: agent.Allow, Via: "auto"}
+	return tool.Verdict{Action: tool.Allow, Via: "auto"}
 }
 
-// Scrub implements agent.Gate.
+// Scrub implements tool.Gate.
 func (s *Scope) Scrub(text string) string { return s.g.Redact.Scrub(text) }
 
-// Record implements agent.Gate.
-func (s *Scope) Record(e agent.Entry) {
+// Record implements tool.Gate.
+func (s *Scope) Record(e tool.Entry) {
 	if s.g.Audit == nil {
 		return
 	}

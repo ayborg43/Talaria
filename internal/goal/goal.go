@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -272,7 +272,7 @@ func (s *Store) List(gateway string, chatID int64) ([]Goal, error) {
 			out = append(out, g)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Created.Before(out[j].Created) })
+	slices.SortFunc(out, func(a, b Goal) int { return a.Created.Compare(b.Created) })
 	return out, nil
 }
 

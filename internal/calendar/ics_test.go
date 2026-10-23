@@ -2,7 +2,7 @@ package calendar
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -45,7 +45,7 @@ func list(t *testing.T, text string, display *time.Location, from, to string) ([
 }
 
 func sortEvents(es []Event) {
-	sort.SliceStable(es, func(i, j int) bool { return es[i].Start.Before(es[j].Start) })
+	slices.SortStableFunc(es, func(a, b Event) int { return a.Start.Compare(b.Start) })
 }
 
 func eq(t *testing.T, got []string, want ...string) {

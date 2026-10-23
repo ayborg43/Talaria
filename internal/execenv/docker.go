@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -136,7 +136,7 @@ func (d *dockerEnv) runArgs() []string {
 	for k := range s.Env {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	for _, k := range keys {
 		args = append(args, "-e", k+"="+s.Env[k])
 	}

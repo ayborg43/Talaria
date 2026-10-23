@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -306,6 +307,18 @@ func TestServerErrorsNeverCarryThePassword(t *testing.T) {
 		t.Fatal("expected an error")
 	}
 	if strings.Contains(err.Error(), "app-pass-1234") || !strings.Contains(err.Error(), "<password>") {
+		t.Fatalf("not scrubbed: %v", err)
+	}
+}
+
+func TestScrubbedErrorsKeepTheirChain(t *testing.T) {
+	s := &Service{Password: "lea-ved-in-logs"}
+	sentinel := errors.New("boom")
+	err := s.scrubErr(fmt.Errorf("wrap lea-ved-in-logs: %w", sentinel))
+	if !errors.Is(err, sentinel) {
+		t.Fatal("scrubbing broke the error chain")
+	}
+	if strings.Contains(err.Error(), "lea-ved-in-logs") || !strings.Contains(err.Error(), "<password>") {
 		t.Fatalf("not scrubbed: %v", err)
 	}
 }

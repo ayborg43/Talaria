@@ -7,6 +7,7 @@
 package vault
 
 import (
+	"cmp"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/pbkdf2"
@@ -20,7 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -271,7 +272,7 @@ func (v *Vault) saveLocked() error {
 	for _, c := range v.creds {
 		p.Credentials = append(p.Credentials, c)
 	}
-	sort.Slice(p.Credentials, func(i, j int) bool { return p.Credentials[i].Name < p.Credentials[j].Name })
+	slices.SortFunc(p.Credentials, func(a, b Credential) int { return cmp.Compare(a.Name, b.Name) })
 	plain, err := json.Marshal(p)
 	if err != nil {
 		return err
@@ -517,7 +518,7 @@ func (v *Vault) List() []Info {
 	for _, c := range v.creds {
 		out = append(out, Info{Name: c.Name, Kind: c.Kind, Sites: append([]string(nil), c.Sites...)})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	slices.SortFunc(out, func(a, b Info) int { return cmp.Compare(a.Name, b.Name) })
 	return out
 }
 

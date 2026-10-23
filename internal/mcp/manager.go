@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -75,7 +75,7 @@ func StartAuth(ctx context.Context, servers map[string]Server, getenv func(strin
 	for n := range servers {
 		names = append(names, n)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	type outcome struct {
 		client *Client

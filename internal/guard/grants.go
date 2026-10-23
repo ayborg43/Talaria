@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"sync"
 	"time"
 
@@ -91,7 +90,7 @@ func (g *Grants) Add(chat, tool string) error {
 	return g.edit(func(m map[string][]string) {
 		if !slices.Contains(m[chat], tool) {
 			m[chat] = append(m[chat], tool)
-			sort.Strings(m[chat])
+			slices.Sort(m[chat])
 		}
 	})
 }

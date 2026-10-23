@@ -68,7 +68,7 @@ type jobKit struct {
 // local (the default), sandbox and flaky, which cannot start.
 func newJobKit(t *testing.T) *jobKit {
 	k := &jobKit{models: map[string]*jobModel{"openai": {name: "openai"}, "claude": {name: "claude"}}}
-	rt := app.Open(app.Config{Home: t.TempDir(), Provider: k.models["openai"], Model: "model-openai", Env: listEnv{name: "local"}}, func(string, ...any) {})
+	rt := app.Open(app.Config{Home: t.TempDir(), Provider: k.models["openai"], Model: "model-openai", Env: listEnv{name: "local"}})
 	t.Cleanup(rt.Close)
 
 	backends := &chat.Backends{
@@ -189,7 +189,7 @@ func TestJobForAChatThatIsNoLongerAllowedIsDropped(t *testing.T) {
 func TestJobApprovalsAreUnchanged(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "out.txt")
 	writer := &writerModel{path: target}
-	rt := app.Open(app.Config{Home: t.TempDir(), Provider: writer, Model: "m", Env: listEnv{name: "local"}}, func(string, ...any) {})
+	rt := app.Open(app.Config{Home: t.TempDir(), Provider: writer, Model: "m", Env: listEnv{name: "local"}})
 	defer rt.Close()
 
 	for _, tc := range []struct {
@@ -266,7 +266,7 @@ func TestJobsObeyPermissionRulesAndAreLogged(t *testing.T) {
 	home := t.TempDir()
 	pol, _ := guard.ParsePolicy(map[string]string{"write_file": "deny"}, nil)
 	g := &guard.Guard{Policy: pol, Audit: &guard.Log{Path: filepath.Join(home, "audit.log")}}
-	rt := app.Open(app.Config{Home: home, Provider: &writerModel{path: target}, Model: "m", Env: listEnv{name: "local"}, Guard: g}, func(string, ...any) {})
+	rt := app.Open(app.Config{Home: home, Provider: &writerModel{path: target}, Model: "m", Env: listEnv{name: "local"}, Guard: g})
 	defer rt.Close()
 
 	for _, r := range []*jobRunner{
@@ -301,7 +301,7 @@ func TestChatGrantsDoNotCoverJobs(t *testing.T) {
 	grants := &guard.Grants{Path: filepath.Join(home, "grants.json")}
 	grants.Add("telegram:1", "write_file")
 	g := &guard.Guard{Policy: pol, Grants: grants}
-	rt := app.Open(app.Config{Home: home, Provider: &writerModel{path: target}, Model: "m", Env: listEnv{name: "local"}, Guard: g}, func(string, ...any) {})
+	rt := app.Open(app.Config{Home: home, Provider: &writerModel{path: target}, Model: "m", Env: listEnv{name: "local"}, Guard: g})
 	defer rt.Close()
 	r := &jobRunner{rt: rt, allowed: map[int64]bool{1: true}}
 	out, _ := r.run(context.Background(), cron.Job{ID: "j", Prompt: "write", ChatID: 1}) // not allow_risky

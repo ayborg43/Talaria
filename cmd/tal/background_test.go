@@ -51,7 +51,7 @@ func newGoalRig(t *testing.T) *goalRig {
 	home := t.TempDir()
 	model := &spy{reply: "did the work"}
 	goals := &goal.Store{Path: filepath.Join(home, "goals.json")}
-	rt := app.Open(app.Config{Home: home, Provider: model, Model: "m", Env: execenv.Local{}, Goals: goals}, func(string, ...any) {})
+	rt := app.Open(app.Config{Home: home, Provider: model, Model: "m", Env: execenv.Local{}, Goals: goals})
 	t.Cleanup(rt.Close)
 	return &goalRig{model: model, goals: goals, rt: rt,
 		runner: &jobRunner{rt: rt, allowed: map[int64]bool{5: true}, goals: goals}}
@@ -292,7 +292,7 @@ func TestGoalsCommand(t *testing.T) {
 
 func TestAgencyNoteOnlyMentionsWhatIsThere(t *testing.T) {
 	home := t.TempDir()
-	bare := app.Open(app.Config{Home: home, Provider: &spy{}, Model: "m"}, func(string, ...any) {})
+	bare := app.Open(app.Config{Home: home, Provider: &spy{}, Model: "m"})
 	defer bare.Close()
 	note := agencyNote(bare)
 	if !strings.Contains(note, "task_start") || strings.Contains(note, "goal_create") || strings.Contains(note, "vault") {

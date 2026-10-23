@@ -21,12 +21,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"slices"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -49,9 +48,103 @@ import (
 
 func main() {
 	if err := run(); err != nil {
+		var ee exitError
+		if errors.As(err, &ee) {
+			os.Exit(ee.code)
+		}
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+// exitError returns a process exit code from a command. Unlike other errors it
+// prints nothing: the command has already said what is wrong.
+type exitError struct{ code int }
+
+func (e exitError) Error() string { return fmt.Sprintf("exit code %d", e.code) }
+
+// cli carries what every command needs: where things are, how to report, and
+// the model setup once a command that needs it has asked for it.
+type cli struct {
+	ctx       context.Context
+	home      string
+	cfgPath   string
+	cfg       *config.Config
+	log       *slog.Logger
+	getenv    func(string) string
+	overrides config.Overrides
+	prompt    string
+	yolo      bool
+	envName   string
+
+	servers *mcp.Manager
+	res     config.Resolved
+	p       provider.Provider
+	env     execenv.Env
+	defEnv  string
+	rt      *app.Runtime
+}
+
+// infof reports progress in the longtime form: one line, no prefix. It exists
+// because slog has no Printf; new messages should use log.Info directly.
+func (c *cli) infof(format string, args ...any) {
+	c.log.Info(fmt.Sprintf(format, args...))
+}
+
+// command is one `tal` subcommand. needsConfig reads the config file first
+// (before it, only version, restore and config can run); needsModel
+// additionally resolves the provider, starts the environment, opens the vault
+// and the connected services, and builds the runtime.
+type command struct {
+	name        string
+	hint        string // "tal "+hint in the unknown-command list; "" leaves it out
+	needsConfig bool
+	needsModel  bool
+	run         func(c *cli, args []string) error
+}
+
+// commands is every subcommand, in the order the unknown-command error lists
+// them. The empty name is the default: bare `tal` starts the interactive chat.
+var commands = []command{
+	{name: "gateway", hint: "gateway", needsConfig: true, needsModel: true, run: (*cli).runGatewayCmd},
+	{name: "cron", hint: "cron list", needsConfig: true, run: (*cli).runCronCmd},
+	{name: "mcp", hint: "mcp list", needsConfig: true, run: (*cli).runMCPCmd},
+	{name: "env", hint: "env", needsConfig: true, run: (*cli).runEnvCmd},
+	{name: "log", hint: "log", needsConfig: true, run: (*cli).runLogCmd},
+	{name: "policy", hint: "policy", needsConfig: true, run: (*cli).runPolicyCmd},
+	{name: "workspace", hint: "workspace", needsConfig: true, run: (*cli).runWorkspaceCmd},
+	{name: "vault", hint: "vault", needsConfig: true, run: (*cli).runVaultCmd},
+	{name: "connect", hint: "connect", needsConfig: true, run: (*cli).runConnectCmd},
+	{name: "disconnect", needsConfig: true, run: (*cli).runDisconnectCmd},
+	{name: "backup", hint: "backup", needsConfig: true, run: (*cli).runBackupCmd},
+	{name: "restore", hint: "restore", run: (*cli).runRestoreCmd},
+	{name: "doctor", hint: "doctor", needsConfig: true, run: (*cli).runDoctorCmd},
+	{name: "calendar", hint: "calendar", needsConfig: true, run: (*cli).runCalendarCmd},
+	{name: "email", hint: "email", needsConfig: true, run: (*cli).runEmailCmd},
+	{name: "version", hint: "version", run: (*cli).runVersionCmd},
+	{name: "config", hint: "config", run: (*cli).runConfigCmd},
+	{name: "", needsConfig: true, needsModel: true, run: (*cli).runCLICmd},
+}
+
+func findCommand(name string) *command {
+	for i := range commands {
+		if commands[i].name == name {
+			return &commands[i]
+		}
+	}
+	return nil
+}
+
+// commandHints lists every command for the unknown-command error, from the
+// table itself so the two cannot drift apart.
+func commandHints() string {
+	var hints []string
+	for _, cmd := range commands {
+		if cmd.hint != "" {
+			hints = append(hints, "tal "+cmd.hint)
+		}
+	}
+	return strings.Join(hints, ", ")
 }
 
 func run() error {
@@ -65,89 +158,45 @@ func run() error {
 	)
 	flag.Parse()
 
-	home, err := app.HomeDir()
+	log := newLogger(os.Stderr, os.Getenv)
+	home, err := app.HomeDir(os.Getenv)
 	if err != nil {
 		return err
 	}
-	cfgPath := config.Path(home)
-	overrides := config.Overrides{Profile: *profile, Model: *model, BaseURL: *baseURL, APIKey: os.Getenv("TALARIA_API_KEY"), Type: os.Getenv("TALARIA_PROVIDER")}
-
-	cmd := flag.Arg(0)
-	if cmd == "version" {
-		fmt.Println("talaria", version.String())
-		return nil
+	c := &cli{
+		home: home, cfgPath: config.Path(home, os.Getenv), log: log, getenv: os.Getenv,
+		overrides: config.Overrides{Profile: *profile, Model: *model, BaseURL: *baseURL, APIKey: os.Getenv("TALARIA_API_KEY"), Type: os.Getenv("TALARIA_PROVIDER")},
+		prompt:    *prompt, yolo: *yolo, envName: *envName,
 	}
-	if cmd == "restore" { // before the config is read: a damaged config is a reason to restore
-		return runRestore(home, flag.Args()[1:], os.Stdout)
+	cmd := findCommand(flag.Arg(0))
+	if cmd == nil {
+		return fmt.Errorf("unknown command %q (try: %s)", flag.Arg(0), commandHints())
 	}
-	if cmd == "config" {
-		return runConfig(cfgPath, flag.Arg(1), overrides)
-	}
-
-	warn := func(format string, args ...any) { fmt.Fprintf(os.Stderr, "warning: "+format+"\n", args...) }
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return err
-	}
-	for _, w := range cfg.Warnings {
-		warn("%s", w)
+	if cmd.needsConfig {
+		cfg, err := config.Load(c.cfgPath)
+		if err != nil {
+			return err
+		}
+		c.cfg = cfg
+		for _, w := range cfg.Warnings {
+			c.log.Warn(w)
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM) // SIGTERM too, so a stopped service still removes its container
 	defer stop()
-
-	switch cmd {
-	case "cron": // read-only, so no model or API key is needed
-		if sub := flag.Arg(1); sub != "" && sub != "list" {
-			return fmt.Errorf("unknown cron command %q (try: tal cron list)", sub)
+	c.ctx = ctx
+	if cmd.needsModel {
+		if err := c.setupModel(cmd.name == "gateway"); err != nil {
+			return err
 		}
-		rt := app.Open(app.Config{Home: home}, warn)
-		defer rt.Close()
-		return runCronList(rt)
-	case "log": // needs no model or API key
-		return runLog(home, flag.Args()[1:])
-	case "policy": // needs no model or API key
-		return runPolicy(cfg, cfgPath, home, flag.Args()[1:])
-	case "connect", "disconnect": // needs no model or API key
-		var ask prompter
-		if isTerminal(os.Stdin) {
-			ask = newTerminal()
-		}
-		args := flag.Args()
-		if cmd == "disconnect" {
-			args = append([]string{"disconnect"}, args[1:]...)
-		} else {
-			args = args[1:]
-		}
-		return runConnect(ctx, cfg, home, args, ask, os.Stdout, realConnectDeps)
-	case "calendar": // needs no model or API key
-		return runCalendar(ctx, cfg, os.Getenv, flag.Args()[1:], os.Stdout)
-	case "email": // needs no model or API key
-		return runEmail(ctx, cfg, os.Getenv, flag.Args()[1:], os.Stdout)
-	case "doctor": // needs no model or API key
-		if runDoctor(cfg, cfgPath, home, os.Getenv, os.Stdout) > 0 {
-			os.Exit(1)
-		}
-		return nil
-	case "backup": // needs no model or API key
-		return runBackup(cfg, home, flag.Args()[1:], os.Stdout)
-	case "vault": // needs no model or API key
-		return runVault(cfg, home, flag.Args()[1:], newTerminal(), os.Stdout)
-	case "workspace": // needs no model or API key
-		return runWorkspace(ctx, cfg, flag.Args()[1:])
-	case "env": // needs no model or API key
-		return runEnv(ctx, cfg, cfgPath, *envName, flag.Arg(1), flag.Arg(2))
-	case "mcp": // needs no model or API key
-		if sub := flag.Arg(1); sub != "" && sub != "list" {
-			return fmt.Errorf("unknown mcp command %q (try: tal mcp list)", sub)
-		}
-		return runMCPList(ctx, cfg, cfgPath, home)
-	case "", "gateway":
-	default:
-		return fmt.Errorf("unknown command %q (try: tal gateway, tal cron list, tal mcp list, tal env, tal log, tal policy, tal workspace, tal vault, tal connect, tal backup, tal restore, tal doctor, tal calendar, tal email, tal version, tal config)", cmd)
+		defer c.closeModel()
 	}
+	return cmd.run(c, flag.Args()[1:])
+}
 
-	res, err := cfg.Resolve(overrides, os.Getenv)
+func (c *cli) setupModel(gateway bool) (err error) {
+	res, err := c.cfg.Resolve(c.overrides, c.getenv)
 	if err != nil {
 		return err
 	}
@@ -161,67 +210,189 @@ func run() error {
 	// Where the shell and file tools run. A container or connection that cannot
 	// be set up stops us here: falling back to this machine would run things
 	// somewhere the user chose not to.
-	env, defaultEnvName, err := openEnvironment(ctx, cfg, *envName)
+	env, defaultEnvName, err := c.openEnvironment()
 	if err != nil {
 		return err
 	}
-	if env != nil {
-		defer env.Close()
-	}
-	guarded, err := buildGuard(cfg, home, os.Getenv, os.Environ())
+	c.env, c.defEnv = env, defaultEnvName
+	defer func() {
+		if err != nil { // a half-built setup still stops what it started
+			c.closeModel()
+		}
+	}()
+	guarded, err := buildGuard(c.cfg, c.home, c.getenv, os.Environ())
 	if err != nil {
 		return err
 	}
 	// Saved logins and sign-ins, if there is a vault and it can be opened. Only the
 	// interactive command line may ask for its passphrase; a gateway has to be given it.
 	var ask prompter
-	if cmd != "gateway" && isTerminal(os.Stdin) {
+	if !gateway && isTerminal(os.Stdin) {
 		ask = newTerminal()
 	}
-	vlt := loadVault(cfg, home, guarded, ask, warn)
+	vlt := loadVault(c.cfg, c.home, guarded, ask, c.log)
 	// Connected services, which may need the vault for their sign-ins.
-	mcpServers := startMCP(ctx, cfg, vlt)
-	defer mcpServers.Close()
-	guarded.Policy.NeverRemember(mcpServers.Sensitive()...) // the Always button is never offered for a tool that sends or deletes
-	calSvc, calProblems := buildCalendars(cfg, os.Getenv)
+	c.servers = startMCP(c.ctx, c.cfg, vlt, c.log)
+	guarded.Policy.NeverRemember(c.servers.Sensitive()...) // the Always button is never offered for a tool that sends or deletes
+	calSvc, calProblems := buildCalendars(c.cfg, c.getenv)
 	for _, p := range calProblems {
-		warn("%s", p)
+		c.log.Warn(p)
 	}
-	mailSvc, mailProblems := buildMailbox(cfg, os.Getenv)
+	mailSvc, mailProblems := buildMailbox(c.cfg, c.getenv)
 	for _, p := range mailProblems {
-		warn("%s", p)
+		c.log.Warn(p)
 	}
-	appCfg := app.Config{Home: home, Provider: p, Model: res.Model, MCP: mcpServers, Subagents: cfg.Subagents, Env: env, Guard: guarded, Fence: buildFence(cfg, cfgPath, home), Calendars: calSvc, Mail: mailSvc, TrustOutsideContent: !cfg.Policy.GuardUntrusted(), ModelCallsPerHour: cfg.Limits.ModelCalls(),
-		Browser: browserConfig(cfg), Goals: &goal.Store{Path: filepath.Join(home, "goals.json")},
-		Watches: &watch.Store{Path: filepath.Join(home, "watches.json")}}
+	appCfg := app.Config{Home: c.home, Provider: p, Model: res.Model, MCP: c.servers, Subagents: c.cfg.Subagents, Env: env, Guard: guarded, Fence: buildFence(c.cfg, c.cfgPath, c.home), Calendars: calSvc, Mail: mailSvc, TrustOutsideContent: !c.cfg.Policy.GuardUntrusted(), ModelCallsPerHour: c.cfg.Limits.ModelCalls(), Log: c.log,
+		Browser: browserConfig(c.cfg), Goals: &goal.Store{Path: filepath.Join(c.home, "goals.json")},
+		Watches: &watch.Store{Path: filepath.Join(c.home, "watches.json")}}
 	if vlt != nil {
 		appCfg.Vault = vlt
 	}
-	rt := app.Open(appCfg, warn)
-	defer rt.Close()
+	c.res, c.p = res, p
+	c.rt = app.Open(appCfg)
+	return nil
+}
 
-	if cmd == "gateway" {
-		return runGateway(ctx, rt, cfg, res, p, home, env, defaultEnvName, *yolo)
+// closeModel stops the runtime, the connected services and the environment, in
+// that order. It is safe to call twice.
+func (c *cli) closeModel() {
+	if c.rt != nil {
+		c.rt.Close()
+		c.rt = nil
 	}
-	return runCLI(ctx, rt, res, *prompt, *yolo)
+	if c.servers != nil {
+		c.servers.Close()
+		c.servers = nil
+	}
+	if c.env != nil {
+		c.env.Close()
+		c.env = nil
+	}
+}
+
+func (c *cli) runVersionCmd(args []string) error {
+	fmt.Println("talaria", version.String())
+	return nil
+}
+
+func (c *cli) runRestoreCmd(args []string) error {
+	// Before the config is read: a damaged config is a reason to restore.
+	return runRestore(c.home, args, os.Stdout)
+}
+
+func (c *cli) runConfigCmd(args []string) error {
+	sub := ""
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	return runConfig(c.cfgPath, sub, c.overrides)
+}
+
+func (c *cli) runCronCmd(args []string) error {
+	if len(args) > 0 && args[0] != "list" {
+		return fmt.Errorf("unknown cron command %q (try: tal cron list)", args[0])
+	}
+	rt := app.Open(app.Config{Home: c.home, Log: c.log})
+	defer rt.Close()
+	return runCronList(rt)
+}
+
+func (c *cli) runLogCmd(args []string) error {
+	return runLog(c.home, args)
+}
+
+func (c *cli) runPolicyCmd(args []string) error {
+	return runPolicy(c.cfg, c.cfgPath, c.home, args)
+}
+
+func (c *cli) runConnectCmd(args []string) error {
+	return c.connect(args, false)
+}
+
+func (c *cli) runDisconnectCmd(args []string) error {
+	return c.connect(args, true)
+}
+
+func (c *cli) connect(args []string, disconnect bool) error {
+	var ask prompter
+	if isTerminal(os.Stdin) {
+		ask = newTerminal()
+	}
+	if disconnect {
+		args = append([]string{"disconnect"}, args...)
+	}
+	return runConnect(c.ctx, c.cfg, c.home, args, ask, os.Stdout, realConnectDeps)
+}
+
+func (c *cli) runCalendarCmd(args []string) error {
+	return runCalendar(c.ctx, c.cfg, c.getenv, args, os.Stdout)
+}
+
+func (c *cli) runEmailCmd(args []string) error {
+	return runEmail(c.ctx, c.cfg, c.getenv, args, os.Stdout)
+}
+
+func (c *cli) runDoctorCmd(args []string) error {
+	if runDoctor(c.cfg, c.cfgPath, c.home, c.getenv, os.Stdout) > 0 {
+		return exitError{code: 1}
+	}
+	return nil
+}
+
+func (c *cli) runBackupCmd(args []string) error {
+	return runBackup(c.cfg, c.home, args, os.Stdout)
+}
+
+func (c *cli) runVaultCmd(args []string) error {
+	return runVault(c.cfg, c.home, args, newTerminal(), os.Stdout)
+}
+
+func (c *cli) runWorkspaceCmd(args []string) error {
+	return runWorkspace(c.ctx, c.cfg, args)
+}
+
+func (c *cli) runEnvCmd(args []string) error {
+	sub, arg := "", ""
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	if len(args) > 1 {
+		arg = args[1]
+	}
+	return runEnv(c.ctx, c.cfg, c.cfgPath, c.envName, sub, arg)
+}
+
+func (c *cli) runMCPCmd(args []string) error {
+	if len(args) > 0 && args[0] != "list" {
+		return fmt.Errorf("unknown mcp command %q (try: tal mcp list)", args[0])
+	}
+	return runMCPList(c.ctx, c.cfg, c.cfgPath, c.home)
+}
+
+func (c *cli) runCLICmd(args []string) error {
+	return runCLI(c.ctx, c.rt, c.res, c.prompt, c.yolo)
+}
+
+func (c *cli) runGatewayCmd(args []string) error {
+	return runGateway(c)
 }
 
 // openEnvironment starts the environment the shell and file tools will use.
 // It returns nil for this machine, which needs no setup.
-func openEnvironment(ctx context.Context, cfg *config.Config, selected string) (execenv.Env, string, error) {
-	name, spec, err := cfg.Environment(selected)
+func (c *cli) openEnvironment() (execenv.Env, string, error) {
+	name, spec, err := c.cfg.Environment(c.envName)
 	if err != nil {
 		return nil, "", err
 	}
 	if spec == nil {
 		return nil, name, nil
 	}
-	fmt.Fprintf(os.Stderr, "environment %s: starting (%s)\n", name, spec.Summary()) // a first image pull can take a while
-	env, err := execenv.Open(ctx, name, *spec, os.Getenv)
+	c.infof("environment %s: starting (%s)", name, spec.Summary()) // a first image pull can take a while
+	env, err := execenv.Open(c.ctx, name, *spec, c.getenv)
 	if err != nil {
 		return nil, "", err
 	}
-	fmt.Fprintf(os.Stderr, "environment %s: the shell and file tools run in %s\n", name, env.Describe())
+	c.infof("environment %s: the shell and file tools run in %s", name, env.Describe())
 	return env, name, nil
 }
 
@@ -255,7 +426,7 @@ func runEnv(ctx context.Context, cfg *config.Config, cfgPath, selected, sub, arg
 		}
 		return nil
 	case "check":
-		name, spec, err := cfg.Environment(firstNonEmpty(arg, selected))
+		name, spec, err := cfg.Environment(config.First(arg, selected))
 		if err != nil {
 			return err
 		}
@@ -282,18 +453,9 @@ func runEnv(ctx context.Context, cfg *config.Config, cfgPath, selected, sub, arg
 	return fmt.Errorf("unknown env command %q (try: tal env, tal env check [name])", sub)
 }
 
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-// startMCP connects to the configured MCP servers, reporting each one on
-// stderr. A server that fails is skipped; the rest still work.
-func startMCP(ctx context.Context, cfg *config.Config, v *vault.Vault) *mcp.Manager {
+// startMCP connects to the configured MCP servers, reporting each one.
+// A server that fails is skipped; the rest still work.
+func startMCP(ctx context.Context, cfg *config.Config, v *vault.Vault, log *slog.Logger) *mcp.Manager {
 	if len(cfg.MCPServers) == 0 {
 		return nil
 	}
@@ -302,12 +464,12 @@ func startMCP(ctx context.Context, cfg *config.Config, v *vault.Vault) *mcp.Mana
 		switch {
 		case st.Disabled:
 		case st.Err != nil:
-			fmt.Fprintf(os.Stderr, "warning: mcp server %s failed to start: %v\n", st.Name, st.Err)
+			log.Warn(fmt.Sprintf("mcp server %s failed to start: %v", st.Name, st.Err))
 		default:
-			fmt.Fprintf(os.Stderr, "mcp: %s ready, %d tools\n", st.Name, len(st.Tools))
+			log.Info(fmt.Sprintf("mcp: %s ready, %d tools", st.Name, len(st.Tools)))
 		}
 		for _, w := range st.Warnings {
-			fmt.Fprintf(os.Stderr, "warning: mcp server %s: %s\n", st.Name, w)
+			log.Warn(fmt.Sprintf("mcp server %s: %s", st.Name, w))
 		}
 	}
 	return mgr
@@ -416,7 +578,7 @@ func showConfig(path string, overrides config.Overrides) error {
 		fmt.Printf("  max tokens: %d\n", r.MaxTokens)
 	}
 	if r.Type == provider.TypeDeepSeek {
-		fmt.Printf("  thinking: %s, reasoning effort: %s, images: %s\n", orDefault(r.Thinking, "service default (on)"), orDefault(r.ReasoningEffort, "service default"), map[bool]string{true: "not sent", false: "sent"}[r.NoVision])
+		fmt.Printf("  thinking: %s, reasoning effort: %s, images: %s\n", config.First(r.Thinking, "service default (on)"), config.First(r.ReasoningEffort, "service default"), map[bool]string{true: "not sent", false: "sent"}[r.NoVision])
 	}
 	if err := r.CheckKey(); err != nil {
 		fmt.Println("\nproblem:", err)
@@ -563,7 +725,7 @@ func gatewayBackends(cfg *config.Config, def config.Resolved, defProvider provid
 	names := cfg.ProfileNames()
 	if !slices.Contains(names, def.Name) { // the implicit "default" profile of a config-less setup
 		names = append(names, def.Name)
-		sort.Strings(names)
+		slices.Sort(names)
 	}
 
 	return &chat.Backends{
@@ -616,20 +778,13 @@ func parseIDs(s string) (map[int64]bool, error) {
 		if f = strings.TrimSpace(f); f == "" {
 			continue
 		}
-		id, err := strconv.ParseInt(f, 10, 64)
-		if err != nil || id <= 0 {
-			return nil, fmt.Errorf("%q is not a user ID (a positive whole number)", f)
+		id, err := config.ParseUserID(f)
+		if err != nil {
+			return nil, err
 		}
 		ids[id] = true
 	}
 	return ids, nil
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }
 
 func oneLine(s string, n int) string {
@@ -638,13 +793,6 @@ func oneLine(s string, n int) string {
 		return s[:n] + "…"
 	}
 	return s
-}
-
-func orDefault(v, def string) string {
-	if v == "" {
-		return def
-	}
-	return v
 }
 
 // indent sets a multi-line block off from the question it belongs to.

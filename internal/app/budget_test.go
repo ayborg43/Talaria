@@ -47,7 +47,7 @@ func TestTheBudgetIsSharedByEveryAgentAndStopsARunBeforeItReachesTheModel(t *tes
 		return provider.Message{Role: provider.RoleAssistant, Content: "ok"}, nil
 	})
 	home := t.TempDir()
-	rt := Open(Config{Home: home, Provider: model, Model: "m", Env: execenv.Local{}, ModelCallsPerHour: 2}, func(string, ...any) {})
+	rt := Open(Config{Home: home, Provider: model, Model: "m", Env: execenv.Local{}, ModelCallsPerHour: 2})
 	defer rt.Close()
 	a, b := rt.NewAgent(AgentOptions{}), rt.NewAgent(AgentOptions{})
 	if _, err := a.Run(context.Background(), "one"); err != nil {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -88,14 +89,14 @@ func newWatchRig(t *testing.T, model provider.Provider) *watchRig {
 		t.Fatalf("%s %v", out, err)
 	}
 	v, _ := vault.Open(vaultPath(home), passphrase, nil)
-	m := startMCP(context.Background(), cfg, v)
+	m := startMCP(context.Background(), cfg, v, slog.New(slog.DiscardHandler))
 	t.Cleanup(m.Close)
 
 	if model == nil {
 		model = &spy{reply: "Sam wrote."}
 	}
 	watches := &watch.Store{Path: filepath.Join(home, "watches.json")}
-	rt := app.Open(app.Config{Home: home, Provider: model, Model: "m", Env: execenv.Local{}, MCP: m, Watches: watches}, func(string, ...any) {})
+	rt := app.Open(app.Config{Home: home, Provider: model, Model: "m", Env: execenv.Local{}, MCP: m, Watches: watches})
 	t.Cleanup(rt.Close)
 	r := &watchRig{watches: watches, rt: rt, mail: mail, chat: 5,
 		runner: &jobRunner{rt: rt, allowed: map[int64]bool{5: true}}}
@@ -341,7 +342,7 @@ func TestTheModelGetsWatchToolsOnlyWhereThereIsAServiceToWatch(t *testing.T) {
 		t.Error("no chat, no watches")
 	}
 	home := t.TempDir()
-	bare := app.Open(app.Config{Home: home, Provider: &spy{}, Model: "m", Env: execenv.Local{}, Watches: &watch.Store{Path: filepath.Join(home, "w.json")}}, func(string, ...any) {})
+	bare := app.Open(app.Config{Home: home, Provider: &spy{}, Model: "m", Env: execenv.Local{}, Watches: &watch.Store{Path: filepath.Join(home, "w.json")}})
 	defer bare.Close()
 	if _, ok := bare.NewAgent(app.AgentOptions{ChatID: 5}).Tools.Get("watch_list"); ok {
 		t.Error("with no connected service there is nothing to watch")
@@ -409,7 +410,7 @@ func TestTheModelIsToldAboutWatchesOnlyWhenTheyExist(t *testing.T) {
 	if !strings.Contains(agencyNote(w.rt), "watch_create") {
 		t.Fatal("watches are mentioned when on")
 	}
-	bare := app.Open(app.Config{Home: t.TempDir(), Provider: &spy{}, Model: "m", Env: execenv.Local{}}, func(string, ...any) {})
+	bare := app.Open(app.Config{Home: t.TempDir(), Provider: &spy{}, Model: "m", Env: execenv.Local{}})
 	defer bare.Close()
 	if strings.Contains(agencyNote(bare), "watch") {
 		t.Fatal("not mentioned when off")

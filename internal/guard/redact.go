@@ -4,10 +4,11 @@
 package guard
 
 import (
+	"cmp"
 	"encoding/json"
 	"net/url"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -81,11 +82,8 @@ func (r *Redactor) Add(secrets ...string) {
 	for f := range r.forms {
 		forms = append(forms, f)
 	}
-	sort.Slice(forms, func(i, j int) bool {
-		if len(forms[i]) != len(forms[j]) {
-			return len(forms[i]) > len(forms[j])
-		}
-		return forms[i] < forms[j]
+	slices.SortFunc(forms, func(a, b string) int {
+		return cmp.Or(cmp.Compare(len(b), len(a)), strings.Compare(a, b))
 	})
 	pairs := make([]string, 0, 2*len(forms))
 	for _, f := range forms {

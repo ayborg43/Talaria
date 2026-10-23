@@ -44,7 +44,7 @@ func browserTools(rt *Runtime, env execenv.Env) []string {
 func openWith(t *testing.T, cfg Config) *Runtime {
 	t.Helper()
 	cfg.Home, cfg.Provider, cfg.Model = t.TempDir(), idle(), "m"
-	rt := Open(cfg, func(string, ...any) {})
+	rt := Open(cfg)
 	t.Cleanup(rt.Close)
 	return rt
 }

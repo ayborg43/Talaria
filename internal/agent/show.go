@@ -3,7 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -43,7 +43,7 @@ func ApprovalText(raw string) string {
 			rest = append(rest, k)
 		}
 	}
-	sort.Strings(rest)
+	slices.Sort(rest)
 	keys = append(keys, rest...)
 
 	var b strings.Builder

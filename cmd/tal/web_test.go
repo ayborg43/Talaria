@@ -128,7 +128,7 @@ func TestTheControlScreenListsGoalsWatchesAndRemindersOfTheWebChatOnly(t *testin
 	home := t.TempDir()
 	gs := &goal.Store{Path: filepath.Join(home, "goals.json")}
 	ws := &watch.Store{Path: filepath.Join(home, "watches.json")}
-	rt := app.Open(app.Config{Home: home, Goals: gs, Watches: ws}, func(string, ...any) {})
+	rt := app.Open(app.Config{Home: home, Goals: gs, Watches: ws})
 	defer rt.Close()
 
 	gs.Add(goal.Goal{Gateway: "web", ChatID: web.ChatID, Title: "Prepare the Q4 report", Objective: "a report", Plan: []goal.Step{{Text: "gather", Done: true}, {Text: "draft"}, {Text: "send"}}})
@@ -168,7 +168,7 @@ func TestTheControlScreenListsGoalsWatchesAndRemindersOfTheWebChatOnly(t *testin
 }
 
 func TestTheControlScreenListsWhatIsConnected(t *testing.T) {
-	rt := app.Open(app.Config{Home: t.TempDir()}, func(string, ...any) {})
+	rt := app.Open(app.Config{Home: t.TempDir()})
 	defer rt.Close()
 	links := webLinks(&config.Config{}, rt, "deepseek-chat", envOf(nil), "")()
 	if len(links) != 1 || links[0].Name != "Model" || links[0].Detail != "deepseek-chat" {

@@ -1,13 +1,14 @@
 package mailbox
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
 	"net/mail"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,13 +55,23 @@ func (s *Service) login() string {
 	return s.Address
 }
 
-// scrubErr removes the password from anything that is about to be reported.
+// scrubErr removes the password from anything that is about to be reported. The
+// original stays reachable through Unwrap, so errors.Is and errors.As keep
+// working; only the message is scrubbed.
 func (s *Service) scrubErr(err error) error {
 	if err == nil || s.Password == "" {
 		return err
 	}
-	return errors.New(strings.ReplaceAll(err.Error(), s.Password, "<password>"))
+	return &scrubbedError{msg: strings.ReplaceAll(err.Error(), s.Password, "<password>"), err: err}
 }
+
+type scrubbedError struct {
+	msg string
+	err error
+}
+
+func (e *scrubbedError) Error() string { return e.msg }
+func (e *scrubbedError) Unwrap() error { return e.err }
 
 // session connects, signs in, runs fn, and signs out.
 func (s *Service) session(ctx context.Context, fn func(c *client) error) (err error) {
@@ -77,7 +88,7 @@ func (s *Service) session(ctx context.Context, fn func(c *client) error) (err er
 	d := tls.Dialer{NetDialer: &net.Dialer{Timeout: 10 * time.Second}, Config: cfg}
 	conn, err := d.DialContext(ctx, "tcp", s.Server)
 	if err != nil {
-		return s.scrubErr(fmt.Errorf("could not connect to the mail server %s: %v", s.Server, err))
+		return s.scrubErr(fmt.Errorf("could not connect to the mail server %s: %w", s.Server, err))
 	}
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(opTimeout))
@@ -89,7 +100,7 @@ func (s *Service) session(ctx context.Context, fn func(c *client) error) (err er
 
 	greet, err := c.readOne()
 	if err != nil {
-		return s.scrubErr(fmt.Errorf("the mail server did not greet us: %v", err))
+		return s.scrubErr(fmt.Errorf("the mail server did not greet us: %w", err))
 	}
 	if greet.status != "OK" && greet.status != "PREAUTH" {
 		return errors.New("the mail server did not accept the connection")
@@ -144,12 +155,15 @@ func (s *Service) Folders(ctx context.Context) ([]string, error) {
 		}
 		return nil
 	})
-	sort.Slice(out, func(i, j int) bool {
-		a, b := strings.EqualFold(out[i], "INBOX"), strings.EqualFold(out[j], "INBOX")
-		if a != b {
-			return a
+	slices.SortFunc(out, func(a, b string) int {
+		ai, bi := strings.EqualFold(a, "INBOX"), strings.EqualFold(b, "INBOX")
+		if ai != bi {
+			if ai {
+				return -1
+			}
+			return 1
 		}
-		return out[i] < out[j]
+		return strings.Compare(a, b)
 	})
 	return out, err
 }
@@ -276,7 +290,7 @@ func (s *Service) Search(ctx context.Context, q Query) (list []Summary, total in
 			return err
 		}
 		uids := res.nums
-		sort.Slice(uids, func(i, j int) bool { return uids[i] < uids[j] })
+		slices.Sort(uids)
 		total = len(uids)
 		if len(uids) > q.Limit {
 			uids = uids[len(uids)-q.Limit:]
@@ -300,7 +314,7 @@ func (s *Service) Search(ctx context.Context, q Query) (list []Summary, total in
 				list = append(list, sum)
 			}
 		}
-		sort.Slice(list, func(i, j int) bool { return list[i].UID > list[j].UID })
+		slices.SortFunc(list, func(a, b Summary) int { return cmp.Compare(b.UID, a.UID) })
 		return nil
 	})
 	return list, total, err

@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +16,7 @@ import (
 
 	"talaria/internal/app"
 	"talaria/internal/config"
+	"talaria/internal/cron"
 	"talaria/internal/goal"
 	"talaria/internal/mailbox"
 	"talaria/internal/watch"
@@ -211,7 +212,7 @@ func webJobs(rt *app.Runtime, zone *time.Location) []web.JobInfo {
 		}
 	}
 	if jobs, err := rt.Cron.List(); err == nil {
-		sort.Slice(jobs, func(i, j int) bool { return jobs[i].NextRun.Before(jobs[j].NextRun) })
+		slices.SortFunc(jobs, func(a, b cron.Job) int { return a.NextRun.Compare(b.NextRun) })
 		for _, j := range jobs {
 			if j.Gateway != "web" || j.ChatID != web.ChatID || j.Kind != "" {
 				continue

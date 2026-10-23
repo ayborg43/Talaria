@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -11,6 +12,41 @@ import (
 	"talaria/internal/execenv"
 	"talaria/internal/provider"
 )
+
+func TestCommandTable(t *testing.T) {
+	if findCommand("bogus") != nil {
+		t.Fatal("an unknown command finds nothing")
+	}
+	if c := findCommand(""); c == nil || !c.needsModel {
+		t.Fatal("bare tal is the interactive chat, which needs the model")
+	}
+	if c := findCommand("gateway"); c == nil || !c.needsConfig || !c.needsModel {
+		t.Fatal("gateway needs the config and the model")
+	}
+	if c := findCommand("restore"); c == nil || c.needsConfig || c.needsModel {
+		t.Fatal("restore runs before the config is read")
+	}
+	seen := map[string]bool{}
+	for _, c := range commands {
+		if seen[c.name] {
+			t.Fatalf("command %q is listed twice", c.name)
+		}
+		seen[c.name] = true
+		if c.needsModel && !c.needsConfig {
+			t.Fatalf("command %q needs the model without the config", c.name)
+		}
+		if c.run == nil {
+			t.Fatalf("command %q has nothing to run", c.name)
+		}
+	}
+	// The unknown-command error lists every command from the table itself.
+	want := "tal gateway, tal cron list, tal mcp list, tal env, tal log, tal policy, " +
+		"tal workspace, tal vault, tal connect, tal backup, tal restore, tal doctor, " +
+		"tal calendar, tal email, tal version, tal config"
+	if got := commandHints(); got != want {
+		t.Fatalf("hints:\n got %q\nwant %q", got, want)
+	}
+}
 
 func envFn(kv ...string) func(string) string {
 	m := map[string]string{}
@@ -88,9 +124,9 @@ func TestGatewayEnvironments(t *testing.T) {
 	}
 	var applied []string
 	apply := func(_ *agent.Agent, env execenv.Env) { applied = append(applied, env.Describe()) }
-	logf := func(string, ...any) {}
+	log := slog.New(slog.DiscardHandler)
 
-	pool := gatewayPool(cfg, "sandbox", execenv.Local{}, nil, os.Getenv, logf)
+	pool := gatewayPool(cfg, "sandbox", execenv.Local{}, nil, os.Getenv, log)
 	defer pool.Close()
 	envs := gatewayEnvironments(cfg, cfg.Telegram.Environments, "sandbox", pool, apply)
 	// The list is what the config allows plus the default, sorted, with no duplicates, and
@@ -132,7 +168,7 @@ func TestGatewayEnvironments(t *testing.T) {
 	// A start that fails says why and does not stick.
 	t.Setenv("PATH", t.TempDir())
 	cfg2 := &config.Config{Environments: map[string]execenv.Spec{"box": {Type: "ssh", Host: "h"}}, Telegram: config.Telegram{Environments: []string{"box"}}}
-	pool2 := gatewayPool(cfg2, "local", nil, nil, os.Getenv, logf)
+	pool2 := gatewayPool(cfg2, "local", nil, nil, os.Getenv, log)
 	defer pool2.Close()
 	envs2 := gatewayEnvironments(cfg2, cfg2.Telegram.Environments, "local", pool2, apply)
 	if _, err := envs2.Get(context.Background(), "box"); err == nil || !strings.Contains(err.Error(), "ssh is not installed") {
@@ -145,7 +181,7 @@ func TestGatewayEnvironments(t *testing.T) {
 
 func TestGatewayEnvironmentsOffUnlessConfigured(t *testing.T) {
 	cfg := &config.Config{Environments: map[string]execenv.Spec{"sandbox": {Type: "docker", Image: "x"}}}
-	pool := gatewayPool(cfg, "local", nil, nil, os.Getenv, func(string, ...any) {})
+	pool := gatewayPool(cfg, "local", nil, nil, os.Getenv, slog.New(slog.DiscardHandler))
 	defer pool.Close()
 	if envs := gatewayEnvironments(cfg, cfg.Telegram.Environments, "local", pool, nil); envs != nil {
 		t.Fatal("with telegram.environments empty, chats cannot switch")
@@ -166,7 +202,7 @@ func TestServicesOfferTheirOwnEnvironmentsOverOneSharedPool(t *testing.T) {
 		Telegram: config.Telegram{Environments: []string{"sandbox"}},
 		Discord:  config.Discord{Environments: []string{"build", "local"}},
 	}
-	pool := gatewayPool(cfg, "local", nil, nil, os.Getenv, func(string, ...any) {})
+	pool := gatewayPool(cfg, "local", nil, nil, os.Getenv, slog.New(slog.DiscardHandler))
 	defer pool.Close()
 	tg := gatewayEnvironments(cfg, cfg.Telegram.Environments, "local", pool, nil)
 	dc := gatewayEnvironments(cfg, cfg.Discord.Environments, "local", pool, nil)

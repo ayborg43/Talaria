@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"talaria/internal/tool"
@@ -86,7 +86,7 @@ func (t *toolset) fill(ctx context.Context, raw json.RawMessage) (string, error)
 		for _, i := range t.creds.List() {
 			names = append(names, i.Name)
 		}
-		sort.Strings(names)
+		slices.Sort(names)
 		return "", fmt.Errorf("no credential named %q (saved: %s)", a.Credential, orNone(names))
 	}
 	value, secret, err := part(cred, a.Field)

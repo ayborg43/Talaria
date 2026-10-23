@@ -5,9 +5,10 @@
 package metrics
 
 import (
+	"cmp"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -43,7 +44,7 @@ func labelString(kv []string) string {
 	for i := 0; i+1 < len(kv); i += 2 {
 		pairs = append(pairs, fmt.Sprintf(`%s="%s"`, kv[i], escape(kv[i+1])))
 	}
-	sort.Strings(pairs)
+	slices.Sort(pairs)
 	return "{" + strings.Join(pairs, ",") + "}"
 }
 
@@ -98,11 +99,8 @@ func Write(w io.Writer) {
 	for s := range std.values {
 		all = append(all, s)
 	}
-	sort.Slice(all, func(i, j int) bool {
-		if all[i].name != all[j].name {
-			return all[i].name < all[j].name
-		}
-		return all[i].labels < all[j].labels
+	slices.SortFunc(all, func(a, b series) int {
+		return cmp.Or(cmp.Compare(a.name, b.name), cmp.Compare(a.labels, b.labels))
 	})
 	last := ""
 	for _, s := range all {

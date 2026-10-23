@@ -16,7 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -30,7 +30,13 @@ import (
 
 // Write saves cfg to path as a JSON file with mode 0600 (replacing any older
 // file). It is used by the settings API to keep secrets in the config file.
+// The config is validated first, so what is saved always loads; the file is
+// synced before the rename, so a crash cannot leave half a config behind.
 func Write(path string, cfg *Config) error {
+	cfg.addBuiltins() // validation accepts the built-in environments
+	if err := cfg.validate(path); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(cfg, "", "\t")
 	if err != nil {
 		return err
@@ -39,10 +45,32 @@ func Write(path string, cfg *Config) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	if d, err := os.Open(filepath.Dir(path)); err == nil { // the rename itself, best effort
+		d.Sync()
+		d.Close()
+	}
+	return nil
 }
 
 // Profile is one way to reach a model.
@@ -63,9 +91,8 @@ type Profile struct {
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
-// Telegram holds gateway settings. The TALARIA_TELEGRAM_* environment
-// variables override these.
-type Telegram struct {
+// ChatGateway holds the settings the Telegram and Discord gateways share.
+type ChatGateway struct {
 	Token        string  `json:"token,omitempty"`
 	TokenEnv     string  `json:"token_env,omitempty"`
 	AllowedUsers UserIDs `json:"allowed_users,omitempty"`
@@ -78,8 +105,26 @@ type Telegram struct {
 	Environments []string `json:"environments,omitempty"`
 }
 
+// Telegram holds gateway settings. The TALARIA_TELEGRAM_* environment
+// variables override these.
+type Telegram = ChatGateway
+
 // StreamReplies reports whether replies are shown as they are written.
-func (t Telegram) StreamReplies() bool { return t.Stream == nil || *t.Stream }
+func (g ChatGateway) StreamReplies() bool { return g.Stream == nil || *g.Stream }
+
+// token resolves the bot token: the service's variable, else the variable
+// named by token_env, else the inline token.
+func (g ChatGateway) token(getenv func(string) string, envVar string) string {
+	if v := getenv(envVar); v != "" {
+		return v
+	}
+	if g.TokenEnv != "" {
+		if v := getenv(g.TokenEnv); v != "" {
+			return v
+		}
+	}
+	return g.Token
+}
 
 // UserIDs is a list of numeric user IDs. In JSON each is a number or, as Discord
 // shows them, a string; strings are the safer form, since a long number can be
@@ -93,15 +138,24 @@ func (u *UserIDs) UnmarshalJSON(raw []byte) error {
 	}
 	ids := make(UserIDs, 0, len(items))
 	for _, it := range items {
-		text := strings.Trim(string(it), `"`)
-		id, err := strconv.ParseInt(text, 10, 64)
-		if err != nil || id <= 0 {
-			return fmt.Errorf("%s is not a user ID (a positive whole number)", it)
+		id, err := ParseUserID(strings.Trim(string(it), `"`))
+		if err != nil {
+			return err
 		}
 		ids = append(ids, id)
 	}
 	*u = ids
 	return nil
+}
+
+// ParseUserID reads one numeric user ID, as the config file and the allowlist
+// environment variables both hold them.
+func ParseUserID(text string) (int64, error) {
+	id, err := strconv.ParseInt(text, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, fmt.Errorf("%q is not a user ID (a positive whole number)", text)
+	}
+	return id, nil
 }
 
 func (u UserIDs) MarshalJSON() ([]byte, error) {
@@ -114,20 +168,7 @@ func (u UserIDs) MarshalJSON() ([]byte, error) {
 
 // Discord holds the Discord gateway's settings. The TALARIA_DISCORD_*
 // environment variables override these.
-type Discord struct {
-	Token        string  `json:"token,omitempty"`
-	TokenEnv     string  `json:"token_env,omitempty"`
-	AllowedUsers UserIDs `json:"allowed_users,omitempty"`
-	// Stream shows replies as they are written, by editing a message in place.
-	// On unless set to false.
-	Stream *bool `json:"stream,omitempty"`
-	// Environments are the execution environments a chat may switch to with
-	// /env, as for Telegram.
-	Environments []string `json:"environments,omitempty"`
-}
-
-// StreamReplies reports whether replies are shown as they are written.
-func (d Discord) StreamReplies() bool { return d.Stream == nil || *d.Stream }
+type Discord = ChatGateway
 
 // Calendar is one calendar feed.
 type Calendar struct {
@@ -296,8 +337,8 @@ type Config struct {
 }
 
 // Path is where the config file lives: $TALARIA_CONFIG, else <home>/config.json.
-func Path(home string) string {
-	if p := os.Getenv("TALARIA_CONFIG"); p != "" {
+func Path(home string, getenv func(string) string) string {
+	if p := getenv("TALARIA_CONFIG"); p != "" {
 		return p
 	}
 	return filepath.Join(home, "config.json")
@@ -322,64 +363,8 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	c.addBuiltins()
-
-	for _, name := range c.EnvironmentNames() {
-		spec := c.Environments[name]
-		if err := spec.Validate(name); err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-		c.Warnings = append(c.Warnings, spec.Warnings(name)...)
-	}
-	if d := c.DefaultEnvironment; d != "" && d != execenv.LocalName {
-		if _, ok := c.Environments[d]; !ok {
-			return nil, fmt.Errorf("%s: default_environment %q is not defined (environments: %s)", path, d, c.environmentList())
-		}
-	}
-	for _, n := range c.Telegram.Environments {
-		if _, defined := c.Environments[n]; n != execenv.LocalName && !defined {
-			return nil, fmt.Errorf("%s: telegram.environments lists %q, which is not defined (environments: %s)", path, n, c.environmentList())
-		}
-	}
-	for _, n := range c.Discord.Environments {
-		if _, defined := c.Environments[n]; n != execenv.LocalName && !defined {
-			return nil, fmt.Errorf("%s: discord.environments lists %q, which is not defined (environments: %s)", path, n, c.environmentList())
-		}
-	}
-	for _, name := range c.ProfileNames() {
-		if p := c.Profiles[name]; p.BaseURL != "" {
-			if u, err := url.Parse(p.BaseURL); err == nil && u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
-				c.Warnings = append(c.Warnings, fmt.Sprintf("profile %q reaches its model over plain http to %s: the key and the whole conversation cross the network readable by anyone on the way. Use https", name, u.Hostname()))
-			}
-		}
-		if p := c.Profiles[name]; (p.Type == "" || p.Type == provider.TypeOpenAI) && strings.Contains(p.BaseURL, "api.deepseek.com") {
-			c.Warnings = append(c.Warnings, fmt.Sprintf("profile %q reaches DeepSeek as a plain openai profile, which drops the reasoning DeepSeek needs back once tools are used: set \"type\": \"deepseek\"", name))
-		}
-	}
-	for name, cal := range c.Calendars {
-		if !calendarName.MatchString(name) {
-			return nil, fmt.Errorf("%s: calendar name %q: use lower-case letters, digits, - and _ (up to 32)", path, name)
-		}
-		if cal.URLEnv == "" {
-			return nil, fmt.Errorf("%s: calendar %q needs url_env, the name of the environment variable holding its address (the address is a secret and is not written in the file)", path, name)
-		}
-	}
-	if c.Timezone != "" {
-		if _, err := time.LoadLocation(c.Timezone); err != nil {
-			return nil, fmt.Errorf("%s: timezone %q is not a time zone name (such as Africa/Lagos)", path, c.Timezone)
-		}
-	}
-	if _, err := c.Policy.Parse(); err != nil {
-		return nil, fmt.Errorf("%s: policy: %w", path, err)
-	}
-	if err := c.Subagents.Validate(); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	for _, name := range c.MCPServerNames() {
-		srv := c.MCPServers[name]
-		if err := srv.Validate(name); err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-		c.Warnings = append(c.Warnings, srv.Warnings(name)...)
+	if err := c.validate(path); err != nil {
+		return nil, err
 	}
 
 	if c.hasInlineSecrets() {
@@ -388,6 +373,72 @@ func Load(path string) (*Config, error) {
 		}
 	}
 	return &c, nil
+}
+
+// validate checks everything a decoded config must satisfy, collecting
+// warnings. Write runs it too, so what is saved always loads.
+func (c *Config) validate(path string) error {
+	var warnings []string
+	for _, name := range c.EnvironmentNames() {
+		spec := c.Environments[name]
+		if err := spec.Validate(name); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		warnings = append(warnings, spec.Warnings(name)...)
+	}
+	if d := c.DefaultEnvironment; d != "" && d != execenv.LocalName {
+		if _, ok := c.Environments[d]; !ok {
+			return fmt.Errorf("%s: default_environment %q is not defined (environments: %s)", path, d, c.environmentList())
+		}
+	}
+	for _, svc := range []struct {
+		name string
+		envs []string
+	}{{"telegram", c.Telegram.Environments}, {"discord", c.Discord.Environments}} {
+		for _, n := range svc.envs {
+			if _, defined := c.Environments[n]; n != execenv.LocalName && !defined {
+				return fmt.Errorf("%s: %s.environments lists %q, which is not defined (environments: %s)", path, svc.name, n, c.environmentList())
+			}
+		}
+	}
+	for _, name := range c.ProfileNames() {
+		if p := c.Profiles[name]; p.BaseURL != "" {
+			if u, err := url.Parse(p.BaseURL); err == nil && u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
+				warnings = append(warnings, fmt.Sprintf("profile %q reaches its model over plain http to %s: the key and the whole conversation cross the network readable by anyone on the way. Use https", name, u.Hostname()))
+			}
+		}
+		if p := c.Profiles[name]; (p.Type == "" || p.Type == provider.TypeOpenAI) && strings.Contains(p.BaseURL, "api.deepseek.com") {
+			warnings = append(warnings, fmt.Sprintf("profile %q reaches DeepSeek as a plain openai profile, which drops the reasoning DeepSeek needs back once tools are used: set \"type\": \"deepseek\"", name))
+		}
+	}
+	for name, cal := range c.Calendars {
+		if !calendarName.MatchString(name) {
+			return fmt.Errorf("%s: calendar name %q: use lower-case letters, digits, - and _ (up to 32)", path, name)
+		}
+		if cal.URLEnv == "" {
+			return fmt.Errorf("%s: calendar %q needs url_env, the name of the environment variable holding its address (the address is a secret and is not written in the file)", path, name)
+		}
+	}
+	if c.Timezone != "" {
+		if _, err := time.LoadLocation(c.Timezone); err != nil {
+			return fmt.Errorf("%s: timezone %q is not a time zone name (such as Africa/Lagos)", path, c.Timezone)
+		}
+	}
+	if _, err := c.Policy.Parse(); err != nil {
+		return fmt.Errorf("%s: policy: %w", path, err)
+	}
+	if err := c.Subagents.Validate(); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	for _, name := range c.MCPServerNames() {
+		srv := c.MCPServers[name]
+		if err := srv.Validate(name); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		warnings = append(warnings, srv.Warnings(name)...)
+	}
+	c.Warnings = warnings
+	return nil
 }
 
 // addBuiltins adds the environments that need no definition: the workspace,
@@ -430,7 +481,7 @@ func (c *Config) EnvironmentNames() []string {
 	for n := range c.Environments {
 		names = append(names, n)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 
@@ -465,7 +516,7 @@ func (c *Config) MCPServerNames() []string {
 	for n := range c.MCPServers {
 		names = append(names, n)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 
@@ -513,7 +564,7 @@ func DefaultKeyEnvs() []string {
 	for _, v := range defaultKeyEnv {
 		out = append(out, v)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -556,11 +607,11 @@ func (c *Config) Resolve(o Overrides, getenv func(string) string) (Resolved, err
 	r := Resolved{
 		Name:      name,
 		Type:      typ,
-		BaseURL:   first(o.BaseURL, p.BaseURL, provider.DefaultBaseURL(typ)),
-		Model:     first(o.Model, p.Model, defaultModel[typ]),
+		BaseURL:   First(o.BaseURL, p.BaseURL, provider.DefaultBaseURL(typ)),
+		Model:     First(o.Model, p.Model, defaultModel[typ]),
 		MaxTokens: p.MaxTokens,
 		NoVision:  p.Vision != nil && !*p.Vision,
-		KeyEnv:    first(p.APIKeyEnv, defaultKeyEnv[typ]),
+		KeyEnv:    First(p.APIKeyEnv, defaultKeyEnv[typ]),
 	}
 	if typ == provider.TypeDeepSeek {
 		// Whether its models can see pictures is not something the service documents, so say yes only when told.
@@ -652,39 +703,24 @@ func (c *Config) ProfileNames() []string {
 	for n := range c.Profiles {
 		names = append(names, n)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 
 // TelegramToken returns the bot token: TALARIA_TELEGRAM_TOKEN, else the
 // variable named by telegram.token_env, else telegram.token.
 func (c *Config) TelegramToken(getenv func(string) string) string {
-	if v := getenv("TALARIA_TELEGRAM_TOKEN"); v != "" {
-		return v
-	}
-	if c.Telegram.TokenEnv != "" {
-		if v := getenv(c.Telegram.TokenEnv); v != "" {
-			return v
-		}
-	}
-	return c.Telegram.Token
+	return c.Telegram.token(getenv, "TALARIA_TELEGRAM_TOKEN")
 }
 
 // DiscordToken returns the bot token: TALARIA_DISCORD_TOKEN, else the variable
 // named by discord.token_env, else discord.token.
 func (c *Config) DiscordToken(getenv func(string) string) string {
-	if v := getenv("TALARIA_DISCORD_TOKEN"); v != "" {
-		return v
-	}
-	if c.Discord.TokenEnv != "" {
-		if v := getenv(c.Discord.TokenEnv); v != "" {
-			return v
-		}
-	}
-	return c.Discord.Token
+	return c.Discord.token(getenv, "TALARIA_DISCORD_TOKEN")
 }
 
-func first(vals ...string) string {
+// First returns the first non-empty value: precedence in one line.
+func First(vals ...string) string {
 	for _, v := range vals {
 		if v != "" {
 			return v
@@ -734,7 +770,7 @@ const Example = `{
 
 // Init writes the example config, refusing to overwrite an existing file.
 func Init(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)

@@ -38,7 +38,7 @@ func TestTheAgentReadsACalendarAndThatCountsAsOutsideContent(t *testing.T) {
 		seen = req.Messages[len(req.Messages)-1].Content
 		return provider.Message{Role: provider.RoleAssistant, Content: "You have a standup at 09:30."}, nil
 	})
-	rt := Open(Config{Home: t.TempDir(), Provider: model, Model: "m", Env: execenv.Local{}, Calendars: svc}, func(string, ...any) {})
+	rt := Open(Config{Home: t.TempDir(), Provider: model, Model: "m", Env: execenv.Local{}, Calendars: svc})
 	defer rt.Close()
 	asked := 0
 	ag := rt.NewAgent(AgentOptions{Approve: func(string, string) bool { asked++; return false }})

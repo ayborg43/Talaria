@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -134,11 +134,11 @@ func (s *Service) Events(ctx context.Context, from, to time.Time, name, query st
 		}
 		events = keep
 	}
-	sort.SliceStable(events, func(i, j int) bool {
-		if !events[i].Start.Equal(events[j].Start) {
-			return events[i].Start.Before(events[j].Start)
+	slices.SortStableFunc(events, func(a, b Event) int {
+		if c := a.Start.Compare(b.Start); c != 0 {
+			return c
 		}
-		return events[i].Summary < events[j].Summary
+		return strings.Compare(a.Summary, b.Summary)
 	})
 	return events, notes, nil
 }

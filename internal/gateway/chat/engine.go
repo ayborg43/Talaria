@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -204,7 +204,7 @@ func (e *Engine) Incoming(chatID, userID int64, text string) {
 		for name := range e.Commands {
 			names = append(names, name)
 		}
-		sort.Strings(names)
+		slices.Sort(names)
 		for _, name := range names {
 			help += "\n" + e.cmd(name) + " " + e.Commands[name].Help + "."
 		}

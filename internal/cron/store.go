@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -148,7 +148,7 @@ func (s *Store) List() ([]Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	jobs, err := s.load()
-	sort.Slice(jobs, func(i, j int) bool { return jobs[i].CreatedAt.Before(jobs[j].CreatedAt) })
+	slices.SortFunc(jobs, func(a, b Job) int { return a.CreatedAt.Compare(b.CreatedAt) })
 	return jobs, err
 }
 

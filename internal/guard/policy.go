@@ -2,11 +2,11 @@ package guard
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
-	"talaria/internal/agent"
+	"talaria/internal/tool"
 )
 
 // DefaultNoRemember lists the tools the "always allow" button is not offered
@@ -20,7 +20,7 @@ var DefaultNoRemember = []string{"shell", "write_file", "skill_save", "cron_add"
 type rule struct {
 	pattern string // as written: a tool name, or a name ending in *
 	prefix  bool
-	action  agent.Action
+	action  tool.Action
 }
 
 // knownTools names every tool Talaria itself registers, so a misspelt rule is
@@ -71,17 +71,17 @@ func ParsePolicy(rules map[string]string, noRemember []string) (*Policy, error) 
 	for name := range rules {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	for _, name := range names {
 		verdict := rules[name]
 		r := rule{pattern: name}
 		switch strings.ToLower(strings.TrimSpace(verdict)) {
 		case "allow":
-			r.action = agent.Allow
+			r.action = tool.Allow
 		case "ask":
-			r.action = agent.Ask
+			r.action = tool.Ask
 		case "deny":
-			r.action = agent.Deny
+			r.action = tool.Deny
 		default:
 			return nil, fmt.Errorf("rule %q: %q is not allow, ask or deny", name, verdict)
 		}
@@ -185,6 +185,6 @@ func (p *Policy) Describe() string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func actionName(a agent.Action) string {
+func actionName(a tool.Action) string {
 	return [...]string{"allow", "ask", "deny"}[a]
 }

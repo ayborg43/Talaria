@@ -17,7 +17,8 @@ import (
 	"sync"
 	"time"
 
-	"sort"
+	"cmp"
+	"slices"
 	"talaria/internal/config"
 
 	"talaria/internal/gateway/chat"
@@ -355,7 +356,7 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 		}
 		view.Profiles = append(view.Profiles, sp)
 	}
-	sort.Slice(view.Profiles, func(i, j int) bool { return view.Profiles[i].Name < view.Profiles[j].Name })
+	slices.SortFunc(view.Profiles, func(a, b settingsProfile) int { return cmp.Compare(a.Name, b.Name) })
 	writeJSON(w, http.StatusOK, view)
 }
 
