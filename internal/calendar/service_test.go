@@ -193,6 +193,12 @@ func TestOnlyHTTPSAddressesAreUsedAndWebcalIsHTTPS(t *testing.T) {
 			t.Errorf("%q was accepted", bad)
 		}
 	}
+	// A login in the address would be sent as one and kept with the calendar.
+	for _, bad := range []string{"https://user:pass@calendar.example/a.ics", "https://user@calendar.example/a.ics", "webcal://user:pass@calendar.example/a.ics"} {
+		if _, err := NormalizeURL(bad); err == nil {
+			t.Errorf("%q was accepted", bad)
+		}
+	}
 }
 
 func TestAFeedMayNotBeOnThisMachineOrAPrivateNetwork(t *testing.T) {

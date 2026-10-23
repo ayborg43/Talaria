@@ -66,6 +66,10 @@ type posixEnv struct {
 	workdir string // given to every script, which changes into it; "" if the transport already starts there
 	desc    string
 	closer  func()
+	// remote, if set, keeps the file tools out of the far machine's
+	// credential places. Docker leaves it unset: a fresh container holds no
+	// credentials of its own, and the container is the sandbox.
+	remote *RemoteFence
 }
 
 func (e *posixEnv) Describe() string { return e.desc }
@@ -158,6 +162,9 @@ func failure(what string, r runOut) error {
 }
 
 func (e *posixEnv) ReadFile(ctx context.Context, path string, limit int) ([]byte, bool, error) {
+	if err := e.remote.Check(path, e.workdir); err != nil {
+		return nil, false, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, fileOp)
 	defer cancel()
 	r, err := e.run(ctx, readScript, []string{path, strconv.Itoa(limit + 1)}, nil, false, limit+1)
@@ -174,6 +181,9 @@ func (e *posixEnv) ReadFile(ctx context.Context, path string, limit int) ([]byte
 }
 
 func (e *posixEnv) WriteFile(ctx context.Context, path string, data []byte) error {
+	if err := e.remote.Check(path, e.workdir); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, fileOp)
 	defer cancel()
 	if data == nil {
@@ -190,6 +200,9 @@ func (e *posixEnv) WriteFile(ctx context.Context, path string, data []byte) erro
 }
 
 func (e *posixEnv) ListDir(ctx context.Context, path string) ([]string, error) {
+	if err := e.remote.Check(path, e.workdir); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, fileOp)
 	defer cancel()
 	r, err := e.run(ctx, listScript, []string{path}, nil, false, MaxOutput*4)

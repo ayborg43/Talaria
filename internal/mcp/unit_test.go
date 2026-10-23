@@ -154,6 +154,15 @@ func TestServerWarningsAndSecrets(t *testing.T) {
 		`{"env":{"GITHUB_TOKEN":"ghp_abc"}}`:              true,
 		`{"env":{"GITHUB_TOKEN":"${GH}"}}`:                false,
 		`{"env":{"LOG_LEVEL":"debug"}}`:                   false,
+		`{"args":["--token","abc123"]}`:                   true,
+		`{"args":["--token","${T}"]}`:                     false,
+		`{"args":["--token=abc123"]}`:                     true,
+		`{"args":["--dir","/data","notes"]}`:              false,
+		`{"args":["/data/keystore","serve"]}`:             false,
+		`{"url":"https://h/mcp?api_key=abc123"}`:          true,
+		`{"url":"https://h/mcp?api_key=${K}"}`:            false,
+		`{"url":"https://h/mcp?x=1"}`:                     false,
+		`{"url":"https://user:pass@h/mcp"}`:               true,
 		`{"headers":{"X-Api-Key":""}}`:                    false,
 	} {
 		var s Server

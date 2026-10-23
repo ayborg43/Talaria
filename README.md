@@ -259,12 +259,15 @@ named like `*_KEY`, `*_TOKEN`, `*_SECRET` or `*_PASSWORD`. It also recognises th
 Anthropic, GitHub, Slack, AWS, Google, JWTs, Telegram and Discord bot tokens, `Bearer` headers, private keys). Wherever
 one would be shown to the model or stored, it is replaced with `[redacted]`:
 
-- the output and errors of every tool, before the model sees them (so `cat .env` shows `API_KEY=[redacted]`);
+- the output and errors of every tool, before the model sees them (so `cat .env` shows `API_KEY=[redacted]` for a key Talaria knows);
 - the saved conversation history that `session_search` reads;
 - the activity log.
 
 What this does not do, so you can judge it: it does not hide what *you* type to the model, since the model and its provider
-receive your messages; it does not catch a secret that has been re-encoded (base64, say) or split across outputs; and
+receive your messages; it does not catch a secret that has been re-encoded (base64, say) or split across outputs; a secret
+Talaria was never told about — a project's own value that is neither in the process environment nor shaped like a known
+token — is shown as written; values shorter than 8 characters are never treated as secrets, since they would match ordinary
+text; and
 a command you approve still runs as you, so it can use the keys that are in *your* environment and files. Talaria's own
 secrets are kept from it (see the safety model below): the vault's passphrase, the model keys and bot tokens the config
 names are removed from a shell command's environment, and the file tools cannot read where they live. The approval prompt
@@ -289,9 +292,13 @@ answer is no. Turn the guard off with `"policy": {"untrusted_content": "off"}`; 
 **What the file tools cannot touch.** `read_file`, `list_dir` and `write_file` refuse Talaria's own folder (`~/.talaria`),
 the config file, the vault's key file, and where most people keep credentials (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`,
 `~/.config/gh`, `~/.netrc` and a few more), following symlinks and ignoring case on macOS. Add your own with
-`"protected_paths": ["~/Documents/taxes"]`. Without this, a model steered by a page could rewrite the file that records what it
+`"protected_paths": ["~/Documents/taxes"]`. Over SSH the file tools get the same credential places under the remote user's
+home, matched lexically and exactly (the far side's symlinks cannot be followed from here and there is no case folding),
+so a link on that machine that points into a protected place is not caught; your own `protected_paths` apply to this
+machine only. Without this, a model steered by a page could rewrite the file that records what it
 may do without asking, or read the key that opens the vault. A shell command run as you is *not* confined by this; that is why
-it asks, and why the container workspace is the real sandbox.
+it asks, and why the container workspace is the real sandbox. An approved shell command can also append, forge or truncate
+the activity log, so approving one voids the log's integrity for what came before.
 
 **What the approval prompt shows.** The target first (`path`, `command`, `url`, `to`), then the rest, all of it. Nothing is
 cut off: a long request is sent in full just before the question, and one too long to read at all (over 12,000 characters)
@@ -721,7 +728,7 @@ Chats can each pick where their tools run with `/env` (`!env` in Discord), but o
 - **It never falls back.** If the environment a chat chose cannot be started (Docker is down, the host is unreachable),
   the message is *not* run somewhere else. The chat is told why and how to recover (`/env default`). The one exception is a
   saved choice the config no longer allows, which returns to the gateway's own environment, with a note.
-- **Approval prompts say where.** In a chat that is not on `local`, the prompt reads `Allow shell in sandbox?`.
+- **Approval prompts say where.** In a chat that is not on `local`, a prompt for a tool that runs there reads `Allow shell in sandbox?` (for `shell`, `read_file`, `write_file` and `list_dir`); tools that run where Talaria runs say nothing.
 - The choice is saved in `~/.talaria/telegram_chats.json` (`discord_chats.json` for Discord) and survives restarts, like `/model`. `/new` keeps it.
 
 ### What every environment does the same

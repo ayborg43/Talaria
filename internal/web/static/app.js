@@ -712,13 +712,13 @@ function newProfileForm() {
 
 async function saveProfile() {
   const name = $('#prof-name').value.trim();
-  const body = {
-    Name: name,
-    Type: $('#prof-type').value.trim() || undefined,
-    BaseURL: $('#prof-baseurl').value.trim() || undefined,
-    Model: $('#prof-model').value.trim() || undefined,
-    APIKeyEnv: $('#prof-apikeyenv').value.trim() || undefined,
-    APIKey: $('#prof-apikey').value.trim() || undefined,
+  const body = { // keys must match the Go struct tags: snake_case, not camelCase
+    name,
+    type: $('#prof-type').value.trim() || undefined,
+    base_url: $('#prof-baseurl').value.trim() || undefined,
+    model: $('#prof-model').value.trim() || undefined,
+    api_key_env: $('#prof-apikeyenv').value.trim() || undefined,
+    api_key: $('#prof-apikey').value.trim() || undefined,
   };
   try {
     await api('/api/settings', { method: 'POST', body });

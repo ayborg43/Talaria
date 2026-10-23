@@ -42,6 +42,9 @@ func NormalizeURL(raw string) (string, error) {
 	if u.Scheme != "https" {
 		return "", errors.New("the calendar address must start with https:// (or webcal://): a private calendar address sent over plain http can be read by anyone on the way")
 	}
+	if u.User != nil {
+		return "", errors.New("the calendar address must not hold a username or password: it would be sent as a login and kept with the calendar")
+	}
 	return u.String(), nil
 }
 

@@ -295,6 +295,29 @@ func TestApprovalData(t *testing.T) {
 	}
 }
 
+// The approval prompt says where the call will run, but only for the tools
+// that go to the environment; the rest run where Talaria runs.
+func TestApprovalPromptNamesTheEnvironmentForToolsThatRunThere(t *testing.T) {
+	for tool, want := range map[string]string{
+		"shell": "Allow shell in sandbox?", "read_file": "Allow read_file in sandbox?",
+		"write_file": "Allow write_file in sandbox?", "list_dir": "Allow list_dir in sandbox?",
+		"memory": "Allow memory?", "mcp_mail_send": "Allow mcp_mail_send?",
+	} {
+		f := newFakeService(4000, false)
+		e := &Engine{T: f, Environments: &Environments{}, ApprovalTimeout: time.Millisecond, pending: map[string]*pendingApproval{}}
+		e.askApproval(&chat{id: 1, runCtx: context.Background(), applied: "sandbox"}, tool, "{}")
+		found := ""
+		for _, ev := range f.log() {
+			if ev.Kind == "approval" {
+				found = strings.SplitN(ev.Text, "\n", 2)[0]
+			}
+		}
+		if !strings.HasPrefix(found, want) {
+			t.Errorf("%s: prompt %q, want %q", tool, found, want)
+		}
+	}
+}
+
 func TestDeliverRetriesAFailedSend(t *testing.T) {
 	old := sendRetryWait
 	sendRetryWait = time.Millisecond

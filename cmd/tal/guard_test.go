@@ -54,6 +54,36 @@ func TestCollectSecretsFindsEveryKindOfSecret(t *testing.T) {
 	}
 }
 
+// A secret given to an MCP server is enrolled whatever its variable is named,
+// and wherever the reference sits: a name like WORKSTUFF is not secret-like,
+// and args and URLs were never collected at all.
+func TestCollectSecretsEnrollsOddlyNamedMCPReferences(t *testing.T) {
+	cfg := &config.Config{
+		MCPServers: map[string]mcp.Server{
+			"work": {
+				URL:  "https://${WORKSTUFF}/mcp",
+				Args: []string{"--dir", "${WORKDIR_STUFF}"},
+				Env:  map[string]string{"STUFF": "${WORKSTUFF}"},
+			},
+			"auth": {URL: "https://x", OAuth: &mcp.OAuthConfig{ClientSecretEnv: "OAUTH_STUFF"}},
+		},
+	}
+	env := envFn("WORKSTUFF", "enrolled-workstuff-12345", "WORKDIR_STUFF", "enrolled-workdir-12345", "OAUTH_STUFF", "enrolled-oauth-12345")
+	got := collectSecrets(cfg, env, nil)
+	for _, want := range []string{"enrolled-workstuff-12345", "enrolled-workdir-12345", "enrolled-oauth-12345"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("missing %q in %v", want, got)
+		}
+	}
+	g, err := buildGuard(cfg, t.TempDir(), env, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := g.Redact.Scrub("saw enrolled-workstuff-12345 here"); strings.Contains(out, "enrolled-workstuff") {
+		t.Fatalf("an enrolled secret reached the model: %q", out)
+	}
+}
+
 func TestBuildGuardHonoursAuditSetting(t *testing.T) {
 	off := false
 	home := t.TempDir()

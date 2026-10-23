@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -119,6 +120,62 @@ func TestNoFenceChangesNothing(t *testing.T) {
 	if len(f.Environ()) != len(os.Environ()) {
 		t.Fatal("environment")
 	}
+	var r *RemoteFence
+	if r.Check("/home/u/.ssh/id_rsa", "") != nil {
+		t.Fatal("nil remote fence")
+	}
+	if (&RemoteFence{}).Check("/home/u/.ssh/id_rsa", "") != nil {
+		t.Fatal("remote fence without a home")
+	}
+}
+
+func TestRemoteFenceKeepsFileToolsOutOfCredentialPlaces(t *testing.T) {
+	f := &RemoteFence{Home: "/home/u"}
+	for p, ww := range map[string][2]string{
+		"~/.ssh/id_rsa":          {"", "fenced"},
+		"/home/u/.ssh":           {"", "fenced"},
+		"/home/u/.aws/config":    {"", "fenced"},
+		"../.ssh/id_rsa":         {"/home/u/app", "fenced"},
+		"../../../home/u/.aws/x": {"/srv/app/deep", "fenced"},
+		"keys/x":                 {"~/.ssh", "fenced"},
+		"/home/u/work/file":      {"", "ok"},
+		"~/work/file":            {"", "ok"},
+		"file":                   {"/srv/app", "ok"},
+		"~/.sshstuff/x":          {"", "ok"},
+		"/home/u/.ssh-backup/x":  {"", "ok"},
+		"~":                      {"", "ok"},
+		"/etc/passwd":            {"", "ok"},
+	} {
+		workdir, want := ww[0], ww[1]
+		err := f.Check(p, workdir)
+		if (err != nil) != (want == "fenced") {
+			t.Errorf("%q (workdir %q): err=%v, want %s", p, workdir, err, want)
+		} else if err != nil && !errors.Is(err, ErrFenced) {
+			t.Errorf("%q: %v is not ErrFenced", p, err)
+		}
+	}
+}
+
+// The fence runs before anything is sent to the far machine: a transport that
+// would fail the test if used proves it.
+func TestRemoteFileOpsAreFencedBeforeTheyRun(t *testing.T) {
+	e := &posixEnv{t: failTransport{}, workdir: "/srv/app", remote: &RemoteFence{Home: "/home/u"}}
+	ctx := context.Background()
+	if _, _, err := e.ReadFile(ctx, "~/.ssh/id_rsa", 100); !errors.Is(err, ErrFenced) {
+		t.Fatalf("read: %v", err)
+	}
+	if err := e.WriteFile(ctx, "/home/u/.aws/config", []byte("x")); !errors.Is(err, ErrFenced) {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := e.ListDir(ctx, "~/.gnupg"); !errors.Is(err, ErrFenced) {
+		t.Fatalf("list: %v", err)
+	}
+}
+
+type failTransport struct{}
+
+func (failTransport) command(ctx context.Context, script string, args []string) *exec.Cmd {
+	return exec.CommandContext(ctx, "sh", "-c", "exit 99")
 }
 
 func TestShellIsNotGivenTalariasSecrets(t *testing.T) {

@@ -106,12 +106,23 @@ func collectSecrets(cfg *config.Config, getenv func(string) string, environ []st
 		}
 	}
 	for _, srv := range cfg.MCPServers {
+		if srv.OAuth != nil { // the secret behind the sign-in, whatever its variable is named
+			secrets = append(secrets, getenv(srv.OAuth.ClientSecretEnv))
+		}
 		for _, group := range []map[string]string{srv.Env, srv.Headers} {
 			for _, v := range group {
-				if strings.Contains(v, "${") { // a reference; the variable it names is picked up below
+				if strings.Contains(v, "${") { // a reference: enroll what it names, whatever it is named
+					for _, m := range envRef.FindAllStringSubmatch(v, -1) {
+						secrets = append(secrets, getenv(m[1]))
+					}
 					continue
 				}
 				secrets = append(secrets, v, strings.TrimSpace(strings.TrimPrefix(v, "Bearer ")))
+			}
+		}
+		for _, v := range append([]string{srv.URL}, srv.Args...) { // a secret may be referenced anywhere
+			for _, m := range envRef.FindAllStringSubmatch(v, -1) {
+				secrets = append(secrets, getenv(m[1]))
 			}
 		}
 	}

@@ -472,18 +472,22 @@ func (e *Engine) askApproval(c *chat, name, args string) bool {
 		e.mu.Unlock()
 	}()
 
-	// Where a command runs matters when deciding whether to allow it, and with
-	// per-chat environments the startup banner no longer says.
+	tool := agent.BaseTool(name)
+	// Where a call runs matters when deciding whether to allow it, and with
+	// per-chat environments the startup banner no longer says. Only the tools
+	// that go to the environment say so; the rest run where Talaria runs.
 	where := ""
-	if e.Environments != nil && env != "" && env != execenv.LocalName && (name == "shell" || name == "write_file" || strings.HasPrefix(name, "shell ") || strings.HasPrefix(name, "write_file ")) {
-		where = " in " + env
+	if e.Environments != nil && env != "" && env != execenv.LocalName {
+		switch tool {
+		case "shell", "read_file", "write_file", "list_dir":
+			where = " in " + env
+		}
 	}
 	body, ok := e.approvalBody(c.id, args)
 	if !ok {
 		return false
 	}
 	text := fmt.Sprintf("Allow %s%s?\n%s", name, where, body)
-	tool := agent.BaseTool(name)
 	always := e.Permissions != nil && e.Permissions.Rememberable(tool) && !agent.IsFlagged(name)
 	msg, err := e.T.SendApproval(ctx, c.id, text, token, always)
 	if err != nil {

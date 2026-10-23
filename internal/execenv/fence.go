@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -107,6 +108,58 @@ func (f *Fence) Environ() []string {
 var DefaultProtected = []string{
 	".ssh", ".aws", ".gnupg", ".netrc", ".npmrc", ".pypirc", ".kube",
 	".docker/config.json", ".config/gcloud", ".config/gh", ".azure",
+}
+
+// RemoteFence is the file fence for another machine (SSH): the default
+// credential places under the remote user's home. Matching is lexical — the
+// far side's symlinks cannot be followed from here — so a link on that machine
+// that points into a protected place is not caught. Like the local fence, it
+// confines the file tools only, never the shell.
+type RemoteFence struct {
+	// Home is the remote user's home directory, without a trailing slash.
+	Home string
+}
+
+// Check returns ErrFenced if p is inside a protected place on the far machine.
+// A relative path is read against workdir, the remote working directory (""
+// for the remote home); ~/ paths against Home. The far machine is always
+// POSIX, so matching is exact: no case folding.
+func (f *RemoteFence) Check(p, workdir string) error {
+	if f == nil || f.Home == "" {
+		return nil
+	}
+	abs := remoteAbs(f.Home, workdir, p)
+	for _, rel := range DefaultProtected {
+		form := f.Home + "/" + rel
+		if abs == form || strings.HasPrefix(abs, form+"/") {
+			return fmt.Errorf("%w (%s)", ErrFenced, p)
+		}
+	}
+	return nil
+}
+
+func expandRemoteTilde(home, p string) string {
+	if p == "~" {
+		return home
+	}
+	if strings.HasPrefix(p, "~/") {
+		return home + p[1:]
+	}
+	return p
+}
+
+// remoteAbs reads a path the way the far side's shell scripts do: ~/ against
+// the remote home, anything relative against the remote working directory.
+func remoteAbs(home, workdir, p string) string {
+	p = expandRemoteTilde(home, p)
+	if strings.HasPrefix(p, "/") {
+		return path.Clean(p)
+	}
+	workdir = expandRemoteTilde(home, workdir)
+	if !strings.HasPrefix(workdir, "/") {
+		workdir = home + "/" + workdir
+	}
+	return path.Clean(workdir + "/" + p)
 }
 
 // ProtectedPaths builds the list: Talaria's own state and config, the vault's

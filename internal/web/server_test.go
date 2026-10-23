@@ -282,10 +282,13 @@ func TestSettingsRoundTrip(t *testing.T) {
 		t.Errorf("expected no profiles, got %d", len(view.Profiles))
 	}
 
-	// POST adds a profile
-	resp, body = r.do("POST", "/api/settings", map[string]string{"Name": "my-profile", "Type": "openai", "APIKey": "sk-test123", "BaseURL": "https://api.openai.com/v1", "Model": "gpt-4o-mini"})
+	// POST adds a profile (keys as the web app sends them: snake_case)
+	resp, body = r.do("POST", "/api/settings", map[string]string{"name": "my-profile", "type": "openai", "api_key": "test-key-value", "base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini"})
 	if resp.StatusCode != 200 {
 		t.Fatalf("POST /api/settings add: %d %s", resp.StatusCode, body)
+	}
+	if p := r.srv.Cfg.Profiles["my-profile"]; p.Type != "openai" || p.BaseURL != "https://api.openai.com/v1" || p.Model != "gpt-4o-mini" || p.APIKey != "test-key-value" {
+		t.Fatalf("fields the app sent were not stored: %+v", p)
 	}
 
 	// GET now shows the profile
@@ -301,13 +304,16 @@ func TestSettingsRoundTrip(t *testing.T) {
 	}
 
 	// POST edits the profile
-	resp, body = r.do("POST", "/api/settings", map[string]string{"Name": "my-profile", "Model": "gpt-4o"})
+	resp, body = r.do("POST", "/api/settings", map[string]string{"name": "my-profile", "model": "gpt-4o"})
 	if resp.StatusCode != 200 {
 		t.Fatalf("POST /api/settings edit: %d %s", resp.StatusCode, body)
 	}
+	if p := r.srv.Cfg.Profiles["my-profile"]; p.Model != "gpt-4o" || p.BaseURL != "https://api.openai.com/v1" {
+		t.Fatalf("an edit must change only what it names: %+v", p)
+	}
 
 	// DELETE the profile
-	resp, body = r.do("POST", "/api/settings", map[string]any{"Name": "my-profile", "_delete": true})
+	resp, body = r.do("POST", "/api/settings", map[string]any{"name": "my-profile", "_delete": true})
 	if resp.StatusCode != 200 {
 		t.Fatalf("POST /api/settings delete: %d %s", resp.StatusCode, body)
 	}
@@ -322,6 +328,37 @@ func TestSettingsRoundTrip(t *testing.T) {
 	}
 	if len(view.Profiles) != 0 {
 		t.Errorf("expected no profiles after delete, got %d", len(view.Profiles))
+	}
+}
+
+func TestSettingsRejectsAnUnknownProfileType(t *testing.T) {
+	r := newRig(t)
+	r.srv.Cfg = &config.Config{}
+	r.srv.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	r.login()
+	resp, body := r.do("POST", "/api/settings", map[string]string{"name": "bad", "type": "anthropicc"})
+	if resp.StatusCode != 400 || !strings.Contains(string(body), "unknown profile type") {
+		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+	if _, ok := r.srv.Cfg.Profiles["bad"]; ok {
+		t.Fatal("a profile with a bad type was stored")
+	}
+}
+
+func TestSettingsPrefersAKeyVariableOverAPastedKey(t *testing.T) {
+	r := newRig(t)
+	r.srv.Cfg = &config.Config{}
+	r.srv.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	r.login()
+	if resp, _ := r.do("POST", "/api/settings", map[string]string{"name": "p", "type": "openai", "api_key": "pasted-key-value"}); resp.StatusCode != 200 {
+		t.Fatalf("add: %d", resp.StatusCode)
+	}
+	if resp, _ := r.do("POST", "/api/settings", map[string]string{"name": "p", "api_key_env": "MY_KEY"}); resp.StatusCode != 200 {
+		t.Fatalf("edit: %d", resp.StatusCode)
+	}
+	got := r.srv.Cfg.Profiles["p"]
+	if got.APIKeyEnv != "MY_KEY" || got.APIKey != "" {
+		t.Fatalf("a named variable must replace a pasted key: %+v", got)
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"talaria/internal/config"
 
 	"talaria/internal/gateway/chat"
+	"talaria/internal/provider"
 )
 
 //go:embed static
@@ -360,14 +361,13 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 
 // settingsUpdateRequest is the payload for POST /api/settings.
 type settingsUpdateRequest struct {
-	Name       string `json:"name"`
-	Type       string `json:"type,omitempty"`
-	BaseURL    string `json:"base_url,omitempty"`
-	Model      string `json:"model,omitempty"`
-	APIKey     string `json:"api_key,omitempty"`
-	APIKeyEnv  string `json:"api_key_env,omitempty"`
-	ModelCalls int    `json:"model_calls_per_hour,omitempty"`
-	Delete     bool   `json:"_delete,omitempty"`
+	Name      string `json:"name"`
+	Type      string `json:"type,omitempty"`
+	BaseURL   string `json:"base_url,omitempty"`
+	Model     string `json:"model,omitempty"`
+	APIKey    string `json:"api_key,omitempty"`
+	APIKeyEnv string `json:"api_key_env,omitempty"`
+	Delete    bool   `json:"_delete,omitempty"`
 }
 
 func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
@@ -383,6 +383,12 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "give the profile a name")
 		return
 	}
+	switch in.Type {
+	case "", provider.TypeOpenAI, provider.TypeAnthropic, provider.TypeDeepSeek:
+	default:
+		fail(w, http.StatusBadRequest, fmt.Sprintf("unknown profile type %q (use %q, %q or %q)", in.Type, provider.TypeOpenAI, provider.TypeAnthropic, provider.TypeDeepSeek))
+		return
+	}
 	if in.Delete {
 		delete(s.Cfg.Profiles, in.Name)
 	} else if p, ok := s.Cfg.Profiles[in.Name]; ok {
@@ -396,8 +402,9 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		if in.Model != "" {
 			p.Model = in.Model
 		}
-		if in.APIKeyEnv != "" {
+		if in.APIKeyEnv != "" { // a named variable replaces a pasted key: keep secrets out of the file
 			p.APIKeyEnv = in.APIKeyEnv
+			p.APIKey = ""
 		}
 		if in.APIKey != "" {
 			p.APIKey = in.APIKey

@@ -157,8 +157,10 @@ func (s Server) Warnings(name string) []string {
 	return w
 }
 
-// HasInlineSecret reports whether a secret-looking header or env value is
-// written literally instead of as ${VAR}.
+// HasInlineSecret reports whether a secret is written literally instead of as
+// ${VAR}: a secret-looking header or env value, an argument after a
+// secret-looking flag (or joined to one with =), or credentials or a
+// secret-looking query parameter in the URL.
 func (s Server) HasInlineSecret() bool {
 	check := func(m map[string]string) bool {
 		for k, v := range m {
@@ -168,7 +170,38 @@ func (s Server) HasInlineSecret() bool {
 		}
 		return false
 	}
-	return check(s.Env) || check(s.Headers)
+	if check(s.Env) || check(s.Headers) {
+		return true
+	}
+	for i, a := range s.Args {
+		if k, v, ok := strings.Cut(a, "="); ok { // --token=abc123
+			if secretKeyRE.MatchString(k) && v != "" && !varRE.MatchString(v) {
+				return true
+			}
+			continue
+		}
+		if strings.HasPrefix(a, "-") && secretKeyRE.MatchString(a) && i+1 < len(s.Args) { // --token abc123
+			if next := s.Args[i+1]; next != "" && !strings.HasPrefix(next, "-") && !varRE.MatchString(next) {
+				return true
+			}
+		}
+	}
+	if u, err := url.Parse(s.URL); err == nil {
+		if u.User != nil && !varRE.MatchString(u.User.String()) {
+			return true
+		}
+		for key, vals := range u.Query() {
+			if !secretKeyRE.MatchString(key) {
+				continue
+			}
+			for _, v := range vals {
+				if v != "" && !varRE.MatchString(v) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func isLoopback(host string) bool {

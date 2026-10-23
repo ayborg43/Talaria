@@ -85,8 +85,9 @@ second factor, and protection from someone who already holds your password.
   believed. Use `permissions` only with servers you trust, and prefer `ask` for the rest.
 - **Tool lists and schemas from a server are not pinned.** A server that changes its tools after you connected is not
   noticed. Descriptions are cut at 2,000 characters and a schema is not otherwise inspected.
-- **The activity log is plain text on disk.** The agent cannot write it (the file fence), but a person or program
-  with your account can, and rotation keeps one old file.
+- **The activity log is plain text on disk.** The agent's file tools cannot write it (the file fence), but an
+  approved shell command runs as you and can append, forge or truncate it — approving one voids the log's integrity —
+  as can any other person or program with your account. Rotation keeps one old file.
 - **Jobs run with `allow_risky` record their calls as asked-and-approved**, the same as a person's yes.
 - **No TLS on the monitoring endpoint.** Keep it on this machine or behind something that terminates TLS.
 - **The model's reasoning (DeepSeek) is sent back to DeepSeek** with each request, as its API requires. It is not

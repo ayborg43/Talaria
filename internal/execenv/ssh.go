@@ -56,7 +56,33 @@ func openSSH(ctx context.Context, name string, s Spec) (Env, error) {
 		e.stop()
 		return nil, fmt.Errorf("environment %q: cannot run commands on %s over ssh: %w%s", name, s.Host, err, sshHint(res.Output, s.Host))
 	}
+	home, err := remoteHome(pctx, e)
+	if err != nil {
+		e.stop()
+		return nil, fmt.Errorf("environment %q: cannot learn the remote home directory, so the file tools cannot be fenced: %w", name, err)
+	}
+	e.remote = &RemoteFence{Home: home}
 	return e, nil
+}
+
+// remoteHome asks the far machine where its user lives, for the file fence. A
+// login banner can precede the answer on the shared stream, so the last line
+// wins; anything that does not look like an absolute path refuses the
+// environment rather than running it unfenced.
+func remoteHome(ctx context.Context, e *sshEnv) (string, error) {
+	res, err := e.Shell(ctx, "printf '%s' \"$HOME\"", 20*time.Second)
+	if err != nil {
+		return "", err
+	}
+	if res.ExitCode != 0 || res.TimedOut {
+		return "", fmt.Errorf("the home query failed: %s", strings.TrimSpace(res.Output))
+	}
+	lines := strings.Split(strings.TrimSpace(res.Output), "\n")
+	home := strings.TrimSuffix(lines[len(lines)-1], "/")
+	if !strings.HasPrefix(home, "/") || strings.ContainsAny(home, "\x00\r\n\t") {
+		return "", fmt.Errorf("the answer was not a path: %q", res.Output)
+	}
+	return home, nil
 }
 
 // options builds the ssh flags. The user's own ssh_args come first, because ssh
