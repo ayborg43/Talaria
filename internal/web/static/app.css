@@ -248,3 +248,36 @@ b,strong{font-weight:600}
 
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 @media (min-width:700px){.tabs{justify-content:center}.tabs a{max-width:140px}}
+
+/* desktop: sidebar nav, wider content, two-column cards */
+@media (min-width:900px){
+.app{flex-direction:row}
+.tabs{flex-direction:column;justify-content:flex-start;width:236px;gap:4px;padding:22px 12px;border-top:0;border-right:1px solid var(--line2);overflow-y:auto}
+.tabs::before{content:"Talaria";font-family:var(--display);font-weight:700;font-size:23px;letter-spacing:-.02em;padding:2px 14px 18px}
+.tabs a{flex:none;width:100%;max-width:none;flex-direction:row;align-items:center;gap:12px;min-height:0;padding:10px 14px;font-size:14.5px;text-align:left}
+.tabs a svg{width:22px;height:22px;flex:none}
+.tabs a span{flex:1}
+.badge{position:static;margin-left:auto}
+.screen{min-width:0}
+.scroll{max-width:940px;padding:32px 32px 40px}
+.page-title{font-size:40px}
+.stack{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;align-items:start}
+.stack>.hero,.stack>.health,.stack>.banner,.stack>.skeleton{grid-column:1/-1}
+.bar{padding:18px 32px 16px}
+.thread{max-width:860px;padding:24px 32px 12px}
+.agents,.quick,.composer{max-width:860px}
+.agents{padding:10px 32px}
+.quick{padding:2px 32px 12px}
+.composer{padding:0 32px 22px}
+.composer textarea{max-height:200px}
+.jump{right:32px;bottom:150px}
+.toast{bottom:32px}
+.login-card{max-width:400px}
+}
+@media (hover:hover){
+.icon-btn:hover{background:var(--line2)}
+.tabs a:hover{background:var(--line2)}
+.tabs a[aria-current=page]:hover{background:var(--tab-on)}
+.quick button:hover{border-color:var(--brass-line)}
+.btn:hover{filter:brightness(.985)}
+}
