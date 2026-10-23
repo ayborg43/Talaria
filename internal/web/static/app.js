@@ -81,7 +81,7 @@ function toast(text) {
 const S = {
   msgs: new Map(), order: [], epoch: 0, seq: 0, es: null, connected: false, running: false,
   model: '', paused: false, zone: undefined, version: '', tab: 'chat', needs: 'wait',
-  today: null, control: null, blocks: new Map(), retry: 1000, installEvent: null,
+  today: null, control: null, blocks: new Map(), retry: 1000, installEvent: null, restoreOff: null,
   agents: [], agentsAt: 0,
 };
 
@@ -248,7 +248,17 @@ function doRenderChat() {
     let rec = S.blocks.get(b.key);
     if (!rec || rec.sig !== sig) {
       const el = buildBlock(b, last);
-      if (rec) rec.el.replaceWith(el);
+      if (rec) {
+        // A fresh node starts at its estimated size and only grows into its
+        // real one after layout. While an answer streams in, rebuilding it
+        // every token would shrink the thread under a reader sitting at the
+        // bottom, and the browser would clamp them back up. Hold the old
+        // height for one frame so the thread never collapses.
+        const h = rec.el.offsetHeight;
+        if (h) el.style.minHeight = h + 'px';
+        rec.el.replaceWith(el);
+        if (h) requestAnimationFrame(() => { el.style.minHeight = ''; });
+      }
       rec = { el, sig };
       S.blocks.set(b.key, rec);
     }
@@ -268,6 +278,13 @@ function doRenderChat() {
   else if (need && dots) thread.append(dots);
 
   if (stick) thread.scrollTop = thread.scrollHeight;
+  // Pin again after layout: content painted at its real size can move the
+  // bottom away from where the synchronous pin above put the reader.
+  if (stick) requestAnimationFrame(() => { thread.scrollTop = thread.scrollHeight; });
+  if (S.restoreOff != null) {
+    const off = S.restoreOff; S.restoreOff = null;
+    requestAnimationFrame(() => { thread.scrollTop = thread.scrollHeight - off; });
+  }
   $('#jump').hidden = stick || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 200;
   renderChrome();
 }
@@ -449,6 +466,8 @@ if (Rec) {
 
 // ---------- connection to the server ----------
 async function loadState() {
+  const thread = $('#thread');
+  const off = thread.scrollHeight - thread.scrollTop; // distance from the bottom; survives the rebuild below
   const d = await api('/api/state');
   S.msgs.clear(); S.order = [];
   for (const m of d.messages) upsert(m);
@@ -457,8 +476,9 @@ async function loadState() {
   S.zone = d.zone || S.zone;
   for (const rec of S.blocks.values()) rec.el.remove();
   S.blocks.clear();
-  S.fresh = true;
+  S.fresh = S.order.length === 0; // pin to the bottom only when there is nothing to keep a place in
   renderChat();
+  if (S.order.length) S.restoreOff = off; // doRenderChat puts the reader back after layout
 }
 function connect() {
   if (S.es) S.es.close();
