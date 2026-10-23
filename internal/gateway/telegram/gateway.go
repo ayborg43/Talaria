@@ -65,6 +65,10 @@ type Gateway struct {
 	// not replay (and re-run the agent on) updates already handled.
 	OffsetPath string
 
+	// OutboxPath, if set, keeps messages that could not be delivered there and
+	// retries them in the background.
+	OutboxPath string
+
 	once sync.Once
 	eng  *chat.Engine
 }
@@ -80,6 +84,9 @@ func (g *Gateway) engine() *chat.Engine {
 			Backends: g.Backends, Prefs: g.Prefs, Permissions: g.Permissions,
 			Commands: g.Commands, OnUserMessage: g.OnUserMessage, StopBackground: g.StopBackground,
 			MessagesPerMinute: g.MessagesPerMinute,
+		}
+		if g.OutboxPath != "" {
+			g.eng.Outbox = &chat.Outbox{Path: g.OutboxPath}
 		}
 	})
 	return g.eng

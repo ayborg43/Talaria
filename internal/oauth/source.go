@@ -132,7 +132,7 @@ func (s *Source) renew(ctx context.Context, refused string) (vault.Credential, e
 		if o.Resource != "" {
 			form.Set("resource", o.Resource)
 		}
-		tok, err := exchange(ctx, s.hc(), Metadata{TokenEndpoint: o.TokenEndpoint}, Client{ID: o.ClientID, Secret: o.ClientSecret}, form)
+		tok, err := exchange(ctx, s.hc(), Metadata{TokenEndpoint: o.TokenEndpoint, TokenAuthMethods: o.TokenAuthMethods}, Client{ID: o.ClientID, Secret: o.ClientSecret}, form)
 		if err != nil {
 			if errors.Is(err, ErrSignedOut) {
 				return fmt.Errorf("%w: run `tal connect %s`", ErrSignedOut, s.Server)

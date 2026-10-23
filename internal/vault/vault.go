@@ -59,7 +59,8 @@ type OAuthData struct {
 	RevocationEndpoint string    `json:"revocation_endpoint,omitempty"`
 	ClientID           string    `json:"client_id"`
 	ClientSecret       string    `json:"client_secret,omitempty"`
-	Resource           string    `json:"resource,omitempty"` // the server the tokens are for
+	TokenAuthMethods   []string  `json:"token_auth_methods,omitempty"` // how the server wants the secret sent; empty means in the body, as before
+	Resource           string    `json:"resource,omitempty"`           // the server the tokens are for
 	Scopes             []string  `json:"scopes,omitempty"`
 	AccessToken        string    `json:"access_token,omitempty"`
 	RefreshToken       string    `json:"refresh_token,omitempty"`

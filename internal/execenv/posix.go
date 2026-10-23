@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"os/exec"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -49,6 +50,62 @@ exec sh -c "$1" 2>&1`
 if [ ! -d "$p" ]; then echo "$p: Not a directory" >&2; exit 20; fi
 cd -- "$p" && LC_ALL=C ls -1Ap`
 )
+
+// resolveFunc defines resolve_one, which prints a path with its symlinks
+// followed, absolute: component by component from the root, following each
+// link with readlink and carrying on from its target. A .. pops a real
+// directory, so a link can never smuggle one past the fence. At most 40 links
+// are followed, like the kernel's own loop protection; past that, or when a
+// link cannot be read, it returns 5 or 4. Without readlink at all the path is
+// printed as written, for the lexical check alone.
+const resolveFunc = `resolve_one() {
+  p=$1
+  case $p in "~") p=$HOME;; "~/"*) p=$HOME/${p#"~/"};; esac
+  case $p in
+  /*) ;;
+  *) p=$PWD/$p ;;
+  esac
+  if ! command -v readlink >/dev/null 2>&1; then
+    printf '%s\n' "$p"
+    return 0
+  fi
+  todo=$p
+  phys=/
+  links=0
+  while [ -n "$todo" ]; do
+    case $todo in
+    /*) todo=${todo#/}; continue ;; # extra slashes, including from // mid-path: phys already says where we are
+    esac
+    case $todo in
+    */*) c=${todo%%/*}; todo=${todo#*/} ;;
+    *) c=$todo; todo= ;;
+    esac
+    case $c in
+    ""|.) ;;
+    ..) phys=$(dirname "$phys") ;;
+    *)
+      case $phys in /) cand=/$c ;; *) cand=$phys/$c ;; esac
+      if [ -L "$cand" ]; then
+        links=$((links+1))
+        if [ "$links" -gt 40 ]; then return 5; fi
+        t=$(readlink "$cand") || return 4
+        case $t in
+        /*) phys=/; todo=${t#/}${todo:+/$todo} ;;
+        *) todo=$t${todo:+/$todo} ;;
+        esac
+      else
+        phys=$cand
+      fi ;;
+    esac
+  done
+  printf '%s\n' "$phys"
+}
+`
+
+// resolveScript prints one path with its symlinks followed. It takes the
+// working directory as its first argument, like every script.
+var resolveScript = prelude + resolveFunc + `resolve_one "$1"
+`
 
 // clientGrace is how long past a command's own timeout the client waits
 // before killing the connection. The far side's timeout should end the command
@@ -165,6 +222,9 @@ func (e *posixEnv) ReadFile(ctx context.Context, path string, limit int) ([]byte
 	if err := e.remote.Check(path, e.workdir); err != nil {
 		return nil, false, err
 	}
+	if err := e.checkResolved(ctx, path); err != nil {
+		return nil, false, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, fileOp)
 	defer cancel()
 	r, err := e.run(ctx, readScript, []string{path, strconv.Itoa(limit + 1)}, nil, false, limit+1)
@@ -182,6 +242,9 @@ func (e *posixEnv) ReadFile(ctx context.Context, path string, limit int) ([]byte
 
 func (e *posixEnv) WriteFile(ctx context.Context, path string, data []byte) error {
 	if err := e.remote.Check(path, e.workdir); err != nil {
+		return err
+	}
+	if err := e.checkResolved(ctx, path); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, fileOp)
@@ -203,6 +266,9 @@ func (e *posixEnv) ListDir(ctx context.Context, path string) ([]string, error) {
 	if err := e.remote.Check(path, e.workdir); err != nil {
 		return nil, err
 	}
+	if err := e.checkResolved(ctx, path); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, fileOp)
 	defer cancel()
 	r, err := e.run(ctx, listScript, []string{path}, nil, false, MaxOutput*4)
@@ -217,6 +283,50 @@ func (e *posixEnv) ListDir(ctx context.Context, path string) ([]string, error) {
 		return nil, nil
 	}
 	return strings.Split(text, "\n"), nil
+}
+
+// checkResolved follows the far side's symlinks and checks the result, so a
+// link into a credential place does not get through. The lexical check has
+// already passed; anything odd here fails closed. A nil fence, or one without
+// a home (Docker leaves it unset), skips the round trip: there is nothing to
+// check against.
+func (e *posixEnv) checkResolved(ctx context.Context, p string) error {
+	if e.remote == nil || e.remote.Home == "" {
+		return nil
+	}
+	resolved, err := e.resolveRemote(ctx, p)
+	if err != nil {
+		return err
+	}
+	return e.remote.CheckAbs(resolved, p)
+}
+
+func (e *posixEnv) resolveRemote(ctx context.Context, p string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, fileOp)
+	defer cancel()
+	r, err := e.run(ctx, resolveScript, []string{p}, nil, false, MaxOutput)
+	denied := func(why string) (string, error) {
+		return "", fmt.Errorf("%w (cannot resolve %s to check it: %s)", ErrFenced, p, why)
+	}
+	if err != nil {
+		return denied(err.Error())
+	}
+	if r.code != 0 {
+		msg := strings.Join(strings.Fields(string(r.stderr)), " ")
+		if msg == "" {
+			msg = fmt.Sprintf("exit status %d", r.code)
+		}
+		return denied(msg)
+	}
+	if r.truncated {
+		return denied("an absurdly long answer")
+	}
+	lines := strings.Split(strings.TrimRight(string(r.stdout), "\n"), "\n")
+	resolved := path.Clean(lines[len(lines)-1])
+	if !strings.HasPrefix(resolved, "/") || strings.ContainsAny(resolved, "\x00\r\n\t") {
+		return denied("the answer was not a path")
+	}
+	return resolved, nil
 }
 
 // shellQuote makes s one word for a POSIX shell: single quotes, with each

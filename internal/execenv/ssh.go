@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -56,33 +57,84 @@ func openSSH(ctx context.Context, name string, s Spec) (Env, error) {
 		e.stop()
 		return nil, fmt.Errorf("environment %q: cannot run commands on %s over ssh: %w%s", name, s.Host, err, sshHint(res.Output, s.Host))
 	}
-	home, err := remoteHome(pctx, e)
+	fence, err := remoteSetup(pctx, e)
 	if err != nil {
 		e.stop()
 		return nil, fmt.Errorf("environment %q: cannot learn the remote home directory, so the file tools cannot be fenced: %w", name, err)
 	}
-	e.remote = &RemoteFence{Home: home}
+	e.remote = fence
 	return e, nil
 }
 
-// remoteHome asks the far machine where its user lives, for the file fence. A
-// login banner can precede the answer on the shared stream, so the last line
-// wins; anything that does not look like an absolute path refuses the
-// environment rather than running it unfenced.
-func remoteHome(ctx context.Context, e *sshEnv) (string, error) {
-	res, err := e.Shell(ctx, "printf '%s' \"$HOME\"", 20*time.Second)
+// setupScript learns what the file fence needs in one round trip: the remote
+// home resolved, the remote system, and each usual credential place resolved
+// (or MISSING when it is not there). Its output is one line per answer, in
+// that order.
+var setupScript = resolveFunc + `resolve_one "$HOME"
+uname -s
+for d in ` + strings.Join(DefaultProtected, " ") + `; do
+  if [ -e "$HOME/$d" ] || [ -L "$HOME/$d" ]; then resolve_one "$HOME/$d"; else printf 'MISSING\n'; fi
+done
+`
+
+// setupLines is how many answers the setup script prints.
+var setupLines = 2 + len(DefaultProtected)
+
+// remoteSetup asks the far machine what the file fence needs. Anything
+// unexpected refuses the environment rather than running it unfenced.
+func remoteSetup(ctx context.Context, e *sshEnv) (*RemoteFence, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	r, err := e.run(ctx, setupScript, nil, nil, false, MaxOutput)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if res.ExitCode != 0 || res.TimedOut {
-		return "", fmt.Errorf("the home query failed: %s", strings.TrimSpace(res.Output))
+	if r.code != 0 || r.truncated {
+		return nil, fmt.Errorf("the setup query failed: %s", strings.TrimSpace(string(r.stdout)+string(r.stderr)))
 	}
-	lines := strings.Split(strings.TrimSpace(res.Output), "\n")
-	home := strings.TrimSuffix(lines[len(lines)-1], "/")
+	return parseSetup(string(r.stdout))
+}
+
+// parseSetup reads the setup script's answers. A login banner can precede them
+// on the stream, so the last lines win; anything that does not look right
+// refuses the environment rather than running it unfenced.
+func parseSetup(output string) (*RemoteFence, error) {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < setupLines {
+		return nil, fmt.Errorf("the setup query returned %d lines, want %d", len(lines), setupLines)
+	}
+	lines = lines[len(lines)-setupLines:]
+	home := strings.TrimSuffix(lines[0], "/")
 	if !strings.HasPrefix(home, "/") || strings.ContainsAny(home, "\x00\r\n\t") {
-		return "", fmt.Errorf("the answer was not a path: %q", res.Output)
+		return nil, fmt.Errorf("the answer was not a path: %q", lines[0])
 	}
-	return home, nil
+	if !validUname(lines[1]) {
+		return nil, fmt.Errorf("the answer was not a system name: %q", lines[1])
+	}
+	resolved := make([]string, len(DefaultProtected))
+	for i := range DefaultProtected {
+		if line := lines[2+i]; line != "MISSING" {
+			if !strings.HasPrefix(line, "/") || strings.ContainsAny(line, "\x00\r\n\t") {
+				return nil, fmt.Errorf("the answer was not a path: %q", line)
+			}
+			resolved[i] = path.Clean(line)
+		}
+	}
+	return &RemoteFence{Home: home, Fold: lines[1] == "Darwin", Resolved: resolved}, nil
+}
+
+func validUname(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // options builds the ssh flags. The user's own ssh_args come first, because ssh

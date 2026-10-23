@@ -72,6 +72,10 @@ type Gateway struct {
 	Backends *chat.Backends
 	Prefs    chat.ChatPrefs
 
+	// OutboxPath, if set, keeps messages that could not be delivered there and
+	// retries them in the background.
+	OutboxPath string
+
 	// GatewayURL, if set, is the WebSocket to connect to instead of the one
 	// Discord names. Tests use it.
 	GatewayURL string
@@ -93,6 +97,9 @@ func (g *Gateway) setup() {
 			Backends: g.Backends, Prefs: g.Prefs, Permissions: g.Permissions,
 			Commands: g.Commands, OnUserMessage: g.OnUserMessage, StopBackground: g.StopBackground,
 			MessagesPerMinute: g.MessagesPerMinute,
+		}
+		if g.OutboxPath != "" {
+			g.eng.Outbox = &chat.Outbox{Path: g.OutboxPath}
 		}
 	})
 }

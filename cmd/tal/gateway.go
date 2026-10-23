@@ -265,6 +265,7 @@ func runGateway(c *cli) error {
 			MessagesPerMinute: c.cfg.Limits.Messages(), Stream: c.cfg.Telegram.StreamReplies(), Environment: envDesc, Environments: s.envs, Backends: backends,
 			Prefs:      &chat.FilePrefs{Path: filepath.Join(c.home, "telegram_chats.json")},
 			OffsetPath: filepath.Join(c.home, "telegram_offset.json"),
+			OutboxPath: filepath.Join(c.home, "outbox_telegram.json"),
 		}
 		if gd := c.rt.Guard(); gd != nil {
 			g.Permissions = guard.ChatPermissions{G: gd, Gateway: s.name}
@@ -302,7 +303,8 @@ func runGateway(c *cli) error {
 		g := &discord.Gateway{
 			API: api, Allowed: allowed, Logf: logf,
 			MessagesPerMinute: c.cfg.Limits.Messages(), Stream: c.cfg.Discord.StreamReplies(), Environment: envDesc, Environments: s.envs, Backends: backends,
-			Prefs: &chat.FilePrefs{Path: filepath.Join(c.home, "discord_chats.json")},
+			Prefs:      &chat.FilePrefs{Path: filepath.Join(c.home, "discord_chats.json")},
+			OutboxPath: filepath.Join(c.home, "outbox_discord.json"),
 		}
 		if gd := c.rt.Guard(); gd != nil {
 			g.Permissions = guard.ChatPermissions{G: gd, Gateway: s.name}
@@ -326,6 +328,7 @@ func runGateway(c *cli) error {
 		eng := &chat.Engine{
 			T: webHub, Allowed: allowed, Logf: logf, Stream: true, MessagesPerMinute: c.cfg.Limits.Messages(),
 			Environment: envDesc, Backends: backends, Prefs: &chat.FilePrefs{Path: filepath.Join(c.home, "web_chats.json")},
+			Outbox: &chat.Outbox{Path: filepath.Join(c.home, "outbox_web.json")},
 		}
 		if gd := c.rt.Guard(); gd != nil {
 			eng.Permissions = guard.ChatPermissions{G: gd, Gateway: s.name}

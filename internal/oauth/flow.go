@@ -217,7 +217,7 @@ func (l Login) Run(ctx context.Context) (*vault.OAuthData, error) {
 	}
 	data := &vault.OAuthData{
 		Issuer: md.Issuer, TokenEndpoint: md.TokenEndpoint, RevocationEndpoint: md.RevocationEndpoint,
-		ClientID: client.ID, ClientSecret: client.Secret, Resource: disc.Resource,
+		ClientID: client.ID, ClientSecret: client.Secret, TokenAuthMethods: md.TokenAuthMethods, Resource: disc.Resource,
 		AccessToken: tok.AccessToken, RefreshToken: tok.RefreshToken, Expiry: tok.expiry(time.Now()),
 	}
 	if tok.Scope != "" {

@@ -72,6 +72,10 @@ type Engine struct {
 	// included; 0 is no limit. Commands such as /stop are never limited.
 	MessagesPerMinute int
 
+	// Outbox, if set, keeps messages that could not be delivered, on disk, and
+	// retries them in the background. Nil drops them after logging, as before.
+	Outbox *Outbox
+
 	lim     limiter
 	root    context.Context
 	workers sync.WaitGroup
@@ -153,6 +157,49 @@ func (e *Engine) Start(ctx context.Context) {
 	e.mu.Unlock()
 	if e.ApprovalTimeout == 0 {
 		e.ApprovalTimeout = 5 * time.Minute
+	}
+	if e.Outbox != nil {
+		go e.drainLoop(ctx)
+	}
+}
+
+// drainLoop retries queued messages: once right away, for the backlog from
+// while the gateway was away, then every few minutes. It ends with ctx.
+func (e *Engine) drainLoop(ctx context.Context) {
+	e.drainOutbox(ctx)
+	t := time.NewTicker(outboxDrainInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			e.drainOutbox(ctx)
+		}
+	}
+}
+
+// drainOutbox attempts the oldest queued messages, oldest first. One that goes
+// through is forgotten; one tried too often is dropped with a log line.
+func (e *Engine) drainOutbox(ctx context.Context) {
+	for i := 0; i < maxOutboxDrain; i++ {
+		entry, ok, err := e.Outbox.Claim()
+		if err != nil {
+			e.logf("%s: the outbox is unreadable, will try again: %v", strings.ToLower(e.T.Service()), err)
+			return
+		}
+		if !ok {
+			return
+		}
+		if entry.Attempts > maxOutboxAttempts {
+			e.Outbox.Done(entry.ID)
+			e.logf("%s: dropping a queued message after %d tries", strings.ToLower(e.T.Service()), entry.Attempts-1)
+			continue
+		}
+		if err := sendWithRetry(ctx, e.T, entry.Chat, entry.Text); err != nil {
+			continue // the recorded attempt stands; the next pass tries again
+		}
+		e.Outbox.Done(entry.ID)
 	}
 }
 
@@ -599,6 +646,10 @@ func (e *Engine) send(chatID int64, text string) { e.Send(e.root, chatID, text) 
 // Send delivers text to a chat, split to fit the service's limit. It is safe
 // to call from other goroutines.
 func (e *Engine) Send(ctx context.Context, chatID int64, text string) {
+	if e.Outbox != nil {
+		DeliverQueue(ctx, e.T, chatID, text, e.Logf, e.Outbox)
+		return
+	}
 	Deliver(ctx, e.T, chatID, text, e.Logf)
 }
 

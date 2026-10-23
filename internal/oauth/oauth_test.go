@@ -567,3 +567,49 @@ func TestASignInIsOnlyUsedForItsOwnServer(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+// A server that only speaks client_secret_basic gets the secret in the
+// Authorization header, at sign-in and at renewal — never in the body.
+func TestBasicOnlyServerGetsTheSecretInTheHeader(t *testing.T) {
+	s := oauthtest.New()
+	defer s.Close()
+	s.BasicAuthOnly = true
+	s.ConfidentialID, s.ConfidentialSecret = "app", "s3cret"
+	v := newVault(t)
+	data, err := login(t, s, Config{ClientID: "app", ClientSecret: "s3cret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.TokenAuthMethods) != 1 || data.TokenAuthMethods[0] != "client_secret_basic" {
+		t.Fatalf("the sign-in should remember how to authenticate: %v", data.TokenAuthMethods)
+	}
+	if err := Save(v, "mail", data); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.BasicAuth) != 1 || s.BasicAuth[0] != "app" {
+		t.Fatalf("the sign-in should authenticate in the header: %v", s.BasicAuth)
+	}
+	for _, form := range s.TokenForms {
+		if form.Get("client_secret") != "" || form.Get("client_id") != "" {
+			t.Fatalf("who we are does not belong in the body: %v", form)
+		}
+	}
+
+	// Renewal authenticates the same way.
+	src := &Source{Vault: v, Server: "mail", Now: func() time.Time { return time.Now().Add(2 * time.Hour) }}
+	tok, err := src.Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.BasicAuth) != 2 {
+		t.Fatalf("the renewal should authenticate in the header: %v", s.BasicAuth)
+	}
+	for _, form := range s.TokenForms {
+		if form.Get("client_secret") != "" {
+			t.Fatalf("the secret does not belong in the body: %v", form)
+		}
+	}
+	if got, _ := v.Get("oauth.mail"); got.OAuth.AccessToken != tok {
+		t.Fatal("the renewed token is saved")
+	}
+}

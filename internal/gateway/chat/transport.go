@@ -125,12 +125,28 @@ func Verdict(c Choice) string {
 // retried, and one that still fails is logged and skipped: a transient failure
 // must not silently eat the rest of a job's output.
 func Deliver(ctx context.Context, t Transport, chat int64, text string, logf func(string, ...any)) {
+	deliver(ctx, t, chat, text, logf, nil)
+}
+
+// DeliverQueue is Deliver with an outbox: parts that still fail are kept for
+// the engine's background retries instead of being dropped.
+func DeliverQueue(ctx context.Context, t Transport, chat int64, text string, logf func(string, ...any), box *Outbox) {
+	deliver(ctx, t, chat, text, logf, box)
+}
+
+func deliver(ctx context.Context, t Transport, chat int64, text string, logf func(string, ...any), box *Outbox) {
 	parts := SplitMessage(text, t.MaxMessage(), t.Markdown())
 	if len(parts) > maxReplyParts {
 		parts = append(parts[:maxReplyParts-1:maxReplyParts-1], cutNote(maxReplyParts))
 	}
 	for _, part := range parts {
 		if err := sendWithRetry(ctx, t, chat, part); err != nil {
+			if box != nil {
+				if err := box.Enqueue(chat, part); err != nil && logf != nil {
+					logf("%s: cannot queue a failed message: %v", strings.ToLower(t.Service()), err)
+				}
+				continue
+			}
 			if logf != nil {
 				logf("%s: dropping a message after retries: %v", strings.ToLower(t.Service()), err)
 			}

@@ -111,28 +111,61 @@ var DefaultProtected = []string{
 }
 
 // RemoteFence is the file fence for another machine (SSH): the default
-// credential places under the remote user's home. Matching is lexical — the
-// far side's symlinks cannot be followed from here — so a link on that machine
-// that points into a protected place is not caught. Like the local fence, it
-// confines the file tools only, never the shell.
+// credential places under the remote user's home. Check matches lexically,
+// without asking the far machine; the file tools then resolve the path over
+// there and check the result with CheckAbs, so a link into a protected place
+// does not get through. Like the local fence, it confines the file tools
+// only, never the shell.
 type RemoteFence struct {
-	// Home is the remote user's home directory, without a trailing slash.
+	// Home is the remote user's home directory, resolved, without a trailing slash.
 	Home string
+	// Fold matches case-insensitively, for a far machine whose file system is
+	// (macOS).
+	Fold bool
+	// Resolved holds the resolved form of each DefaultProtected entry, "" where
+	// it is absent, so a protected place that is itself behind a link is still
+	// caught. Nil skips them.
+	Resolved []string
 }
 
 // Check returns ErrFenced if p is inside a protected place on the far machine.
 // A relative path is read against workdir, the remote working directory (""
-// for the remote home); ~/ paths against Home. The far machine is always
-// POSIX, so matching is exact: no case folding.
+// for the remote home); ~/ paths against Home.
 func (f *RemoteFence) Check(p, workdir string) error {
 	if f == nil || f.Home == "" {
 		return nil
 	}
-	abs := remoteAbs(f.Home, workdir, p)
+	return f.checkAbs(remoteAbs(f.Home, workdir, p), p)
+}
+
+// CheckAbs checks a path already made absolute and resolved on the far
+// machine; display is the path as written, for the error.
+func (f *RemoteFence) CheckAbs(abs, display string) error {
+	if f == nil || f.Home == "" {
+		return nil
+	}
+	return f.checkAbs(path.Clean(abs), display)
+}
+
+func (f *RemoteFence) checkAbs(abs, display string) error {
+	got := abs
+	if f.Fold {
+		got = strings.ToLower(got)
+	}
+	forms := make([]string, 0, len(DefaultProtected)+len(f.Resolved))
 	for _, rel := range DefaultProtected {
-		form := f.Home + "/" + rel
-		if abs == form || strings.HasPrefix(abs, form+"/") {
-			return fmt.Errorf("%w (%s)", ErrFenced, p)
+		forms = append(forms, f.Home+"/"+rel)
+	}
+	forms = append(forms, f.Resolved...)
+	for _, form := range forms {
+		if form == "" {
+			continue
+		}
+		if f.Fold {
+			form = strings.ToLower(form)
+		}
+		if got == form || strings.HasPrefix(got, form+"/") {
+			return fmt.Errorf("%w (%s)", ErrFenced, display)
 		}
 	}
 	return nil

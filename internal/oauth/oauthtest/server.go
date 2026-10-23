@@ -47,6 +47,7 @@ type Server struct {
 	PrivateTokenHost   string        // advertise a token endpoint at this address instead
 	ConfidentialID     string        // if set, only this client, with ConfidentialSecret, may use the token endpoint
 	ConfidentialSecret string
+	BasicAuthOnly      bool // advertise and require client_secret_basic: the secret in the header, never the body
 	Tools              []Tool
 
 	mu            sync.Mutex
@@ -147,6 +148,9 @@ func (s *Server) metadata(w http.ResponseWriter, r *http.Request) {
 		"issuer": issuer, "authorization_endpoint": s.URL + "/authorize", "token_endpoint": token,
 		"revocation_endpoint": s.URL + "/revoke", "token_endpoint_auth_methods_supported": []string{"none", "client_secret_post"},
 	}
+	if s.BasicAuthOnly {
+		md["token_endpoint_auth_methods_supported"] = []string{"client_secret_basic"}
+	}
 	if !s.NoPKCE {
 		md["code_challenge_methods_supported"] = []string{"S256"}
 	}
@@ -237,6 +241,10 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 	}
 	if s.ConfidentialID != "" && (clientID != s.ConfidentialID || secret != s.ConfidentialSecret) {
+		writeJSON(w, 401, map[string]any{"error": "invalid_client"})
+		return
+	}
+	if s.BasicAuthOnly && r.PostForm.Get("client_secret") != "" {
 		writeJSON(w, 401, map[string]any{"error": "invalid_client"})
 		return
 	}
