@@ -1,4 +1,4 @@
-/* Talaria: light by default, dark when the phone is. Fonts are served from here, not from a third party. */
+/* Talaria: light, always. Fonts are served from here, not from a third party. */
 @font-face{font-family:"Bricolage Grotesque";src:url(/fonts/bricolage.woff2) format("woff2");font-weight:500 700;font-display:swap}
 @font-face{font-family:"Instrument Sans";src:url(/fonts/instrument.woff2) format("woff2");font-weight:400 600;font-display:swap}
 @font-face{font-family:"JetBrains Mono";src:url(/fonts/jetbrains-mono.woff2) format("woff2");font-weight:400 500;font-display:swap}
@@ -18,20 +18,6 @@
   --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
   --tabh:76px;
 }
-@media (prefers-color-scheme:dark){
-  :root{
-    --bg:#0B0D11;--card:#12151B;--tab:#0E1015;--line:#232832;--line2:#1D222B;
-    --ink:#F3F1EA;--ink2:#C9CED8;--muted:#8A92A1;--faint:#727A89;
-    --bubble:#1C212B;--bubble-line:#272D39;--field:#12151B;--btn-line:#323946;
-    --brass-text:#F2B544;--brass-tint:#2A200A;--brass-soft:#14120C;--brass-line:#4A3A12;--tab-on:#181408;
-    --info:#8FB4FF;--info-tint:#1B2230;--info-soft:#0F1520;--info-line:#1F2C45;--info-ink:#B9CBF2;
-    --ok:#62D6A3;--ok-tint:#0F1F18;--ok-line:#1E4A37;
-    --bad:#FF7A6B;--bad-tint:#1F1211;--bad-line:#55231E;
-    --bar:#2A303B;--ring:#1E232D;--logo:#151922;
-    --shadow:none;
-  }
-}
-
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.45;-webkit-text-size-adjust:100%;overscroll-behavior:none}
 body{overflow:hidden}
