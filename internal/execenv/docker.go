@@ -165,6 +165,8 @@ func (d *dockerEnv) command(ctx context.Context, script string, args []string) *
 }
 
 // stop removes a container we started. One we merely attached to is left running.
+// Cleanup runs detached: it must go out even when the request that owned the
+// environment is already done, or containers leak.
 func (d *dockerEnv) stop() {
 	if !d.managed {
 		return

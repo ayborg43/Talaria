@@ -233,7 +233,9 @@ func (b Binding) update(ctx context.Context, raw json.RawMessage) (string, error
 	return "updated.\n" + b.line(w), nil
 }
 
-// Summary lists a chat's watches, for a command typed in the chat.
+// Summary lists a chat's watches, for a command typed in the chat. Chat
+// commands carry no context, and listing is local store reads, so there is
+// nothing to cancel.
 func (b Binding) Summary() string {
 	out, err := b.list(context.Background(), nil)
 	if err != nil {
@@ -242,7 +244,9 @@ func (b Binding) Summary() string {
 	return out
 }
 
-// Do pauses, resumes or deletes a watch, for a command typed in the chat.
+// Do pauses, resumes or deletes a watch, for a command typed in the chat. Chat
+// commands carry no context, and updating is local store writes, so there is
+// nothing to cancel.
 func (b Binding) Do(id, action string) string {
 	raw, _ := json.Marshal(map[string]string{"id": id, "action": action})
 	out, err := b.update(context.Background(), raw)

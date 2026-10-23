@@ -2,10 +2,12 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"talaria/internal/provider"
 	"talaria/internal/tool"
@@ -28,6 +30,79 @@ func newAgent(p provider.Provider) *Agent {
 	reg := tool.NewRegistry()
 	tool.RegisterBuiltins(reg)
 	return &Agent{Provider: p, Model: "test", Tools: reg}
+}
+
+// A tool that ignores cancellation cannot be killed, but the chat must not
+// wedge behind it: when the time is up the call is abandoned and the model is
+// told it timed out.
+func TestAToolThatIgnoresCancellationIsAbandonedOnTimeout(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(tool.Tool{Name: "hang", Run: func(context.Context, json.RawMessage) (string, error) {
+		select {}
+	}})
+	p := &scripted{replies: []provider.Message{
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "1", Name: "hang", Arguments: `{}`}}},
+		{Role: provider.RoleAssistant, Content: "done"},
+	}}
+	a := &Agent{Provider: p, Model: "test", Tools: reg, ToolTimeout: 50 * time.Millisecond}
+	start := time.Now()
+	got, err := a.Run(context.Background(), "hang")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "done" || time.Since(start) > 5*time.Second {
+		t.Fatalf("the run wedged: %q in %s", got, time.Since(start))
+	}
+	last := p.seen[1][len(p.seen[1])-1]
+	if last.Role != provider.RoleTool || !strings.Contains(last.Content, "timed out after 50ms") {
+		t.Fatalf("the model was not told about the timeout: %+v", last)
+	}
+}
+
+// When the run itself ends first, the tool reports that — not a timeout.
+func TestAToolReportsACancelledRunAsCancelled(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Register(tool.Tool{Name: "hang", Run: func(context.Context, json.RawMessage) (string, error) {
+		select {}
+	}})
+	p := &scripted{replies: []provider.Message{
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "1", Name: "hang", Arguments: `{}`}}},
+		{Role: provider.RoleAssistant, Content: "done"},
+	}}
+	a := &Agent{Provider: p, Model: "test", Tools: reg}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	if _, err := a.Run(ctx, "hang"); err != nil {
+		t.Fatal(err)
+	}
+	last := p.seen[1][len(p.seen[1])-1]
+	if !strings.Contains(last.Content, "context canceled") || strings.Contains(last.Content, "timed out") {
+		t.Fatalf("a cancelled run must not look like a timeout: %+v", last)
+	}
+}
+
+func TestToolTimeoutStretchesToTheRunsRemainingTime(t *testing.T) {
+	a := &Agent{}
+	if got := a.toolTimeout(context.Background()); got != 10*time.Minute {
+		t.Fatalf("no deadline: %s", got)
+	}
+	long, cancelLong := context.WithTimeout(context.Background(), 2*time.Hour)
+	defer cancelLong()
+	if got := a.toolTimeout(long); got < time.Hour || got > 2*time.Hour {
+		t.Fatalf("a 2h run keeps less than its budget: %s", got)
+	}
+	short, cancelShort := context.WithTimeout(context.Background(), time.Minute)
+	defer cancelShort()
+	if got := a.toolTimeout(short); got != 10*time.Minute {
+		t.Fatalf("a short run must not shrink the ceiling: %s", got)
+	}
+	explicit := &Agent{ToolTimeout: time.Minute}
+	if got := explicit.toolTimeout(long); got != time.Minute {
+		t.Fatalf("an explicit timeout loses: %s", got)
+	}
 }
 
 func TestRunExecutesToolThenAnswers(t *testing.T) {

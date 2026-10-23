@@ -98,6 +98,12 @@ type Agent struct {
 	Tools    *tool.Registry
 	System   string
 	MaxSteps int
+	// ToolTimeout bounds one tool call; default 10 minutes. A tool that
+	// ignores cancellation cannot be killed, so when the time is up the call
+	// is abandoned and the model is told it timed out, instead of wedging the
+	// chat behind it. The run's own remaining time stretches the default, so a
+	// long job budget is not cut short by it.
+	ToolTimeout time.Duration
 	// Context, if set, returns extra text for the system prompt. It is asked for
 	// on every model call and is not kept in the conversation, so it can change
 	// as the conversation goes on (for instance when the user moves the agent's
@@ -388,7 +394,7 @@ func (a *Agent) execute(ctx context.Context, call provider.ToolCall) (res execRe
 		a.OnToolStart(call.Name, call.Arguments)
 	}
 	start := time.Now()
-	out, err := t.Execute(ctx, []byte(call.Arguments))
+	out, err := a.executeTool(ctx, t, call.Arguments)
 	entry.Took = time.Since(start)
 	if err != nil {
 		entry.Status = "error"
@@ -410,4 +416,59 @@ func (a *Agent) scrub(s string) string {
 		return s
 	}
 	return a.Gate.Scrub(s)
+}
+
+// defaultToolTimeout bounds one tool call when nothing else does: a chat's
+// tools run without a deadline, and a tool that ignores cancellation must not
+// wedge the chat behind it forever.
+const defaultToolTimeout = 10 * time.Minute
+
+// toolTimeout is how long one tool call may take: an explicit ToolTimeout, or
+// the default stretched to the run's own remaining time, so a long job budget
+// is not cut short by it.
+func (a *Agent) toolTimeout(ctx context.Context) time.Duration {
+	if a.ToolTimeout > 0 {
+		return a.ToolTimeout
+	}
+	timeout := defaultToolTimeout
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > timeout {
+			timeout = remaining
+		}
+	}
+	return timeout
+}
+
+// executeTool runs one tool call with a timeout. A tool that ignores
+// cancellation cannot be killed — nothing stops a goroutine — so when the time
+// is up the call is abandoned: the model is told it timed out and the chat
+// moves on, while the stray goroutine keeps the cancelled context and ends
+// whenever it ends. A crash in the tool is reported, never propagated.
+func (a *Agent) executeTool(ctx context.Context, t tool.Tool, args string) (tool.Result, error) {
+	timeout := a.toolTimeout(ctx)
+	tctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	type outcome struct {
+		out tool.Result
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- outcome{err: fmt.Errorf("the tool crashed: %v", r)}
+			}
+		}()
+		out, err := t.Execute(tctx, []byte(args))
+		done <- outcome{out, err}
+	}()
+	select {
+	case o := <-done:
+		return o.out, o.err
+	case <-tctx.Done():
+		if ctx.Err() != nil { // the run itself ended; the timeout did not fire
+			return tool.Result{}, ctx.Err()
+		}
+		return tool.Result{}, fmt.Errorf("timed out after %s", timeout)
+	}
 }

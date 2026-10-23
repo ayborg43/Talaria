@@ -183,7 +183,7 @@ func (c *httpConn) readStream(ctx context.Context, body io.Reader, id int64, hea
 		}
 		switch {
 		case m.isServerRequest():
-			go c.reply(&m, headers) // older revisions allow pings on the stream
+			go c.reply(ctx, &m, headers) // older revisions allow pings on the stream
 		case m.isResponse() && m.idMatches(id):
 			answer = &m
 			return sse.Stop
@@ -202,8 +202,8 @@ func (c *httpConn) readStream(ctx context.Context, body io.Reader, id int64, hea
 	return answer, nil
 }
 
-func (c *httpConn) reply(req *rpcMsg, headers map[string]string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func (c *httpConn) reply(ctx context.Context, req *rpcMsg, headers map[string]string) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if resp, _, err := c.post(ctx, answerServerRequest(req), headers); err == nil {
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
@@ -232,7 +232,9 @@ func (c *httpConn) notify(ctx context.Context, method string, params any, header
 	return nil
 }
 
-// close ends the session if the server gave us one.
+// close ends the session if the server gave us one. Cleanup runs detached: it
+// must go out even when the request that owned the connection is already done,
+// or server sessions leak.
 func (c *httpConn) close() {
 	session := c.sessionID()
 	if session == "" {

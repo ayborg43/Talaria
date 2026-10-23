@@ -149,6 +149,8 @@ func (p *Page) onEvent(ev event) {
 		// An alert is only information, so it is accepted. A question (confirm,
 		// prompt, leaving the page) is refused: the agent did not choose to answer it.
 		accept := d.Type == "alert"
+		// Detached on purpose: events carry no request context, and the call
+		// fails fast if the connection is already dead.
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -607,7 +609,8 @@ func (p *Page) Reset(ctx context.Context) {
 	p.refs = map[int]Element{}
 }
 
-// close closes the tab.
+// close closes the tab. Cleanup runs detached: it must go out even when the
+// request that owned the tab is already done.
 func (p *Page) close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

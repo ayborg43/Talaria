@@ -297,7 +297,9 @@ func (c *Client) reinitialize(ctx context.Context, seen uint64) error {
 }
 
 // cancel tells the server we gave up on a request. On the stateless HTTP
-// binding, dropping the connection already did that.
+// binding, dropping the connection already did that. This runs detached on
+// purpose: it is sent exactly because the request's own context is done, so
+// deriving from it would guarantee it never goes out.
 func (c *Client) cancel(id int64, modern bool, version string) {
 	if modern && c.conn.isHTTP() {
 		return
