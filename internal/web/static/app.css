@@ -252,7 +252,7 @@ b,strong{font-weight:600}
 /* desktop: sidebar nav, wider content, two-column cards */
 @media (min-width:900px){
 .app{flex-direction:row}
-.tabs{flex-direction:column;justify-content:flex-start;width:236px;gap:4px;padding:22px 12px;border-top:0;border-right:1px solid var(--line2);overflow-y:auto}
+.tabs{order:-1;flex-direction:column;justify-content:flex-start;width:236px;gap:4px;padding:22px 12px;border-top:0;border-right:1px solid var(--line2);overflow-y:auto}
 .tabs::before{content:"Talaria";font-family:var(--display);font-weight:700;font-size:23px;letter-spacing:-.02em;padding:2px 14px 18px}
 .tabs a{flex:none;width:100%;max-width:none;flex-direction:row;align-items:center;gap:12px;min-height:0;padding:10px 14px;font-size:14.5px;text-align:left}
 .tabs a svg{width:22px;height:22px;flex:none}
