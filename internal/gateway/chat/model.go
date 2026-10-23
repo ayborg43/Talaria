@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,6 +20,12 @@ type Backend struct {
 	Provider provider.Provider
 	Model    string
 	Desc     string // for display, e.g. "anthropic, claude-sonnet-5-5"
+	// Vision and Reasoning say what the model can do, so the router can pick
+	// it: images, and thinking with a per-request effort. Best holds the
+	// strengths the profile claims ("code", "cheap").
+	Vision    bool
+	Reasoning bool
+	Best      []string
 }
 
 // Backends lets each chat pick among the configured model profiles with /model.
@@ -28,10 +35,23 @@ type Backends struct {
 	// Open returns the backend for a profile. An error says why it cannot be
 	// used right now (a missing API key, say); the gateway shows it to the user.
 	Open func(name string) (Backend, error)
+	// OpenEffort is Open with a reasoning effort ("low" or "high") for models
+	// that think; other models ignore it. It may be nil, and then effort is
+	// whatever the profile says. Backends built without it route without effort.
+	OpenEffort func(name, effort string) (Backend, error)
 	// Forget drops cached providers, so the next Open rebuilds them from the
 	// current config. Call it after profiles are added, changed or removed.
 	// It may be nil, when there is nothing cached.
 	Forget func()
+	// List returns every profile a chat may pick, sorted; includes Default.
+	// When nil, Names is the list, frozen from startup.
+	List func() []string
+}
+
+// ModelNoter is an optional extra for a Transport that shows which model
+// answered: told after each task, so the page can name it.
+type ModelNoter interface {
+	NoteModel(chat int64, model string)
 }
 
 // ChatPrefs remembers each chat's choices across restarts.
@@ -177,7 +197,14 @@ func (e *Engine) SetProfile(chatID int64, name string) error {
 	c.profile = stored
 	c.mu.Unlock()
 	if e.Prefs != nil {
-		return e.Prefs.SetProfile(chatID, stored)
+		if err := e.Prefs.SetProfile(chatID, stored); err != nil {
+			return err
+		}
+	}
+	if be, err := b.Open(name); err == nil {
+		if mn, ok := e.T.(ModelNoter); ok {
+			mn.NoteModel(chatID, be.Model)
+		}
 	}
 	return nil
 }
@@ -255,19 +282,130 @@ func (g *Engine) handleModel(c *chat, args []string) {
 	g.send(c.id, reply)
 }
 
-// applyBackend points the chat's agent at the model the chat has chosen. It
-// runs before each task, so a choice made mid-conversation takes effect on the
+// profiles is every profile a chat may pick: live when the backends know how
+// to list them, else the names frozen from startup.
+func (b *Backends) profiles() []string {
+	if b.List != nil {
+		return b.List()
+	}
+	return b.Names
+}
+
+// Routing signals, read from the message: code fences and programming words,
+// and words that ask for hard thinking.
+var (
+	codeSignal = regexp.MustCompile("(?i)```|\\b(func|function|class|struct|import|error|traceback|debug|refactor|compile|regex|recursion|pointer)\\b")
+	hardSignal = regexp.MustCompile("(?i)\\b(prove|proof|theorem|derive|derivation|complexity|architect|trade-?off|research deeply)\\b")
+)
+
+// effortFor tunes a thinking model: full effort for code and hard questions,
+// light effort for the plain rest.
+func effortFor(text string) string {
+	if codeSignal.MatchString(text) || hardSignal.MatchString(text) {
+		return "high"
+	}
+	return "low"
+}
+
+// route picks the profile and reasoning effort for one message. An explicit
+// choice always wins: routing then only tunes the effort. It returns "", ""
+// when the default path should be used unchanged: under two usable backends,
+// or nothing the message asks for.
+func (e *Engine) route(text, pinned string) (name, effort string) {
+	b := e.Backends
+	if b == nil || b.Open == nil {
+		return "", ""
+	}
+	type candidate struct {
+		name string
+		be   Backend
+	}
+	var usable []candidate
+	for _, n := range b.profiles() {
+		be, err := b.Open(n)
+		if err != nil {
+			continue
+		}
+		usable = append(usable, candidate{n, be})
+	}
+	if len(usable) < 2 {
+		return "", ""
+	}
+	for _, c := range usable {
+		if c.name == pinned && c.be.Reasoning {
+			return "", effortFor(text)
+		}
+	}
+	if pinned != "" {
+		return "", ""
+	}
+	claims := func(c candidate, want string) bool { return slices.Contains(c.be.Best, want) }
+	pick := func(want func(candidate) bool) string {
+		for _, c := range usable {
+			if want(c) {
+				return c.name
+			}
+		}
+		return ""
+	}
+	code, hard := codeSignal.MatchString(text), hardSignal.MatchString(text)
+	switch {
+	case code:
+		name = pick(func(c candidate) bool { return claims(c, "code") })
+		if name == "" {
+			name = pick(func(c candidate) bool { return c.be.Reasoning })
+		}
+	case hard:
+		name = pick(func(c candidate) bool { return c.be.Reasoning })
+	default:
+		// Short and plain goes cheap; anything with substance stays on the default.
+		if len([]rune(text)) < 80 {
+			name = pick(func(c candidate) bool { return claims(c, "cheap") })
+		}
+	}
+	effort = ""
+	for _, c := range usable {
+		if (name != "" && c.name == name) || (name == "" && c.name == b.Default) {
+			if c.be.Reasoning {
+				effort = effortFor(text)
+			}
+		}
+	}
+	if name == b.Default {
+		name = ""
+	}
+	return name, effort
+}
+
+// applyBackend points the chat's agent at the model for this task: the chat's
+// explicit choice, or the router's pick when it follows the default. It runs
+// before each task, so a choice made mid-conversation takes effect on the
 // next message and the history carries over. A saved profile that no longer
 // works is replaced by the default, with a note.
-func (g *Engine) applyBackend(c *chat, a *agent.Agent) {
+func (g *Engine) applyBackend(c *chat, a *agent.Agent, text string) {
 	b := g.Backends
 	if b == nil {
 		return
 	}
-	name := g.selected(c)
-	be, err := b.Open(name)
-	if err != nil && name != b.Default {
-		g.send(c.id, fmt.Sprintf("The %s profile cannot be used now (%v), so I'm using %s.", name, err, b.Default))
+	c.mu.Lock()
+	pinned := c.profile
+	c.mu.Unlock()
+	name, effort := g.route(text, pinned)
+	use := pinned
+	if use == "" {
+		use = b.Default
+	}
+	if name != "" {
+		use = name
+	}
+	open := b.Open
+	if effort != "" && b.OpenEffort != nil {
+		eff := effort
+		open = func(n string) (Backend, error) { return b.OpenEffort(n, eff) }
+	}
+	be, err := open(use)
+	if err != nil && use != b.Default {
+		g.send(c.id, fmt.Sprintf("The %s profile cannot be used now (%v), so I'm using %s.", use, err, b.Default))
 		c.mu.Lock()
 		c.profile = ""
 		c.mu.Unlock()
@@ -281,4 +419,7 @@ func (g *Engine) applyBackend(c *chat, a *agent.Agent) {
 		return
 	}
 	a.Provider, a.Model = be.Provider, be.Model
+	if mn, ok := g.T.(ModelNoter); ok {
+		mn.NoteModel(c.id, be.Model)
+	}
 }

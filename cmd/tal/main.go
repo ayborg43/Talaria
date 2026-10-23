@@ -723,38 +723,65 @@ func gatewayBackends(cfg *config.Config, def config.Resolved, defProvider provid
 	describe := func(r config.Resolved) string { return r.Type + ", " + r.Model }
 
 	var mu sync.Mutex
-	cache := map[string]chat.Backend{
-		def.Name: {Provider: defProvider, Model: def.Model, Desc: describe(def)},
-	}
-	names := cfg.ProfileNames()
-	if !slices.Contains(names, def.Name) { // the implicit "default" profile of a config-less setup
-		names = append(names, def.Name)
+	listProfiles := func() []string {
+		names := cfg.ProfileNames()
+		if !slices.Contains(names, def.Name) { // the implicit "default" profile of a config-less setup
+			names = append(names, def.Name)
+		}
 		slices.Sort(names)
+		return names
+	}
+	// traits says what a resolved profile can do, so the router can pick it.
+	traits := func(name string, r config.Resolved) (vision, reasoning bool, best []string) {
+		return !r.NoVision, r.Type == provider.TypeDeepSeek, cfg.Profiles[name].BestFor
+	}
+	build := func(name, effort string) (chat.Backend, error) {
+		r, err := cfg.Resolve(config.Overrides{Profile: name}, getenv)
+		if err != nil {
+			return chat.Backend{}, err
+		}
+		if err := r.CheckKey(); err != nil {
+			return chat.Backend{}, err
+		}
+		spec := r.Spec()
+		if effort != "" && r.Type == provider.TypeDeepSeek {
+			spec.ReasoningEffort = effort
+		}
+		p, err := provider.New(spec)
+		if err != nil {
+			return chat.Backend{}, err
+		}
+		vision, reasoning, best := traits(name, r)
+		return chat.Backend{Provider: p, Model: r.Model, Desc: describe(r), Vision: vision, Reasoning: reasoning, Best: best}, nil
+	}
+	// The default keeps the provider already built for it, which may carry
+	// startup overrides; profiles edited in Settings rebuild from config.
+	cache := map[string]chat.Backend{
+		def.Name: {Provider: defProvider, Model: def.Model, Desc: describe(def),
+			Vision: !def.NoVision, Reasoning: def.Type == provider.TypeDeepSeek, Best: cfg.Profiles[def.Name].BestFor},
 	}
 
 	return &chat.Backends{
 		Default: def.Name,
-		Names:   names,
+		Names:   listProfiles(),
+		List:    listProfiles,
 		Open: func(name string) (chat.Backend, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			if b, ok := cache[name]; ok {
 				return b, nil
 			}
-			r, err := cfg.Resolve(config.Overrides{Profile: name}, getenv)
+			b, err := build(name, "")
 			if err != nil {
 				return chat.Backend{}, err
 			}
-			if err := r.CheckKey(); err != nil {
-				return chat.Backend{}, err
-			}
-			p, err := provider.New(r.Spec())
-			if err != nil {
-				return chat.Backend{}, err
-			}
-			b := chat.Backend{Provider: p, Model: r.Model, Desc: describe(r)}
 			cache[name] = b
 			return b, nil
+		},
+		OpenEffort: func(name, effort string) (chat.Backend, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return build(name, effort)
 		},
 		Forget: func() {
 			mu.Lock()

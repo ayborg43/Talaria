@@ -60,6 +60,8 @@ type Event struct {
 	On   bool     `json:"on,omitempty"` // run: whether the agent is working
 	// Agents is who is working, on an event of type agents. Empty (and so left out) means nobody.
 	Agents []activity.Worker `json:"agents,omitempty"`
+	// Model is the model answering, on run events: which backend the task uses.
+	Model string `json:"model,omitempty"`
 }
 
 // Finished is a helper or a piece of background work that has ended, for the Agents screen.
@@ -96,26 +98,27 @@ type Hub struct {
 	// QuietAfter is how long a reply must stay unchanged before a notification is sent about it.
 	QuietAfter time.Duration
 
-	mu       sync.Mutex
-	loaded   bool
-	msgs     []*Message
-	byID     map[int64]*Message
-	nextID   int64
-	seq      int64
-	epoch    int64 // which run of Talaria this is: a page from an earlier run starts again
-	changes  []change
-	subs     map[*sub]struct{}
-	running  bool
-	recent   []Finished                 // newest last
-	workers  map[int64]*activity.Worker // who is working now
-	lastWork int64
-	mainID   int64          // the main agent's number while it works
-	tools    map[string]int // tools the main agent is running now, and how many of each
-	seen     time.Time      // when the page last said it was open and in view
-	timers   map[int64]*time.Timer
-	activity map[int64]int // tool calls and messages per hour, by the hour's Unix time / 3600
-	saveT    *time.Timer
-	closed   bool
+	mu        sync.Mutex
+	loaded    bool
+	msgs      []*Message
+	byID      map[int64]*Message
+	nextID    int64
+	seq       int64
+	epoch     int64 // which run of Talaria this is: a page from an earlier run starts again
+	changes   []change
+	subs      map[*sub]struct{}
+	running   bool
+	lastModel string                     // the model the latest task used, for display
+	recent    []Finished                 // newest last
+	workers   map[int64]*activity.Worker // who is working now
+	lastWork  int64
+	mainID    int64          // the main agent's number while it works
+	tools     map[string]int // tools the main agent is running now, and how many of each
+	seen      time.Time      // when the page last said it was open and in view
+	timers    map[int64]*time.Timer
+	activity  map[int64]int // tool calls and messages per hour, by the hour's Unix time / 3600
+	saveT     *time.Timer
+	closed    bool
 }
 
 func (h *Hub) now() time.Time {
@@ -535,7 +538,7 @@ func (h *Hub) setRunning(on bool) {
 	defer h.mu.Unlock()
 	h.init()
 	h.running = on
-	h.fan(Event{Seq: h.seq, Type: "run", On: on})
+	h.fan(Event{Seq: h.seq, Type: "run", On: on, Model: h.lastModel})
 	if on {
 		h.mainID = h.startLocked(activity.Main, "Talaria")
 		return
@@ -557,6 +560,21 @@ func (h *Hub) setRunning(on bool) {
 		}
 	}
 	h.pushAgents()
+}
+
+// NoteModel records which model answered, so the page can name it. It says
+// nothing by itself: run events and the state carry it to the page.
+func (h *Hub) NoteModel(_ int64, model string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.lastModel = model
+}
+
+// Model is the model the latest task used, or "" before the first one.
+func (h *Hub) Model() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.lastModel
 }
 
 // ---- activity.Sink: who is working ----

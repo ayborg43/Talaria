@@ -483,6 +483,114 @@ func TestSwitchingModelsNeedsMoreThanOne(t *testing.T) {
 	if resp, _ := r.do("POST", "/api/settings", map[string]string{"use_profile": "x"}); resp.StatusCode != 503 {
 		t.Fatalf("%d", resp.StatusCode)
 	}
+	if resp, _ := r.do("POST", "/api/settings", map[string]string{"test_profile": "x"}); resp.StatusCode != 503 {
+		t.Fatalf("%d", resp.StatusCode)
+	}
+}
+
+// chatFailer is a model that answers nothing: the key is dead.
+type chatFailer struct{}
+
+func (chatFailer) Chat(context.Context, provider.Request) (provider.Message, error) {
+	return provider.Message{}, errors.New("the key was refused")
+}
+
+func TestProfilesAnswerWhenTested(t *testing.T) {
+	r := newRig(t)
+	r.srv.Cfg = &config.Config{Profiles: map[string]config.Profile{
+		"main": {Type: "openai", Model: "m1", APIKey: "k"},
+	}}
+	r.srv.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	r.srv.Engine.Backends = &chat.Backends{
+		Default: "main",
+		Open: func(name string) (chat.Backend, error) {
+			switch name {
+			case "main":
+				return chat.Backend{Provider: scripted{}, Model: "m1"}, nil
+			case "flaky":
+				return chat.Backend{Provider: chatFailer{}, Model: "m9"}, nil
+			}
+			return chat.Backend{}, errors.New("no profile named " + name)
+		},
+	}
+	r.login()
+
+	resp, b := r.do("POST", "/api/settings", map[string]string{"test_profile": "main"})
+	if resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	var got struct {
+		Model string `json:"model"`
+		Reply string `json:"reply"`
+	}
+	if err := json.Unmarshal(b, &got); err != nil || got.Model != "m1" || got.Reply == "" {
+		t.Fatalf("a working profile: %s %v", b, err)
+	}
+	for name, want := range map[string]int{"flaky": 502, "nope": 502} {
+		if resp, b := r.do("POST", "/api/settings", map[string]string{"test_profile": name}); resp.StatusCode != want {
+			t.Fatalf("%s: %d %s", name, resp.StatusCode, b)
+		}
+	}
+}
+
+func TestProfileStrengthsRoundTrip(t *testing.T) {
+	r := newRig(t)
+	r.srv.Cfg = &config.Config{}
+	r.srv.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	r.login()
+	if resp, _ := r.do("POST", "/api/settings", map[string]any{"name": "coder", "type": "openai", "model": "m", "api_key": "k", "best_for": []string{"code", "cheap"}}); resp.StatusCode != 200 {
+		t.Fatalf("add: %d", resp.StatusCode)
+	}
+	if resp, _ := r.do("POST", "/api/settings", map[string]any{"name": "bad", "best_for": []string{"fly"}}); resp.StatusCode != 400 {
+		t.Fatalf("an unknown strength: %d", resp.StatusCode)
+	}
+	_, b := r.do("GET", "/api/settings", nil)
+	var view struct {
+		Strengths []string `json:"strengths"`
+		Profiles  []struct {
+			Name string   `json:"name"`
+			Best []string `json:"best"`
+		} `json:"profiles"`
+	}
+	if err := json.Unmarshal(b, &view); err != nil {
+		t.Fatalf("bad settings json: %v", err)
+	}
+	if len(view.Strengths) != 2 || len(view.Profiles) != 1 || len(view.Profiles[0].Best) != 2 {
+		t.Fatalf("%+v", view)
+	}
+	if resp, _ := r.do("POST", "/api/settings", map[string]any{"name": "coder", "best_for": []string{}}); resp.StatusCode != 200 {
+		t.Fatalf("clear: %d", resp.StatusCode)
+	}
+	if got := r.srv.Cfg.Profiles["coder"].BestFor; len(got) != 0 {
+		t.Fatalf("clearing leaves %v", got)
+	}
+}
+
+func TestThePageSeesWhichModelAnswered(t *testing.T) {
+	r := newRig(t)
+	r.srv.Engine.Backends = &chat.Backends{
+		Default: "main",
+		Open: func(name string) (chat.Backend, error) {
+			if name != "main" {
+				return chat.Backend{}, errors.New("no profile named " + name)
+			}
+			return chat.Backend{Provider: scripted{}, Model: "m1"}, nil
+		},
+	}
+	r.login()
+	_, seq, epoch := r.state()
+	ch := r.watch(seq, epoch)
+	r.do("POST", "/api/send", map[string]string{"text": "hello"})
+	until(t, ch, "the run finishing with its model", func(e Event) bool {
+		return e.Type == "run" && !e.On && e.Model == "m1"
+	})
+	_, b := r.do("GET", "/api/state", nil)
+	var st struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(b, &st); err != nil || st.Model != "m1" {
+		t.Fatalf("the state names %q: %s", st.Model, b)
+	}
 }
 
 func TestEveryResponseCarriesTheProtections(t *testing.T) {

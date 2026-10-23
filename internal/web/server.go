@@ -308,9 +308,13 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs, "seq": seq, "epoch": epoch, "running": running, "agents": s.Hub.Workers(), "model": s.activeModel(), "version": s.Version, "paused": paused, "zone": s.zone().String()})
 }
 
-// activeModel is the model this chat is talking to: its chosen profile's, or
-// the server's when switching is not set up or the choice cannot be used.
+// activeModel is the model this chat is talking to: what answered last, or
+// its chosen profile's, or the server's when switching is not set up or the
+// choice cannot be used.
 func (s *Server) activeModel() string {
+	if m := s.Hub.Model(); m != "" {
+		return m
+	}
 	if s.Engine != nil && s.Engine.Backends != nil {
 		if be, err := s.Engine.Backends.Open(s.Engine.ActiveProfile(ChatID)); err == nil && be.Model != "" {
 			return be.Model
@@ -327,6 +331,7 @@ type settingsView struct {
 	ActiveProfile       string            `json:"active_profile"` // the profile this chat is using; "" when switching is not set up
 	Profiles            []settingsProfile `json:"profiles"`
 	Presets             []config.Preset   `json:"presets"`         // one-click starting points for a new profile
+	Strengths           []string          `json:"strengths"`       // labels a profile can claim, so the router picks it
 	HasDefaultKey       bool              `json:"has_default_key"` // TALARIA_API_KEY is set
 	DefaultKeyEnv       string            `json:"default_key_env"`
 	DefaultKeySet       bool              `json:"default_key_set"`
@@ -336,17 +341,19 @@ type settingsView struct {
 }
 
 type settingsProfile struct {
-	Name      string `json:"name"`
-	Type      string `json:"type,omitempty"`
-	BaseURL   string `json:"base_url,omitempty"`
-	Model     string `json:"model,omitempty"`
-	APIKeyEnv string `json:"api_key_env,omitempty"`
-	HasKey    bool   `json:"has_key"` // a key is configured for this profile
-	KeySource string `json:"key_source,omitempty"`
-	Active    bool   `json:"active,omitempty"`    // this chat is using it
-	Default   bool   `json:"default,omitempty"`   // chats use it until they pick another
-	Available bool   `json:"available,omitempty"` // it can be used right now
-	Status    string `json:"status,omitempty"`    // what it is, or why it cannot be used
+	Name      string   `json:"name"`
+	Type      string   `json:"type,omitempty"`
+	BaseURL   string   `json:"base_url,omitempty"`
+	Model     string   `json:"model,omitempty"`
+	APIKeyEnv string   `json:"api_key_env,omitempty"`
+	HasKey    bool     `json:"has_key"` // a key is configured for this profile
+	KeySource string   `json:"key_source,omitempty"`
+	Active    bool     `json:"active,omitempty"`    // this chat is using it
+	Default   bool     `json:"default,omitempty"`   // chats use it until they pick another
+	Available bool     `json:"available,omitempty"` // it can be used right now
+	Status    string   `json:"status,omitempty"`    // what it is, or why it cannot be used
+	Best      []string `json:"best,omitempty"`      // what it is good at, for the router
+	Traits    []string `json:"traits,omitempty"`    // what it can do: vision, reasoning
 }
 
 func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
@@ -360,6 +367,7 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 		SubagentMaxParallel: s.Cfg.Subagents.MaxParallel,
 		KeyEnvs:             config.DefaultKeyEnvs(),
 		Presets:             config.Presets(),
+		Strengths:           config.ProfileStrengths,
 	}
 	var backends *chat.Backends
 	if s.Engine != nil {
@@ -374,7 +382,7 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 		view.DefaultKeySet = true
 	}
 	for name, p := range s.Cfg.Profiles {
-		sp := settingsProfile{Name: name, Type: p.Type, BaseURL: p.BaseURL, Model: p.Model, APIKeyEnv: p.APIKeyEnv}
+		sp := settingsProfile{Name: name, Type: p.Type, BaseURL: p.BaseURL, Model: p.Model, APIKeyEnv: p.APIKeyEnv, Best: p.BestFor}
 		if p.APIKey != "" {
 			sp.HasKey = true
 			sp.KeySource = "api_key in the config file"
@@ -387,6 +395,12 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 			} else {
 				sp.Available = true
 				sp.Status = be.Desc
+				if be.Vision {
+					sp.Traits = append(sp.Traits, "vision")
+				}
+				if be.Reasoning {
+					sp.Traits = append(sp.Traits, "reasoning")
+				}
 			}
 		}
 		view.Profiles = append(view.Profiles, sp)
@@ -397,14 +411,16 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 
 // settingsUpdateRequest is the payload for POST /api/settings.
 type settingsUpdateRequest struct {
-	Name       string `json:"name"`
-	Type       string `json:"type,omitempty"`
-	BaseURL    string `json:"base_url,omitempty"`
-	Model      string `json:"model,omitempty"`
-	APIKey     string `json:"api_key,omitempty"`
-	APIKeyEnv  string `json:"api_key_env,omitempty"`
-	Delete     bool   `json:"_delete,omitempty"`
-	UseProfile string `json:"use_profile,omitempty"` // switch this chat to a profile, saving nothing
+	Name        string   `json:"name"`
+	Type        string   `json:"type,omitempty"`
+	BaseURL     string   `json:"base_url,omitempty"`
+	Model       string   `json:"model,omitempty"`
+	APIKey      string   `json:"api_key,omitempty"`
+	APIKeyEnv   string   `json:"api_key_env,omitempty"`
+	Delete      bool     `json:"_delete,omitempty"`
+	UseProfile  string   `json:"use_profile,omitempty"`  // switch this chat to a profile, saving nothing
+	TestProfile string   `json:"test_profile,omitempty"` // send one tiny prompt through a profile, saving nothing
+	BestFor     []string `json:"best_for,omitempty"`     // what the profile is good at, for the router
 }
 
 func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
@@ -424,6 +440,29 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
+	if in.TestProfile != "" {
+		if s.Engine == nil || s.Engine.Backends == nil {
+			fail(w, http.StatusServiceUnavailable, "only one model is configured")
+			return
+		}
+		name := strings.TrimSpace(in.TestProfile)
+		be, err := s.Engine.Backends.Open(name)
+		if err != nil {
+			fail(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		msg, err := be.Provider.Chat(ctx, provider.Request{Model: be.Model, Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: "Reply with exactly the word: ok"},
+		}})
+		if err != nil {
+			fail(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "model": be.Model, "reply": firstLine(msg.Content)})
+		return
+	}
 	if s.Cfg == nil || s.ConfigPath == "" {
 		fail(w, http.StatusInternalServerError, "settings cannot be saved here")
 		return
@@ -438,6 +477,12 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, fmt.Sprintf("unknown profile type %q (use %q, %q or %q)", in.Type, provider.TypeOpenAI, provider.TypeAnthropic, provider.TypeDeepSeek))
 		return
 	}
+	for _, b := range in.BestFor {
+		if !slices.Contains(config.ProfileStrengths, b) {
+			fail(w, http.StatusBadRequest, fmt.Sprintf("best_for must be any of: %s", strings.Join(config.ProfileStrengths, ", ")))
+			return
+		}
+	}
 	// Copy on write: the engine reads these profiles while chats run.
 	profiles := make(map[string]config.Profile, len(s.Cfg.Profiles)+1)
 	for k, v := range s.Cfg.Profiles {
@@ -449,6 +494,9 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		// Edit existing profile
 		if in.Type != "" {
 			p.Type = in.Type
+		}
+		if in.BestFor != nil {
+			p.BestFor = in.BestFor
 		}
 		if in.BaseURL != "" {
 			p.BaseURL = in.BaseURL
@@ -465,7 +513,7 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		}
 		profiles[in.Name] = p
 	} else {
-		p := config.Profile{Type: in.Type, BaseURL: in.BaseURL, Model: in.Model, APIKeyEnv: in.APIKeyEnv}
+		p := config.Profile{Type: in.Type, BaseURL: in.BaseURL, Model: in.Model, APIKeyEnv: in.APIKeyEnv, BestFor: in.BestFor}
 		if in.APIKey != "" {
 			p.APIKey = in.APIKey
 		}

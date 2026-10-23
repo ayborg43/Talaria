@@ -27,10 +27,11 @@ func TestPresetsAreValidStartingPoints(t *testing.T) {
 		default:
 			t.Errorf("%s: unknown type %q", p.Label, p.Type)
 		}
-		if p.Model == "" {
+		blank := p.BaseURL == "" && p.Model == "" && p.KeyEnv == ""
+		if !blank && p.Model == "" {
 			t.Errorf("%s: no model suggestion", p.Label)
 		}
-		if p.NeedsKey && p.KeyEnv == "" {
+		if p.NeedsKey && p.KeyEnv == "" && !blank {
 			t.Errorf("%s: needs a key but names no variable", p.Label)
 		}
 		if p.Hint == "" {

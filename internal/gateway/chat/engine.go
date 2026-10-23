@@ -412,7 +412,7 @@ func (e *Engine) runOne(c *chat, text string) {
 	}
 	a := c.agent
 	c.mu.Unlock()
-	e.applyBackend(c, a)
+	e.applyBackend(c, a, text)
 
 	defer func() {
 		a.OnText, a.OnToolStart, a.OnToolCall = nil, nil, nil

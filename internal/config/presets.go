@@ -34,5 +34,7 @@ func Presets() []Preset {
 			Hint: "Mistral's own API. Paste a key from console.mistral.ai."},
 		{Label: "xAI", Type: "openai", BaseURL: "https://api.x.ai/v1", Model: "grok-4", KeyEnv: "XAI_API_KEY", NeedsKey: true,
 			Hint: "xAI's own API. Paste a key from console.x.ai."},
+		{Label: "OpenAI-compatible", Type: "openai", NeedsKey: true,
+			Hint: "Any other endpoint with an OpenAI-style /chat/completions API (a proxy, a local server, another cloud): paste its base URL, model and key below."},
 	}
 }

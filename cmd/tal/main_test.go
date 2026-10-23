@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -99,6 +100,49 @@ func TestGatewayBackends(t *testing.T) {
 	}
 	if again, _ := b.Open("claude"); again.Provider != first.Provider {
 		t.Fatal("a profile should be built once and reused")
+	}
+}
+
+// Profiles added or changed while Talaria runs are visible at once: the list
+// is live, the cache drops on demand, and effort reaches thinking models.
+func TestGatewayBackendsStayLiveAndCarryEffort(t *testing.T) {
+	yes := true
+	cfg := &config.Config{Profiles: map[string]config.Profile{
+		"main": {Type: "openai", APIKeyEnv: "OPENAI_API_KEY", Model: "gpt-x", BestFor: []string{"cheap"}},
+		"deep": {Type: "deepseek", APIKey: "dk", Model: "deepseek-chat", BestFor: []string{"code"}, Vision: &yes},
+	}}
+	getenv := envFn("OPENAI_API_KEY", "sk-1")
+	def, _ := cfg.Resolve(config.Overrides{Profile: "main"}, getenv)
+	b := gatewayBackends(cfg, def, provider.NewOpenAI(def.BaseURL, def.APIKey), getenv)
+
+	be, err := b.Open("deep")
+	if err != nil || !be.Reasoning || !be.Vision || len(be.Best) != 1 || be.Best[0] != "code" {
+		t.Fatalf("traits: %+v %v", be, err)
+	}
+	if be, err := b.OpenEffort("deep", "high"); err != nil {
+		t.Fatalf("effort: %v", err)
+	} else if p, ok := be.Provider.(*provider.OpenAI); !ok || p.ReasoningEffort != "high" {
+		t.Fatalf("effort did not reach the model: %+v", be.Provider)
+	}
+	if be, err := b.OpenEffort("main", "high"); err != nil {
+		t.Fatalf("effort on a plain model: %v", err)
+	} else if p, ok := be.Provider.(*provider.OpenAI); !ok || p.ReasoningEffort != "" {
+		t.Fatalf("effort should mean nothing without thinking: %+v", be.Provider)
+	}
+
+	cfg.Profiles["new"] = config.Profile{Type: "openai", APIKey: "nk", Model: "fresh"}
+	if names := b.List(); !slices.Contains(names, "new") {
+		t.Fatalf("a profile added while running is not listed: %v", names)
+	}
+	if _, err := b.Open("new"); err != nil {
+		t.Fatalf("a profile added while running: %v", err)
+	}
+	deep := cfg.Profiles["deep"]
+	deep.Model = "deepseek-reasoner"
+	cfg.Profiles["deep"] = deep
+	b.Forget()
+	if be, err := b.Open("deep"); err != nil || be.Model != "deepseek-reasoner" {
+		t.Fatalf("an edited profile: %+v %v", be, err)
 	}
 }
 

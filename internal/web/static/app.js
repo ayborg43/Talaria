@@ -469,7 +469,7 @@ function connect() {
     const ev = JSON.parse(e.data);
     if (ev.seq > S.seq) S.seq = ev.seq;
     if (ev.type === 'msg') { upsert(ev.msg); renderChat(); }
-    else if (ev.type === 'run') { S.running = !!ev.on; renderChat(); }
+    else if (ev.type === 'run') { S.running = !!ev.on; if (ev.model) S.model = ev.model; renderChat(); }
     else if (ev.type === 'agents') { setAgents(ev.agents); }
     else if (ev.type === 'reset') { loadState().then(connect).catch(() => {}); }
   };
@@ -712,16 +712,32 @@ function profileNameCard(p) {
   card.append(head);
   card.append(h('div', { class: 'field-note', text: [p.type, p.base_url, p.model && 'model ' + p.model].filter(Boolean).join(' · ') || 'No address or model set.' }));
   if (p.status) card.append(h('div', { class: 'field-note', text: p.available ? p.status : 'Unavailable: ' + p.status }));
+  if (p.traits && p.traits.length) card.append(h('div', { class: 'field-note', text: 'Also: ' + p.traits.map((t) => t === 'vision' ? 'sees images' : 'reasons deeply').join(', ') }));
   const btns = h('div', { class: 'btn-row' });
   if (S.settings.active_profile && !p.active) {
     const use = h('button', { class: 'btn primary', type: 'button', text: 'Use', onclick: () => useProfile(p.name) });
     if (!p.available) use.disabled = true;
     btns.append(use);
   }
+  if (S.settings.active_profile) {
+    const test = h('button', { class: 'btn', type: 'button', text: 'Test', onclick: () => testProfile(p.name) });
+    if (!p.available) test.disabled = true;
+    btns.append(test);
+  }
   btns.append(h('button', { class: 'btn', type: 'button', text: 'Edit', onclick: () => editProfile(p.name) }));
   btns.append(h('button', { class: 'btn danger', type: 'button', text: 'Delete', onclick: () => deleteProfile(p.name) }));
   card.append(btns);
   return card;
+}
+
+async function testProfile(name) {
+  toast('Asking ' + name + ' to say ok…');
+  const t0 = Date.now();
+  try {
+    const d = await api('/api/settings', { method: 'POST', body: { test_profile: name } });
+    toast(name + ' answers (' + d.model + ', ' + ((Date.now() - t0) / 1000).toFixed(1) + 's): ' + d.reply);
+  } catch (e) { if (!(e instanceof AuthError)) toast('Test failed: ' + e.message); return; }
+  loadSettings();
 }
 
 async function useProfile(name) {
@@ -731,6 +747,17 @@ async function useProfile(name) {
   toast('Now using ' + name + '. The conversation continues with the new model.');
   loadSettings();
   api('/api/state').then((d) => { S.model = d.model; renderChrome(); }).catch(() => {});
+}
+
+function strengthsRow(best, strengths) {
+  const names = { code: 'Code', cheap: 'Cheap & fast' };
+  const row = h('div', { class: 'checks' });
+  for (const s of strengths || []) {
+    const props = { type: 'checkbox', name: 'best-for', value: s };
+    if ((best || []).includes(s)) props.checked = true;
+    row.append(h('label', { class: 'check' }, h('input', props), ' ' + (names[s] || s)));
+  }
+  return h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Good at (for auto-routing)' }), row);
 }
 
 function editProfile(name) {
@@ -744,6 +771,7 @@ function editProfile(name) {
     h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Model', for: 'prof-model' }), h('input', { id: 'prof-model', name: 'prof-model', autocomplete: 'off', type: 'text', value: p.model || '' })),
     h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key env var', for: 'prof-apikeyenv' }), h('input', { id: 'prof-apikeyenv', name: 'prof-apikeyenv', autocomplete: 'off', type: 'text', value: p.api_key_env || '' })),
     h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key', for: 'prof-apikey' }), h('input', { id: 'prof-apikey', name: 'prof-apikey', autocomplete: 'off', type: 'password', placeholder: 'leave blank to keep current' })),
+    strengthsRow(p.best, S.settings.strengths),
     h('div', { class: 'field-note', text: 'The key is saved to config.json (mode 0600). Prefer api_key_env over pasting the key directly.' }),
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn primary big', type: 'button', text: 'Save', onclick: saveProfile }),
@@ -781,6 +809,7 @@ function newProfileForm() {
     h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Model', for: 'prof-model' }), h('input', { id: 'prof-model', name: 'prof-model', autocomplete: 'off', type: 'text', placeholder: 'gpt-4o-mini' })),
     h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key env var', for: 'prof-apikeyenv' }), h('input', { id: 'prof-apikeyenv', name: 'prof-apikeyenv', autocomplete: 'off', type: 'text', placeholder: 'OPENROUTER_API_KEY' })),
     h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key', for: 'prof-apikey' }), h('input', { id: 'prof-apikey', name: 'prof-apikey', autocomplete: 'off', type: 'password', placeholder: 'sk-…' })),
+    strengthsRow([], S.settings.strengths),
     h('div', { class: 'field-note', text: 'Pick provider type openai, anthropic or deepseek. Keys are stored in config.json.' }),
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn primary big', type: 'button', text: 'Add', onclick: saveProfile }),
@@ -798,6 +827,7 @@ async function saveProfile() {
     model: $('#prof-model').value.trim() || undefined,
     api_key_env: $('#prof-apikeyenv').value.trim() || undefined,
     api_key: $('#prof-apikey').value.trim() || undefined,
+    best_for: $$('#settings-body input[name="best-for"]:checked').map((el) => el.value),
   };
   try {
     await api('/api/settings', { method: 'POST', body });

@@ -74,6 +74,11 @@ func Write(path string, cfg *Config) error {
 }
 
 // Profile is one way to reach a model.
+// ProfileStrengths are the labels a profile can claim in best_for, so the
+// router knows to pick it: code for programming, cheap for the quick and
+// light. Vision and reasoning need no label; they are detected.
+var ProfileStrengths = []string{"code", "cheap"}
+
 type Profile struct {
 	Type      string `json:"type,omitempty"`        // "openai" (default), "anthropic" or "deepseek"
 	BaseURL   string `json:"base_url,omitempty"`    // default depends on type
@@ -85,6 +90,10 @@ type Profile struct {
 	// browser). On unless set to false; a model that cannot see is told a
 	// picture was there and sent text only.
 	Vision *bool `json:"vision,omitempty"`
+	// BestFor says what the model is good at, so the router can pick it:
+	// any of ProfileStrengths ("code", "cheap"). Vision and reasoning are
+	// detected from the profile itself.
+	BestFor []string `json:"best_for,omitempty"`
 	// Thinking turns DeepSeek's thinking mode on or off (the service's default
 	// is on); ReasoningEffort is "low", "high" or "max". DeepSeek profiles only.
 	Thinking        *bool  `json:"thinking,omitempty"`
