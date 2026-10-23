@@ -55,23 +55,25 @@ func TestCalendarsComeFromTheConfigAndFromOneEnvironmentVariable(t *testing.T) {
 	}
 }
 
-func TestTheServiceIsOnlyBuiltWhenThereIsACalendarAndShowsTheRightZone(t *testing.T) {
-	if svc, _ := buildCalendars(&config.Config{}, envOf(nil)); svc != nil {
-		t.Fatal("no calendar, no tool")
+func TestTheServiceAlwaysHasTheBuiltInCalendarAndShowsTheRightZone(t *testing.T) {
+	home := t.TempDir()
+	svc, _ := buildCalendars(&config.Config{}, envOf(nil), home)
+	if svc == nil || svc.Local == nil || len(svc.Sources) != 0 {
+		t.Fatalf("the built-in calendar is always there: %+v", svc)
 	}
-	svc, problems := buildCalendars(&config.Config{}, envOf(map[string]string{"TALARIA_CALENDARS": "p=" + feedAddr, "TALARIA_TIMEZONE": "Africa/Lagos"}))
+	svc, problems := buildCalendars(&config.Config{}, envOf(map[string]string{"TALARIA_CALENDARS": "p=" + feedAddr, "TALARIA_TIMEZONE": "Africa/Lagos"}), home)
 	if svc == nil || len(problems) != 0 || svc.Display.String() != "Africa/Lagos" || len(svc.Sources) != 1 {
 		t.Fatalf("%+v %v", svc, problems)
 	}
-	svc, _ = buildCalendars(&config.Config{Timezone: "Asia/Tokyo"}, envOf(map[string]string{"TALARIA_CALENDARS": "p=" + feedAddr, "TALARIA_TIMEZONE": "Africa/Lagos"}))
+	svc, _ = buildCalendars(&config.Config{Timezone: "Asia/Tokyo"}, envOf(map[string]string{"TALARIA_CALENDARS": "p=" + feedAddr, "TALARIA_TIMEZONE": "Africa/Lagos"}), home)
 	if svc.Display.String() != "Asia/Tokyo" {
 		t.Fatalf("the config wins: %v", svc.Display)
 	}
-	svc, problems = buildCalendars(&config.Config{}, envOf(map[string]string{"TALARIA_CALENDARS": "p=" + feedAddr, "TALARIA_TIMEZONE": "Mars/Olympus"}))
+	svc, problems = buildCalendars(&config.Config{}, envOf(map[string]string{"TALARIA_CALENDARS": "p=" + feedAddr, "TALARIA_TIMEZONE": "Mars/Olympus"}), home)
 	if svc.Display != time.UTC || len(problems) != 1 || !strings.Contains(problems[0], "Mars/Olympus") {
 		t.Fatalf("a bad zone falls back to UTC and says so: %v %v", svc.Display, problems)
 	}
-	if svc, _ = buildCalendars(&config.Config{}, envOf(map[string]string{"TALARIA_CALENDARS": "p=" + feedAddr})); svc.Display != time.UTC {
+	if svc, _ = buildCalendars(&config.Config{}, envOf(map[string]string{"TALARIA_CALENDARS": "p=" + feedAddr}), home); svc.Display != time.UTC {
 		t.Fatal("UTC by default")
 	}
 }
@@ -116,18 +118,21 @@ func TestTalCalendarPrintsTheAgendaAndSaysWhatIsWrong(t *testing.T) {
 	var out bytes.Buffer
 	get := envOf(map[string]string{"TALARIA_CALENDARS": "p=" + srv.URL + "/secret-feed-aaaaaaaa.ics", "TALARIA_TIMEZONE": "Africa/Lagos"})
 	// "2026-10-22" as the start, 1 day.
-	if err := runCalendarWith(context.Background(), &config.Config{}, get, []string{"2026-10-22", "1"}, &out, client); err != nil {
+	if err := runCalendarWith(context.Background(), &config.Config{}, get, t.TempDir(), []string{"2026-10-22", "1"}, &out, client); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "09:30-10:00  Standup  [p]") || strings.Contains(out.String(), "secret-feed") {
 		t.Fatalf("%s", out.String())
 	}
 	out.Reset()
-	if err := runCalendar(context.Background(), &config.Config{}, envOf(nil), nil, &out); err == nil || !strings.Contains(err.Error(), "TALARIA_CALENDARS") {
-		t.Fatalf("with no calendar it says how to set one up: %v", err)
+	if err := runCalendar(context.Background(), &config.Config{}, envOf(nil), t.TempDir(), nil, &out); err != nil {
+		t.Fatalf("with no outside calendar it still lists the built-in one: %v", err)
+	}
+	if !strings.Contains(out.String(), "Nothing is on.") {
+		t.Fatalf("%s", out.String())
 	}
 	out.Reset()
-	runCalendarWith(context.Background(), &config.Config{}, envOf(map[string]string{"TALARIA_CALENDARS": "p=http://plain.example/a.ics"}), nil, &out, client)
+	runCalendarWith(context.Background(), &config.Config{}, envOf(map[string]string{"TALARIA_CALENDARS": "p=http://plain.example/a.ics"}), t.TempDir(), nil, &out, client)
 	if !strings.Contains(out.String(), "problem:") {
 		t.Fatalf("%s", out.String())
 	}

@@ -234,7 +234,7 @@ func (c *cli) setupModel(gateway bool) (err error) {
 	// Connected services, which may need the vault for their sign-ins.
 	c.servers = startMCP(c.ctx, c.cfg, vlt, c.log)
 	guarded.Policy.NeverRemember(c.servers.Sensitive()...) // the Always button is never offered for a tool that sends or deletes
-	calSvc, calProblems := buildCalendars(c.cfg, c.getenv)
+	calSvc, calProblems := buildCalendars(c.cfg, c.getenv, c.home)
 	for _, p := range calProblems {
 		c.log.Warn(p)
 	}
@@ -325,7 +325,7 @@ func (c *cli) connect(args []string, disconnect bool) error {
 }
 
 func (c *cli) runCalendarCmd(args []string) error {
-	return runCalendar(c.ctx, c.cfg, c.getenv, args, os.Stdout)
+	return runCalendar(c.ctx, c.cfg, c.getenv, c.home, args, os.Stdout)
 }
 
 func (c *cli) runEmailCmd(args []string) error {

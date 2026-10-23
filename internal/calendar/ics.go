@@ -20,6 +20,7 @@ type Event struct {
 	Description string
 	Start, End  time.Time
 	AllDay      bool
+	LocalID     string // the built-in calendar's id; "" for events read from elsewhere
 }
 
 // rawEvent is an event as written in the file, before repeats are expanded.
@@ -34,7 +35,8 @@ type rawEvent struct {
 	exdates, rdates                     []time.Time
 	recurrenceID                        time.Time
 	hasRecurrenceID                     bool
-	approxZone                          bool // a time zone name that could not be found: its times are read as UTC
+	approxZone                          bool   // a time zone name that could not be found: its times are read as UTC
+	localID                             string // the built-in calendar's id; "" for events read from a file
 }
 
 // parsed is one calendar file.

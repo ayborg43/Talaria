@@ -13,6 +13,8 @@ import (
 // Service reads the configured calendars and lists what is on them.
 type Service struct {
 	Sources []Source
+	// Local is the built-in calendar, or nil without one.
+	Local *Store
 	// Display is the zone times are shown in and days are counted in.
 	Display *time.Location
 	Now     func() time.Time
@@ -78,6 +80,9 @@ func (s *Service) Names() []string {
 	for _, src := range s.Sources {
 		out = append(out, src.Name)
 	}
+	if s.Local != nil {
+		out = append(out, LocalCalendar)
+	}
 	return out
 }
 
@@ -91,7 +96,7 @@ func toDisplay(t time.Time, loc *time.Location) time.Time {
 // Events lists what is on, within [from, to), of one calendar (name, if not empty) and matching
 // query (a word in the title, place or notes, if not empty). notes says what could not be read.
 func (s *Service) Events(ctx context.Context, from, to time.Time, name, query string) (events []Event, notes []string, err error) {
-	if len(s.Sources) == 0 {
+	if len(s.Sources) == 0 && s.Local == nil {
 		return nil, nil, fmt.Errorf("no calendar is set up")
 	}
 	display := s.zone()
@@ -118,6 +123,16 @@ func (s *Service) Events(ctx context.Context, from, to time.Time, name, query st
 			notes = append(notes, fmt.Sprintf("%s: %s", src.Name, n))
 		}
 		events = append(events, expand(p, src.Name, from, to, display)...)
+	}
+	if s.Local != nil && (name == "" || strings.EqualFold(name, LocalCalendar)) {
+		chosen++
+		local, lerr := s.Local.Occurrences(from, to, display)
+		if lerr != nil {
+			failed++
+			notes = append(notes, fmt.Sprintf("the calendar %q could not be read: %v", LocalCalendar, lerr))
+		} else {
+			events = append(events, local...)
+		}
 	}
 	if name != "" && chosen == 0 {
 		return nil, nil, fmt.Errorf("there is no calendar named %q (calendars: %s)", name, strings.Join(s.Names(), ", "))
@@ -184,7 +199,7 @@ func expand(p *parsed, calendar string, from, to time.Time, display *time.Locati
 			}
 			out = append(out, Event{
 				Calendar: calendar, UID: e.uid, Summary: e.summary, Location: e.location, Description: e.description,
-				Start: st.In(display), End: st.Add(length).In(display), AllDay: e.allDay,
+				Start: st.In(display), End: st.Add(length).In(display), AllDay: e.allDay, LocalID: e.localID,
 			})
 		}
 	}

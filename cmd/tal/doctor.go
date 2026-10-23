@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"talaria/internal/calendar"
 	"talaria/internal/config"
 	"talaria/internal/ops"
 	"talaria/internal/version"
@@ -91,10 +92,17 @@ func runDoctor(cfg *config.Config, cfgPath, home string, getenv func(string) str
 		note("no bot token is set, so `tal gateway` has nothing to serve (the command line works without one)")
 	}
 
-	if sources, problems := calendarSources(cfg, getenv); len(sources) > 0 || len(problems) > 0 {
+	localEvents := 0
+	if events, err := (&calendar.Store{Path: filepath.Join(home, "calendar.json")}).List(); err == nil {
+		localEvents = len(events)
+	}
+	if sources, problems := calendarSources(cfg, getenv); len(sources) > 0 || len(problems) > 0 || localEvents > 0 {
 		fmt.Fprintln(out, "\nCalendars")
 		for _, pr := range problems {
 			bad("%s", pr)
+		}
+		if localEvents > 0 {
+			ok("%d event(s) on Talaria's own calendar", localEvents)
 		}
 		if len(sources) > 0 {
 			names := make([]string, 0, len(sources))

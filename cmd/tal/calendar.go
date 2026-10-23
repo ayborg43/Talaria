@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -82,15 +82,17 @@ func calendarZone(cfg *config.Config, getenv func(string) string) (*time.Locatio
 	return loc, nil
 }
 
-// buildCalendars makes the calendar service, or nil when no calendar is set up.
-func buildCalendars(cfg *config.Config, getenv func(string) string) (*calendar.Service, []string) {
+// buildCalendars makes the calendar service: the calendars read from elsewhere,
+// plus the built-in one, which is always there.
+func buildCalendars(cfg *config.Config, getenv func(string) string, home string) (*calendar.Service, []string) {
 	sources, problems := calendarSources(cfg, getenv)
 	loc, zp := calendarZone(cfg, getenv)
 	problems = append(problems, zp...)
-	if len(sources) == 0 {
-		return nil, problems
-	}
-	return &calendar.Service{Sources: sources, Display: loc}, problems
+	return &calendar.Service{
+		Sources: sources,
+		Local:   &calendar.Store{Path: filepath.Join(home, "calendar.json")},
+		Display: loc,
+	}, problems
 }
 
 // calendarSecrets are the feed addresses, and the part of each that makes it private, so they can be kept
@@ -128,21 +130,18 @@ func calendarEnvDeny(cfg *config.Config) []string {
 
 // runCalendar is `tal calendar [days] [from]`: print the agenda, to check that a calendar is read correctly.
 // It needs no model and no key.
-func runCalendar(ctx context.Context, cfg *config.Config, getenv func(string) string, args []string, out io.Writer) error {
-	return runCalendarWith(ctx, cfg, getenv, args, out, nil)
+func runCalendar(ctx context.Context, cfg *config.Config, getenv func(string) string, home string, args []string, out io.Writer) error {
+	return runCalendarWith(ctx, cfg, getenv, home, args, out, nil)
 }
 
 // runCalendarWith is runCalendar with the HTTP client for feeds replaceable, for tests.
-func runCalendarWith(ctx context.Context, cfg *config.Config, getenv func(string) string, args []string, out io.Writer, client func(calendar.Source) *http.Client) error {
-	svc, problems := buildCalendars(cfg, getenv)
-	if svc != nil && client != nil {
+func runCalendarWith(ctx context.Context, cfg *config.Config, getenv func(string) string, home string, args []string, out io.Writer, client func(calendar.Source) *http.Client) error {
+	svc, problems := buildCalendars(cfg, getenv, home)
+	if client != nil {
 		svc.Client = client
 	}
 	for _, p := range problems {
 		fmt.Fprintln(out, "problem:", p)
-	}
-	if svc == nil {
-		return errors.New("no calendar is set up: put its secret iCal address in TALARIA_CALENDARS as name=address, or name an environment variable under \"calendars\" in the config")
 	}
 	days, from := 7, "today"
 	for _, a := range args {
