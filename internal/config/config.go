@@ -227,8 +227,15 @@ type Policy struct {
 	// rest run. An exact name beats a family, and a longer family beats a shorter.
 	Rules map[string]string `json:"rules,omitempty"`
 	// NoRemember lists tools the "always allow" button is not offered for.
-	// Unset, it is ["shell"]; [] offers the button for every tool without a rule.
+	// Unset, it is shell, write_file, skill_save, cron_add, task_start,
+	// goal_create, goal_update, watch_create and watch_update; [] offers the
+	// button for every tool without a rule.
 	NoRemember *[]string `json:"no_remember,omitempty"`
+	// SessionRemember lists tools one approval covers for the rest of the
+	// conversation. Unset, it is shell and write_file; [] asks about every
+	// call, as before. A tool with a rule keeps obeying the rule, flagged
+	// calls still ask, and scheduled jobs never get it.
+	SessionRemember *[]string `json:"session_remember,omitempty"`
 	// Audit keeps the log of tool calls (audit.log). On unless set to false.
 	Audit *bool `json:"audit,omitempty"`
 	// UntrustedContent says what happens once a conversation has read something from outside (a
@@ -256,7 +263,18 @@ func (p Policy) Parse() (*guard.Policy, error) {
 	if p.NoRemember != nil {
 		noRemember = append([]string{}, *p.NoRemember...)
 	}
-	return guard.ParsePolicy(p.Rules, noRemember)
+	policy, err := guard.ParsePolicy(p.Rules, noRemember)
+	if err != nil {
+		return nil, err
+	}
+	session := guard.DefaultSessionRemember
+	if p.SessionRemember != nil {
+		session = *p.SessionRemember
+	}
+	if err := policy.SetSession(session); err != nil {
+		return nil, err
+	}
+	return policy, nil
 }
 
 // Browser holds the web browser's settings. The browser tools are on by default

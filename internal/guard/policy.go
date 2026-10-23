@@ -17,6 +17,13 @@ import (
 // goal or watch steers the agent when no one is there to approve what it does.
 var DefaultNoRemember = []string{"shell", "write_file", "skill_save", "cron_add", "task_start", "goal_create", "watch_create", "watch_update", "goal_update"}
 
+// DefaultSessionRemember lists the tools one approval covers for the rest of
+// the conversation, unless the config says otherwise. These are the tools an
+// agent uses constantly while working; asking about every call would bury the
+// approvals that matter. A new conversation asks again, scheduled jobs never
+// get it, and a tool with a rule keeps obeying the rule.
+var DefaultSessionRemember = []string{"shell", "write_file"}
+
 type rule struct {
 	pattern string // as written: a tool name, or a name ending in *
 	prefix  bool
@@ -50,6 +57,8 @@ var knownTools = map[string]bool{
 // Policy is the configured permission rules.
 type Policy struct {
 	rules []rule
+
+	session []rule
 
 	mu         sync.RWMutex
 	noRemember map[string]bool
@@ -123,6 +132,49 @@ func checkRuleName(name string, prefix bool) error {
 		}
 	}
 	return fmt.Errorf("rule %q: no tool starts with %q", name, bare)
+}
+
+// SetSession names the tools one approval covers for the rest of the
+// conversation: exact tool names, or families ending in * as in the rules.
+// Like a rule, a misspelt name is an error rather than a name that matches
+// nothing.
+func (p *Policy) SetSession(names []string) error {
+	var session []rule
+	for _, name := range names {
+		r := rule{pattern: name}
+		switch stars := strings.Count(name, "*"); {
+		case name == "" || strings.TrimSpace(name) != name:
+			return fmt.Errorf("session name %q: not a tool name", name)
+		case stars == 1 && strings.HasSuffix(name, "*"):
+			r.prefix, r.pattern = true, strings.TrimSuffix(name, "*")
+		case stars > 0:
+			return fmt.Errorf("session name %q: * is only allowed at the end of a name", name)
+		}
+		if err := checkRuleName(name, r.prefix); err != nil {
+			return err
+		}
+		session = append(session, r)
+	}
+	p.session = session
+	return nil
+}
+
+// sessionRemembered reports whether one approval covers tool for the rest of
+// the conversation. Nil means nothing was configured, which keeps the old
+// behaviour of asking every time.
+func (p *Policy) sessionRemembered(tool string) bool {
+	if p == nil {
+		return false
+	}
+	for _, r := range p.session {
+		if !r.prefix && r.pattern == tool {
+			return true
+		}
+		if r.prefix && strings.HasPrefix(tool, r.pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 // match finds the rule for a tool: an exact name wins, then the longest prefix.

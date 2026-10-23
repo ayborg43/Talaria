@@ -629,7 +629,11 @@ func runCLI(ctx context.Context, rt *app.Runtime, res config.Resolved, prompt st
 			}
 			return true
 		default:
-			return strings.HasPrefix(answer, "y")
+			yes := strings.HasPrefix(answer, "y")
+			if yes && scope != nil && !agent.IsFlagged(name) {
+				scope.RememberSession(tool) // one yes covers shell and write_file for the rest of the run
+			}
+			return yes
 		}
 	}
 	a := rt.NewAgent(app.AgentOptions{Approve: approve})

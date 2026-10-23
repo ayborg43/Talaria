@@ -528,3 +528,74 @@ func TestAGrantForAToolThatCannotBeRememberedIsIgnored(t *testing.T) {
 		t.Errorf("an ordinary grant still works: %+v", v)
 	}
 }
+
+func mustSession(t *testing.T, names []string) *Policy {
+	t.Helper()
+	p := mustPolicy(t, nil, nil)
+	if err := p.SetSession(names); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// One approval covers the tool for the rest of the conversation, and nothing
+// else: not other tools, not a new conversation, not scheduled jobs.
+func TestSessionRememberCoversTheConversation(t *testing.T) {
+	g := &Guard{Policy: mustSession(t, DefaultSessionRemember)}
+	a := g.For("chat", "telegram", 1)
+	if a.Verdict("shell", true).Action != agent.Ask {
+		t.Fatal("the first call asks")
+	}
+	a.RememberSession("shell")
+	if v := a.Verdict("shell", true); v.Action != agent.Allow || v.Via != "session" {
+		t.Fatalf("%+v", v)
+	}
+	if a.Verdict("cron_add", true).Action != agent.Ask {
+		t.Error("a session allow covers one tool")
+	}
+	if g.For("chat", "telegram", 1).Verdict("shell", true).Action != agent.Ask {
+		t.Error("a new conversation asks again")
+	}
+	j := g.For("job:x", "telegram", 1)
+	j.RememberSession("shell")
+	if j.Verdict("shell", true).Action != agent.Ask {
+		t.Error("scheduled jobs never get it")
+	}
+	a.RememberSession("cron_add")
+	if a.Verdict("cron_add", true).Action != agent.Ask {
+		t.Error("a tool the policy does not name never sticks")
+	}
+}
+
+// A rule always wins over a session allow.
+func TestRulesBeatSession(t *testing.T) {
+	p := mustPolicy(t, map[string]string{"shell": "ask"}, nil)
+	if err := p.SetSession([]string{"shell"}); err != nil {
+		t.Fatal(err)
+	}
+	s := (&Guard{Policy: p}).For("chat", "telegram", 1)
+	s.RememberSession("shell")
+	if v := s.Verdict("shell", true); v.Action != agent.Ask || v.Via != "rule" {
+		t.Fatalf("%+v", v)
+	}
+}
+
+func TestSetSessionRejectsBadNames(t *testing.T) {
+	p := mustPolicy(t, nil, nil)
+	for _, name := range []string{"", " shell", "wriet_file", "wriet_*", "mcp_*_send", "shell*extra"} {
+		if err := p.SetSession([]string{name}); err == nil {
+			t.Errorf("%q accepted", name)
+		}
+	}
+	if err := p.SetSession([]string{"shell", "mcp_mail_*"}); err != nil {
+		t.Fatal(err)
+	}
+	s := (&Guard{Policy: p}).For("chat", "telegram", 1)
+	s.RememberSession("mcp_mail_send")
+	if v := s.Verdict("mcp_mail_send", true); v.Action != agent.Allow || v.Via != "session" {
+		t.Fatalf("a family covers its tools: %+v", v)
+	}
+	if s.Verdict("mcp_files_get", true).Action != agent.Ask {
+		t.Error("a family covers only its tools")
+	}
+}

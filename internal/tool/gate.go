@@ -15,8 +15,9 @@ const (
 type Verdict struct {
 	Action Action
 	// Via says where the ruling came from, for the activity log: "auto" (the
-	// tool's own default), "rule" (a permission rule), or "grant" (the user chose
-	// to always allow this tool in this chat).
+	// tool's own default), "rule" (a permission rule), "grant" (the user chose
+	// to always allow this tool in this chat), or "session" (the user allowed
+	// it once and it is covered for the rest of the conversation).
 	Via  string
 	Rule string // the rule that matched, if any
 }
@@ -26,7 +27,7 @@ type Entry struct {
 	Tool, Args string
 	Label      string // the subagent that made the call, if one did
 	Allowed    bool
-	Via        string // "auto", "rule", "grant", "prompt", or "unknown tool"
+	Via        string // "auto", "rule", "grant", "session", "prompt", or "unknown tool"
 	Rule       string
 	Status     string // "ok", "error", or "not run"
 	Result     string
@@ -44,4 +45,12 @@ type Gate interface {
 	Scrub(text string) string
 	// Record notes a finished (or refused) call.
 	Record(Entry)
+}
+
+// SessionRememberer is an optional Gate extension. After the user approves a
+// call, the asker records it, so the rest of the conversation does not ask
+// about that tool again. Which tools this sticks for, and that it never
+// applies to scheduled jobs, is the Gate's decision.
+type SessionRememberer interface {
+	RememberSession(tool string)
 }

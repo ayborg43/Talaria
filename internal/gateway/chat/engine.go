@@ -14,6 +14,7 @@ import (
 	"talaria/internal/agent"
 	"talaria/internal/execenv"
 	"talaria/internal/metrics"
+	"talaria/internal/tool"
 )
 
 const (
@@ -497,7 +498,7 @@ func (e *Engine) typing(ctx context.Context, chatID int64) (stop func()) {
 // It denies on timeout, /stop, or any send failure.
 func (e *Engine) askApproval(c *chat, name, args string) bool {
 	c.mu.Lock()
-	ctx, live, env := c.runCtx, c.live, c.applied
+	ctx, live, env, ag := c.runCtx, c.live, c.applied, c.agent
 	c.mu.Unlock()
 	if live != nil {
 		live.endSegment() // the text so far goes first; the prompt follows it
@@ -519,13 +520,13 @@ func (e *Engine) askApproval(c *chat, name, args string) bool {
 		e.mu.Unlock()
 	}()
 
-	tool := agent.BaseTool(name)
+	base := agent.BaseTool(name)
 	// Where a call runs matters when deciding whether to allow it, and with
 	// per-chat environments the startup banner no longer says. Only the tools
 	// that go to the environment say so; the rest run where Talaria runs.
 	where := ""
 	if e.Environments != nil && env != "" && env != execenv.LocalName {
-		switch tool {
+		switch base {
 		case "shell", "read_file", "write_file", "list_dir":
 			where = " in " + env
 		}
@@ -535,7 +536,7 @@ func (e *Engine) askApproval(c *chat, name, args string) bool {
 		return false
 	}
 	text := fmt.Sprintf("Allow %s%s?\n%s", name, where, body)
-	always := e.Permissions != nil && e.Permissions.Rememberable(tool) && !agent.IsFlagged(name)
+	always := e.Permissions != nil && e.Permissions.Rememberable(base) && !agent.IsFlagged(name)
 	msg, err := e.T.SendApproval(ctx, c.id, text, token, always)
 	if err != nil {
 		e.logf("approval prompt failed: %v", err)
@@ -547,9 +548,17 @@ func (e *Engine) askApproval(c *chat, name, args string) bool {
 	select {
 	case choice := <-p.ch:
 		if choice == ChoiceAlways {
-			if err := e.Permissions.Remember(c.id, tool); err != nil {
+			if err := e.Permissions.Remember(c.id, base); err != nil {
 				e.logf("keeping an always-allow choice failed: %v", err)
 				e.send(c.id, "I could not save that choice ("+err.Error()+"), so I will ask again next time.")
+			}
+		}
+		if choice != ChoiceDeny && !agent.IsFlagged(name) && ag != nil {
+			// One approval covers the rest of the conversation for tools
+			// the policy names. A flagged call never counts: outside
+			// content was read, so the next one asks again.
+			if sr, ok := ag.Gate.(tool.SessionRememberer); ok {
+				sr.RememberSession(base)
 			}
 		}
 		return choice != ChoiceDeny

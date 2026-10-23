@@ -3,6 +3,7 @@ package guard
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"talaria/internal/tool"
@@ -26,6 +27,9 @@ type Scope struct {
 	gateway   string
 	chat      int64
 	useGrants bool
+
+	sessionMu sync.Mutex
+	session   map[string]bool // tools allowed for this conversation after one approval
 }
 
 // For makes the tool.Gate for one conversation.
@@ -48,7 +52,8 @@ func grantKey(gateway string, chat int64) string {
 }
 
 // Verdict implements tool.Gate. A permission rule decides first. Failing that,
-// a grant allows; failing that, the tool's own default applies.
+// a grant allows, then a session allow; failing that, the tool's own default
+// applies.
 func (s *Scope) Verdict(name string, needsApproval bool) tool.Verdict {
 	if r, ok := s.g.Policy.match(name); ok {
 		rule := r.pattern
@@ -62,10 +67,38 @@ func (s *Scope) Verdict(name string, needsApproval bool) tool.Verdict {
 	if needsApproval && s.useGrants && s.g.Grants != nil && s.g.Policy.Rememberable(name) && s.g.Grants.Allowed(grantKey(s.gateway, s.chat), name) {
 		return tool.Verdict{Action: tool.Allow, Via: "grant"}
 	}
+	if needsApproval && s.useGrants && s.sessionHas(name) {
+		return tool.Verdict{Action: tool.Allow, Via: "session"}
+	}
 	if needsApproval {
 		return tool.Verdict{Action: tool.Ask, Via: "auto"}
 	}
 	return tool.Verdict{Action: tool.Allow, Via: "auto"}
+}
+
+// RememberSession allows tool for the rest of this conversation, after the
+// user approved one call. It only sticks for tools the policy names for it,
+// and never for scheduled jobs; anything else is silently ignored, so callers
+// need not check first.
+func (s *Scope) RememberSession(tool string) {
+	if !s.useGrants || !s.g.Policy.sessionRemembered(tool) {
+		return
+	}
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	if s.session == nil {
+		s.session = map[string]bool{}
+	}
+	s.session[tool] = true
+}
+
+func (s *Scope) sessionHas(tool string) bool {
+	if !s.g.Policy.sessionRemembered(tool) {
+		return false
+	}
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	return s.session[tool]
 }
 
 // Scrub implements tool.Gate.

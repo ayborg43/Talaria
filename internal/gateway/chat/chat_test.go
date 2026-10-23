@@ -7,6 +7,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"talaria/internal/agent"
+	"talaria/internal/guard"
 )
 
 // fakeService is a chat service that records what the engine does to it.
@@ -498,5 +501,60 @@ func TestLiveReplyStaysUnderTheLimitWhenCuttingMidLine(t *testing.T) {
 		if n := len([]rune(txt)); n > 100 {
 			t.Fatalf("message %d has %d runes, over the limit of 100: %q", id, n, txt)
 		}
+	}
+}
+
+func waitPending(t *testing.T, e *Engine) string {
+	t.Helper()
+	for i := 0; i < 400; i++ {
+		e.mu.Lock()
+		for tk := range e.pending {
+			e.mu.Unlock()
+			return tk
+		}
+		e.mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("no approval was asked")
+	return ""
+}
+
+// Allowing a session tool covers the rest of the conversation; allowing a
+// flagged one does not, because outside content was read.
+func TestApprovalAllowCoversTheSession(t *testing.T) {
+	pol, err := guard.ParsePolicy(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pol.SetSession(guard.DefaultSessionRemember); err != nil {
+		t.Fatal(err)
+	}
+	g := &guard.Guard{Policy: pol}
+	scope := g.For("chat", "fake", 1)
+	e := &Engine{T: newFakeService(4000, false), Allowed: map[int64]bool{1: true}, ApprovalTimeout: time.Minute, pending: map[string]*pendingApproval{}}
+	c := &chat{id: 1, runCtx: context.Background(), agent: &agent.Agent{Gate: scope}}
+	done := make(chan bool, 1)
+	go func() { done <- e.askApproval(c, "shell", "{}") }()
+	if d, _ := e.Decide(waitPending(t, e), 1, 1, ChoiceAllow); d != DecisionRecorded {
+		t.Fatalf("%v", d)
+	}
+	if !<-done {
+		t.Fatal("allow denied")
+	}
+	if v := scope.Verdict("shell", true); v.Action != agent.Allow || v.Via != "session" {
+		t.Fatalf("%+v", v)
+	}
+
+	scope2 := g.For("chat", "fake", 1)
+	c2 := &chat{id: 1, runCtx: context.Background(), agent: &agent.Agent{Gate: scope2}}
+	go func() { done <- e.askApproval(c2, agent.Flagged("shell"), "{}") }()
+	if d, _ := e.Decide(waitPending(t, e), 1, 1, ChoiceAllow); d != DecisionRecorded {
+		t.Fatalf("%v", d)
+	}
+	if !<-done {
+		t.Fatal("allow denied")
+	}
+	if v := scope2.Verdict("shell", true); v.Action != agent.Ask {
+		t.Fatalf("a flagged allow must not stick: %+v", v)
 	}
 }

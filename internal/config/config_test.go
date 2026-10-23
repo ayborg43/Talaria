@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"talaria/internal/guard"
 	"talaria/internal/provider"
 )
 
@@ -536,6 +537,45 @@ func TestPolicyInConfig(t *testing.T) {
 	p, _ = c.Policy.Parse()
 	if !p.Rememberable("shell") {
 		t.Fatal(`"no_remember": [] allows it`)
+	}
+}
+
+func TestSessionRememberInConfig(t *testing.T) {
+	via := func(t *testing.T, cfg string, tool string) string {
+		t.Helper()
+		c, err := Load(write(t, cfg, 0o600))
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := c.Policy.Parse()
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := (&guard.Guard{Policy: p}).For("chat", "telegram", 1)
+		s.RememberSession(tool)
+		return s.Verdict(tool, true).Via
+	}
+	// Unset, shell and write_file are covered after one approval.
+	if got := via(t, `{"policy":{"rules":{}}}`, "shell"); got != "session" {
+		t.Fatalf("shell: %q", got)
+	}
+	if got := via(t, `{"policy":{"rules":{}}}`, "write_file"); got != "session" {
+		t.Fatalf("write_file: %q", got)
+	}
+	// An explicit list replaces the default.
+	if got := via(t, `{"policy":{"session_remember":["cron_add"]}}`, "shell"); got != "auto" {
+		t.Fatalf("shell: %q", got)
+	}
+	if got := via(t, `{"policy":{"session_remember":["cron_add"]}}`, "cron_add"); got != "session" {
+		t.Fatalf("cron_add: %q", got)
+	}
+	// An explicit empty list asks about every call, as before.
+	if got := via(t, `{"policy":{"session_remember":[]}}`, "shell"); got != "auto" {
+		t.Fatalf("shell: %q", got)
+	}
+	// A misspelt name is an error when the file loads.
+	if _, err := Load(write(t, `{"policy":{"session_remember":["wriet_file"]}}`, 0o600)); err == nil {
+		t.Fatal("a misspelt session name was accepted")
 	}
 }
 

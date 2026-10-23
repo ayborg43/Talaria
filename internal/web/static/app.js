@@ -323,7 +323,7 @@ setInterval(() => {
 }, 1000);
 
 function nowCard() {
-  const card = h('div', { class: 'card', id: 'now' }, h('h2', null, 'Working now', h('small', { text: S.agents.length ? S.agents.length + ' running' : '' })));
+  const card = h('div', { class: 'card', id: 'now' }, h('h2', null, 'Working Now', h('small', { text: S.agents.length ? S.agents.length + ' running' : '' })));
   if (!S.agents.length) { card.append(h('div', { class: 'empty', text: 'Nothing is working right now.' })); return card; }
   const rows = h('div', { class: 'rows' });
   for (const w of S.agents) {
@@ -351,9 +351,9 @@ function ago(iso) {
 function renderAgentsPage() {
   if (S.tab !== 'agents') return;
   const out = [nowCard()];
-  out.push(standing.length ? jobsCard(standing, 'Set up to run on their own')
-    : h('div', { class: 'card' }, h('h2', null, 'Set up to run on their own'), h('div', { class: 'empty', text: 'Nothing yet. Ask me for a reminder, a watch on your mail, or a goal to work on, and it will show here.' })));
-  const card = h('div', { class: 'card' }, h('h2', null, 'Finished lately'));
+  out.push(standing.length ? jobsCard(standing, 'Set Up to Run on Their Own')
+    : h('div', { class: 'card' }, h('h2', null, 'Set Up to Run on Their Own'), h('div', { class: 'empty', text: 'Nothing yet. Ask me for a reminder, a watch on your mail, or a goal to work on, and it will show here.' })));
+  const card = h('div', { class: 'card' }, h('h2', null, 'Finished Lately'));
   if (!recentAgents.length) card.append(h('div', { class: 'empty', text: 'Helpers and background work that finish will be listed here.' }));
   else {
     const rows = h('div', { class: 'rows' });
@@ -375,11 +375,41 @@ input.addEventListener('input', () => { autosize(); renderChrome(); });
 input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !matchMedia('(pointer: coarse)').matches) { e.preventDefault(); $('#composer').requestSubmit(); }
 });
+// Messages written while unreachable wait here, in memory only — the page
+// keeps nothing on the phone — and go out in order once the server answers.
+let outbox = [];
+let flushing = false, flushAgain = false;
+async function flushOutbox() {
+  if (flushing) { flushAgain = true; return; } // a trigger mid-flush buys one more pass, so nothing waits on a lost wakeup
+  if (!outbox.length || !navigator.onLine) return;
+  flushing = true;
+  do {
+    flushAgain = false;
+    let sent = 0;
+    while (outbox.length) {
+      try { await api('/api/send', { method: 'POST', body: { text: outbox[0] } }); }
+      catch { break; } // still unreachable (a 401 also shows the sign-in); the rest waits
+      outbox.shift(); sent++;
+    }
+    if (sent) toast(sent === 1 ? 'Sent 1 queued message.' : `Sent ${sent} queued messages.`);
+  } while (flushAgain && outbox.length && navigator.onLine);
+  flushing = false;
+}
+
 async function sendText(text) {
   text = text.trim();
   if (!text) return;
   try { await api('/api/send', { method: 'POST', body: { text } }); }
-  catch (e) { if (!(e instanceof AuthError)) toast(e.message); return false; }
+  catch (e) {
+    if (e instanceof AuthError) return false;
+    if (!navigator.onLine || e.message === 'You appear to be offline.') {
+      outbox.push(text);
+      toast(outbox.length === 1 ? 'It will send when you are back online.' : `${outbox.length} messages will send when you are back online.`);
+      return true; // queued, so the composer does not put it back
+    }
+    toast(e.message); return false;
+  }
+  flushOutbox();
   return true;
 }
 $('#composer').addEventListener('submit', async (e) => {
@@ -426,7 +456,7 @@ function connect() {
   if (S.es) S.es.close();
   const es = new EventSource(`/api/events?epoch=${S.epoch}&after=${S.seq}`);
   S.es = es;
-  es.onopen = () => { S.connected = true; S.retry = 1000; renderChrome(); };
+  es.onopen = () => { S.connected = true; S.retry = 1000; renderChrome(); flushOutbox(); };
   es.onmessage = (e) => {
     const ev = JSON.parse(e.data);
     if (ev.seq > S.seq) S.seq = ev.seq;
@@ -559,7 +589,7 @@ function hero(timed, now) {
 }
 setInterval(() => { if (S.tab === 'today' && S.today && !document.hidden) renderToday(); }, 30000);
 
-function jobsCard(jobs, title = 'Working for you') {
+function jobsCard(jobs, title = 'Working for You') {
   const card = h('div', { class: 'card' }, h('h2', null, title));
   const rows = h('div', { class: 'rows' });
   for (const j of jobs) {
@@ -640,7 +670,7 @@ async function renderControl() {
 
   out.push(await notifyCard(c));
   if (c.jobs.length) out.push(jobsCard(c.jobs));
-  else out.push(h('div', { class: 'card' }, h('h2', null, 'Working for you'), h('div', { class: 'empty', text: 'No goals, watches or reminders yet. Ask me in chat.' })));
+  else out.push(h('div', { class: 'card' }, h('h2', null, 'Working for You'), h('div', { class: 'empty', text: 'No goals, watches or reminders yet. Ask me in chat.' })));
   if (c.links.length) {
     const rows = h('div', { class: 'rows' });
     for (const l of c.links) rows.append(h('div', { class: 'row' }, h('span', { class: 'link-dot' }), h('span', { class: 'grow' }, h('span', { class: 't', text: l.name }), h('span', { class: 's mono', text: l.detail })), h('span', { class: 'pill info', text: l.tag })));
@@ -679,13 +709,13 @@ function editProfile(name) {
   settingsEditing = name;
   const p = S.settings.profiles.find(x => x.Name === name) || { Name: name };
   const form = h('div', { class: 'card' },
-    h('h2', null, 'Edit profile'),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Profile name' }), h('input', { id: 'prof-name', type: 'text', value: p.Name })),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Type' }), h('input', { id: 'prof-type', type: 'text', value: p.Type || 'openai' })),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Base URL' }), h('input', { id: 'prof-baseurl', type: 'text', value: p.BaseURL || '' })),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Model' }), h('input', { id: 'prof-model', type: 'text', value: p.Model || '' })),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key env var' }), h('input', { id: 'prof-apikeyenv', type: 'text', value: p.APIKeyEnv || '' })),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key' }), h('input', { id: 'prof-apikey', type: 'password', placeholder: 'leave blank to keep current' })),
+    h('h2', null, 'Edit Profile'),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Profile name', for: 'prof-name' }), h('input', { id: 'prof-name', name: 'prof-name', autocomplete: 'off', type: 'text', value: p.Name })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Type', for: 'prof-type' }), h('input', { id: 'prof-type', name: 'prof-type', autocomplete: 'off', type: 'text', value: p.Type || 'openai' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Base URL', for: 'prof-baseurl' }), h('input', { id: 'prof-baseurl', name: 'prof-baseurl', autocomplete: 'off', type: 'text', value: p.BaseURL || '' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Model', for: 'prof-model' }), h('input', { id: 'prof-model', name: 'prof-model', autocomplete: 'off', type: 'text', value: p.Model || '' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key env var', for: 'prof-apikeyenv' }), h('input', { id: 'prof-apikeyenv', name: 'prof-apikeyenv', autocomplete: 'off', type: 'text', value: p.APIKeyEnv || '' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key', for: 'prof-apikey' }), h('input', { id: 'prof-apikey', name: 'prof-apikey', autocomplete: 'off', type: 'password', placeholder: 'leave blank to keep current' })),
     h('div', { class: 'field-note', text: 'The key is saved to config.json (mode 0600). Prefer api_key_env over pasting the key directly.' }),
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn primary big', type: 'button', text: 'Save', onclick: saveProfile }),
@@ -696,13 +726,13 @@ function editProfile(name) {
 function newProfileForm() {
   settingsEditing = 'new';
   const form = h('div', { class: 'card' },
-    h('h2', null, 'Add AI profile'),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Profile name' }), h('input', { id: 'prof-name', type: 'text', placeholder: 'e.g. openrouter' })),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Type' }), h('input', { id: 'prof-type', type: 'text', value: 'openai' })),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Base URL' }), h('input', { id: 'prof-baseurl', type: 'text', placeholder: 'https://api.openai.com/v1' })),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Model' }), h('input', { id: 'prof-model', type: 'text', placeholder: 'gpt-4o-mini' })),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key env var' }), h('input', { id: 'prof-apikeyenv', type: 'text', placeholder: 'OPENROUTER_API_KEY' })),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key' }), h('input', { id: 'prof-apikey', type: 'password', placeholder: 'sk-...' })),
+    h('h2', null, 'Add AI Profile'),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Profile name', for: 'prof-name' }), h('input', { id: 'prof-name', name: 'prof-name', autocomplete: 'off', type: 'text', placeholder: 'e.g. openrouter' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Type', for: 'prof-type' }), h('input', { id: 'prof-type', name: 'prof-type', autocomplete: 'off', type: 'text', value: 'openai' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Base URL', for: 'prof-baseurl' }), h('input', { id: 'prof-baseurl', name: 'prof-baseurl', autocomplete: 'off', type: 'text', placeholder: 'https://api.openai.com/v1' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Model', for: 'prof-model' }), h('input', { id: 'prof-model', name: 'prof-model', autocomplete: 'off', type: 'text', placeholder: 'gpt-4o-mini' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key env var', for: 'prof-apikeyenv' }), h('input', { id: 'prof-apikeyenv', name: 'prof-apikeyenv', autocomplete: 'off', type: 'text', placeholder: 'OPENROUTER_API_KEY' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key', for: 'prof-apikey' }), h('input', { id: 'prof-apikey', name: 'prof-apikey', autocomplete: 'off', type: 'password', placeholder: 'sk-…' })),
     h('div', { class: 'field-note', text: 'Pick provider type openai, anthropic or deepseek. Keys are stored in config.json.' }),
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn primary big', type: 'button', text: 'Add', onclick: saveProfile }),
@@ -739,13 +769,13 @@ function renderSettings() {
   const s = S.settings; if (!s || S.tab !== 'settings') return;
   const out = [];
 
-  // Default key info
+  // Default Key info
   out.push(h('div', { class: 'card' },
-    h('h2', null, 'Default key'),
+    h('h2', null, 'Default Key'),
     h('div', null,
       s.HasDefaultKey ? h('span', { class: 'pill info', text: s.DefaultKeyEnv + ' is set' }) : h('span', { class: 'pill', text: 'no default key set' }),
       h('div', { class: 'field-note', text: 'Set TALARIA_API_KEY in your server environment to use the default profile without a config file.' })),
-    h('button', { class: 'btn big', type: 'button', text: 'Add AI profile', onclick: newProfileForm })));
+    h('button', { class: 'btn big', type: 'button', text: 'Add AI Profile', onclick: newProfileForm })));
 
   // Profiles
   if (s.profiles.length) {
@@ -818,7 +848,7 @@ $('#install-go').addEventListener('click', async () => {
 $('#install-close').addEventListener('click', () => { installDismissed = true; renderInstall(); });
 function installCard() {
   if (standalone()) return null;
-  const card = h('div', { class: 'card' }, h('h2', null, 'Install the app'));
+  const card = h('div', { class: 'card' }, h('h2', null, 'Install the App'));
   if (S.installEvent) return (card.append(h('div', { class: 'note', text: 'Add Talaria to your home screen to open it like any app.' }), h('p', null, h('button', { class: 'btn primary big', type: 'button', text: 'Install', onclick: async () => { S.installEvent.prompt(); await S.installEvent.userChoice; S.installEvent = null; renderControl(); } }))), card);
   if (isIOS()) return (card.append(h('ol', { class: 'steps' }, h('li', { text: 'Tap the Share button in Safari.' }), h('li', { text: 'Choose “Add to Home Screen”.' }), h('li', { text: 'Open Talaria from your Home Screen.' }))), card);
   // Chrome on Android offers installing from its own menu even when it has not offered a button yet.
@@ -832,17 +862,17 @@ function installCard() {
 async function start() {
   try { await loadState(); } catch (e) { if (e instanceof AuthError) return; $('#status-text').textContent = e.message; return; }
   $('#login').hidden = true; $('#app').hidden = false;
-  connect(); route(); renderChrome();
+  connect(); route(); renderChrome(); flushOutbox();
 }
 function presence() { if (!document.hidden && S.connected) api('/api/presence', { method: 'POST', body: { visible: true } }).catch(() => {}); }
 setInterval(presence, 20000);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
-  presence();
+  presence(); flushOutbox();
   if (!S.es) { loadState().then(connect).catch(() => {}); }
   if (S.tab === 'today') loadToday(); if (S.tab === 'control') loadControl();
 });
-window.addEventListener('online', () => { $('#offline').hidden = true; });
+window.addEventListener('online', () => { $('#offline').hidden = true; flushOutbox(); });
 window.addEventListener('offline', () => { $('#offline').hidden = false; });
 if (!navigator.onLine) $('#offline').hidden = false;
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});

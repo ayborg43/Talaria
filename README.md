@@ -254,6 +254,12 @@ in scheduled jobs (nobody is watching those), and not for other tools. The choic
   choices back. `./tal policy` lists everything, and `./tal policy forget telegram:123456789` (or `all`) removes choices; a
   running gateway notices at once.
 
+**Allow once.** Approving `shell` or `write_file` covers it for the rest of the conversation, so working together does
+not mean pressing Allow on every command. A new conversation asks again, and a call flagged \"after reading outside
+content\" never counts towards it: that one always asks. `"session_remember": []` turns it off (every call asks, as
+before), or list your own tools and `mcp_*` families. A tool with a rule keeps obeying the rule, and scheduled jobs
+never get it.
+
 **Secrets.** Talaria knows your model keys, the bot tokens, what you give MCP servers, and any environment variable
 named like `*_KEY`, `*_TOKEN`, `*_SECRET` or `*_PASSWORD`. It also recognises the shapes of common tokens (OpenAI,
 Anthropic, GitHub, Slack, AWS, Google, JWTs, Telegram and Discord bot tokens, `Bearer` headers, private keys). Wherever
