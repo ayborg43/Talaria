@@ -30,6 +30,8 @@ type fakeTelegram struct {
 	next   int
 	events []event // every send and edit, in order
 
+	offsets []int // the offset of every getUpdates poll, in order
+
 	polling    atomic.Int32 // getUpdates requests currently open
 	failEdits  atomic.Int32 // answer this many edits with a 429 first
 	editCalls  atomic.Int32 // edits received, including refused ones
@@ -64,6 +66,7 @@ func (f *fakeTelegram) serve(w http.ResponseWriter, r *http.Request) {
 		ChatID      int64  `json:"chat_id"`
 		MessageID   int    `json:"message_id"`
 		Text        string `json:"text"`
+		Offset      int    `json:"offset"`
 		ReplyMarkup *struct {
 			Rows [][]struct {
 				Data string `json:"callback_data"`
@@ -79,6 +82,9 @@ func (f *fakeTelegram) serve(w http.ResponseWriter, r *http.Request) {
 	case "getUpdates":
 		f.polling.Add(1)
 		defer f.polling.Add(-1)
+		f.mu.Lock()
+		f.offsets = append(f.offsets, p.Offset)
+		f.mu.Unlock()
 		select {
 		case b := <-f.updates:
 			reply(b)

@@ -23,6 +23,30 @@ type rule struct {
 	action  agent.Action
 }
 
+// knownTools names every tool Talaria itself registers, so a misspelt rule is
+// an error at load rather than a rule that silently does nothing. A connected
+// service's tools are mcp_<server>_<tool> and cannot be listed here: their
+// servers are only known once Talaria runs. TestKnownToolsMatchesTheRegisteredTools
+// keeps this list in step with the registrations.
+var knownTools = map[string]bool{
+	"browser_back": true, "browser_click": true, "browser_close": true,
+	"browser_fill": true, "browser_open": true, "browser_press": true,
+	"browser_screenshot": true, "browser_scroll": true, "browser_select": true,
+	"browser_snapshot": true, "browser_type": true, "browser_wait": true,
+	"calendar_events": true,
+	"cron_add":        true, "cron_list": true, "cron_remove": true,
+	"current_time": true, "delegate": true,
+	"email_folders": true, "email_list": true, "email_read": true,
+	"goal_create": true, "goal_get": true, "goal_list": true, "goal_update": true,
+	"list_dir": true, "memory": true, "read_file": true, "session_search": true,
+	"shell":        true,
+	"skill_delete": true, "skill_list": true, "skill_save": true, "skill_view": true,
+	"task_cancel": true, "task_list": true, "task_start": true,
+	"vault_list":   true,
+	"watch_create": true, "watch_list": true, "watch_update": true,
+	"write_file": true,
+}
+
 // Policy is the configured permission rules.
 type Policy struct {
 	rules []rule
@@ -69,9 +93,36 @@ func ParsePolicy(rules map[string]string, noRemember []string) (*Policy, error) 
 		case stars > 0:
 			return nil, fmt.Errorf("rule %q: * is only allowed at the end of a name", name)
 		}
+		if err := checkRuleName(name, r.prefix); err != nil {
+			return nil, err
+		}
 		p.rules = append(p.rules, r)
 	}
 	return p, nil
+}
+
+// checkRuleName rejects a rule for a tool that does not exist, so a typo can
+// never silently protect nothing. A name starting with mcp_ is a connected
+// service's tool, whose servers are only known once Talaria runs, and a lone *
+// covers everything on purpose; both are accepted. A family is accepted when
+// it matches at least one tool Talaria has.
+func checkRuleName(name string, prefix bool) error {
+	if !prefix {
+		if knownTools[name] || strings.HasPrefix(name, "mcp_") {
+			return nil
+		}
+		return fmt.Errorf("rule %q: no such tool", name)
+	}
+	bare := strings.TrimSuffix(name, "*")
+	if bare == "" || bare == "mcp" || strings.HasPrefix(bare, "mcp_") {
+		return nil
+	}
+	for tool := range knownTools {
+		if strings.HasPrefix(tool, bare) {
+			return nil
+		}
+	}
+	return fmt.Errorf("rule %q: no tool starts with %q", name, bare)
 }
 
 // match finds the rule for a tool: an exact name wins, then the longest prefix.

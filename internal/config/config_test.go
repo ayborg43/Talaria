@@ -1,8 +1,8 @@
 package config
 
 import (
-	"encoding/json"
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -813,7 +813,6 @@ func TestCalendarSettingsAreValidatedWhenLoaded(t *testing.T) {
 		}
 	}
 }
-
 
 func TestConfigWrite(t *testing.T) {
 	home := t.TempDir()

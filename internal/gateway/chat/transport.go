@@ -106,6 +106,7 @@ func ParseApproval(data string) (token string, c Choice, ok bool) {
 const (
 	MsgExpired    = "This request has expired."
 	MsgNotAllowed = "Not allowed."
+	MsgAnswered   = "This request was already answered."
 )
 
 // Verdict is the line added to an approval prompt once it is answered.
@@ -120,20 +121,46 @@ func Verdict(c Choice) string {
 }
 
 // Deliver sends text to a chat, split to fit the service's limit. It needs no
-// running engine, so a scheduler can use it from any goroutine.
+// running engine, so a scheduler can use it from any goroutine. Each part is
+// retried, and one that still fails is logged and skipped: a transient failure
+// must not silently eat the rest of a job's output.
 func Deliver(ctx context.Context, t Transport, chat int64, text string, logf func(string, ...any)) {
 	parts := SplitMessage(text, t.MaxMessage(), t.Markdown())
 	if len(parts) > maxReplyParts {
 		parts = append(parts[:maxReplyParts-1:maxReplyParts-1], cutNote(maxReplyParts))
 	}
 	for _, part := range parts {
-		if _, err := t.Send(ctx, chat, part); err != nil {
+		if err := sendWithRetry(ctx, t, chat, part); err != nil {
 			if logf != nil {
-				logf("%s: send failed: %v", strings.ToLower(t.Service()), err)
+				logf("%s: dropping a message after retries: %v", strings.ToLower(t.Service()), err)
 			}
-			return
 		}
 	}
+}
+
+// sendAttempts is how many times one message is tried before it is dropped.
+const sendAttempts = 3
+
+// sendRetryWait is the pause before a resend; tests shrink it.
+var sendRetryWait = time.Second
+
+func sendWithRetry(ctx context.Context, t Transport, chat int64, part string) error {
+	var err error
+	wait := sendRetryWait
+	for attempt := 0; attempt < sendAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-time.After(wait):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			wait *= 2
+		}
+		if _, err = t.Send(ctx, chat, part); err == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 func allowlistVar(service string) string {

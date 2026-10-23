@@ -262,7 +262,8 @@ func runGateway(ctx context.Context, rt *app.Runtime, cfg *config.Config, res co
 		g := &telegram.Gateway{
 			API: api, Allowed: allowed, Logf: logf,
 			MessagesPerMinute: cfg.Limits.Messages(), Stream: cfg.Telegram.StreamReplies(), Environment: envDesc, Environments: s.envs, Backends: backends,
-			Prefs: &chat.FilePrefs{Path: filepath.Join(home, "telegram_chats.json")},
+			Prefs:      &chat.FilePrefs{Path: filepath.Join(home, "telegram_chats.json")},
+			OffsetPath: filepath.Join(home, "telegram_offset.json"),
 		}
 		if gd := rt.Guard(); gd != nil {
 			g.Permissions = guard.ChatPermissions{G: gd, Gateway: s.name}

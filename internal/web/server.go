@@ -11,8 +11,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -310,24 +310,24 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 
 // settingsView is what the settings page shows: everything except actual API keys.
 type settingsView struct {
-	DefaultProfile  string            `json:"default_profile"`
-	Profiles        []settingsProfile `json:"profiles"`
-	HasDefaultKey   bool              `json:"has_default_key"` // TALARIA_API_KEY is set
-	DefaultKeyEnv   string            `json:"default_key_env"`
-	DefaultKeySet   bool              `json:"default_key_set"`
-	KeyEnvs         []string          `json:"key_envs"`
-	SubagentMaxSteps int               `json:"subagent_max_steps"`
-	SubagentMaxParallel int              `json:"subagent_max_parallel"`
+	DefaultProfile      string            `json:"default_profile"`
+	Profiles            []settingsProfile `json:"profiles"`
+	HasDefaultKey       bool              `json:"has_default_key"` // TALARIA_API_KEY is set
+	DefaultKeyEnv       string            `json:"default_key_env"`
+	DefaultKeySet       bool              `json:"default_key_set"`
+	KeyEnvs             []string          `json:"key_envs"`
+	SubagentMaxSteps    int               `json:"subagent_max_steps"`
+	SubagentMaxParallel int               `json:"subagent_max_parallel"`
 }
 
 type settingsProfile struct {
-	Name       string `json:"name"`
-	Type       string `json:"type,omitempty"`
-	BaseURL    string `json:"base_url,omitempty"`
-	Model      string `json:"model,omitempty"`
-	APIKeyEnv  string `json:"api_key_env,omitempty"`
-	HasKey     bool   `json:"has_key"`       // a key is configured for this profile
-	KeySource  string `json:"key_source,omitempty"`
+	Name      string `json:"name"`
+	Type      string `json:"type,omitempty"`
+	BaseURL   string `json:"base_url,omitempty"`
+	Model     string `json:"model,omitempty"`
+	APIKeyEnv string `json:"api_key_env,omitempty"`
+	HasKey    bool   `json:"has_key"` // a key is configured for this profile
+	KeySource string `json:"key_source,omitempty"`
 }
 
 func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
@@ -336,10 +336,10 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := settingsView{
-		DefaultProfile:    s.Cfg.DefaultProfile,
-		SubagentMaxSteps:  s.Cfg.Subagents.MaxSteps,
+		DefaultProfile:      s.Cfg.DefaultProfile,
+		SubagentMaxSteps:    s.Cfg.Subagents.MaxSteps,
 		SubagentMaxParallel: s.Cfg.Subagents.MaxParallel,
-		KeyEnvs:           config.DefaultKeyEnvs(),
+		KeyEnvs:             config.DefaultKeyEnvs(),
 	}
 	if defKeyEnv := os.Getenv("TALARIA_API_KEY"); defKeyEnv != "" {
 		view.HasDefaultKey = true
@@ -387,16 +387,30 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		delete(s.Cfg.Profiles, in.Name)
 	} else if p, ok := s.Cfg.Profiles[in.Name]; ok {
 		// Edit existing profile
-		if in.Type != "" { p.Type = in.Type }
-		if in.BaseURL != "" { p.BaseURL = in.BaseURL }
-		if in.Model != "" { p.Model = in.Model }
-		if in.APIKeyEnv != "" { p.APIKeyEnv = in.APIKeyEnv }
-		if in.APIKey != "" { p.APIKey = in.APIKey }
+		if in.Type != "" {
+			p.Type = in.Type
+		}
+		if in.BaseURL != "" {
+			p.BaseURL = in.BaseURL
+		}
+		if in.Model != "" {
+			p.Model = in.Model
+		}
+		if in.APIKeyEnv != "" {
+			p.APIKeyEnv = in.APIKeyEnv
+		}
+		if in.APIKey != "" {
+			p.APIKey = in.APIKey
+		}
 		s.Cfg.Profiles[in.Name] = p
 	} else {
 		p := config.Profile{Type: in.Type, BaseURL: in.BaseURL, Model: in.Model, APIKeyEnv: in.APIKeyEnv}
-		if in.APIKey != "" { p.APIKey = in.APIKey }
-		if s.Cfg.Profiles == nil { s.Cfg.Profiles = map[string]config.Profile{} }
+		if in.APIKey != "" {
+			p.APIKey = in.APIKey
+		}
+		if s.Cfg.Profiles == nil {
+			s.Cfg.Profiles = map[string]config.Profile{}
+		}
 		s.Cfg.Profiles[in.Name] = p
 	}
 	if err := config.Write(s.ConfigPath, s.Cfg); err != nil {
@@ -486,6 +500,8 @@ func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusGone, chat.MsgExpired)
 	case chat.DecisionForbidden:
 		fail(w, http.StatusForbidden, chat.MsgNotAllowed)
+	case chat.DecisionAnswered:
+		fail(w, http.StatusConflict, chat.MsgAnswered)
 	default:
 		s.Hub.Resolve(in.Token, got)
 		w.WriteHeader(http.StatusNoContent)

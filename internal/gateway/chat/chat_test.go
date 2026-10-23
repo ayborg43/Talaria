@@ -11,14 +11,16 @@ import (
 
 // fakeService is a chat service that records what the engine does to it.
 type fakeService struct {
-	mu       sync.Mutex
-	limit    int
-	markdown bool
-	events   []event
-	texts    map[int64]string // current text of each message
-	next     int64
-	editErr  error // returned by every Edit when set
-	outcome  EditOutcome
+	mu        sync.Mutex
+	limit     int
+	markdown  bool
+	events    []event
+	texts     map[int64]string // current text of each message
+	next      int64
+	editErr   error // returned by every Edit when set
+	outcome   EditOutcome
+	failSends int // fail this many Sends, then succeed
+	sends     int // Send attempts, failed or not
 }
 
 type event struct {
@@ -42,6 +44,11 @@ func (f *fakeService) Typing(context.Context, int64) error { return nil }
 func (f *fakeService) Send(_ context.Context, _ int64, text string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.sends++
+	if f.failSends > 0 {
+		f.failSends--
+		return 0, errors.New("send failed")
+	}
 	f.next++
 	f.texts[f.next] = text
 	f.events = append(f.events, event{"send", f.next, text})
@@ -208,18 +215,66 @@ func TestApprovalTokensAreUnguessableAndUnique(t *testing.T) {
 	taken := map[string]*pendingApproval{}
 	seen := map[string]bool{}
 	for i := 0; i < 1000; i++ {
-		tok := newToken(taken)
+		tok, ok := newToken(taken)
+		if !ok {
+			t.Fatal("no token without randomness")
+		}
 		if len(tok) != 16 || seen[tok] || strings.ContainsAny(tok, ":") {
 			t.Fatalf("%q", tok)
 		}
 		seen[tok] = true
 		taken[tok] = &pendingApproval{}
 	}
-	if _, _, ok := ParseApproval(ApprovalData(newToken(nil), ChoiceAllow)); !ok {
+	tok, ok := newToken(nil)
+	if !ok {
+		t.Fatal("no token without randomness")
+	}
+	if _, _, ok := ParseApproval(ApprovalData(tok, ChoiceAllow)); !ok {
 		t.Fatal("a token fits in the button data")
 	}
-	if tok := newToken(nil); tok == "1" || tok == "2" {
+	if tok, _ := newToken(nil); tok == "1" || tok == "2" {
 		t.Fatal("not a counter, which restarts at 1 after the gateway does")
+	}
+}
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("no randomness") }
+
+// Without randomness there is no safe approval token; the approval is denied
+// instead of crashing the gateway.
+func TestApprovalsAreDeniedWithoutRandomness(t *testing.T) {
+	old := tokenRand
+	tokenRand = failingReader{}
+	defer func() { tokenRand = old }()
+
+	if tok, ok := newToken(nil); ok || tok != "" {
+		t.Fatalf("a token without randomness: %q", tok)
+	}
+	e := &Engine{pending: map[string]*pendingApproval{}}
+	if e.askApproval(&chat{runCtx: context.Background()}, "shell", "{}") {
+		t.Fatal("an approval without a token was allowed")
+	}
+	if len(e.pending) != 0 {
+		t.Fatal("a tokenless approval was left pending")
+	}
+}
+
+// A second press on an answered prompt must say so, not show a verdict for an
+// answer that never reached the agent.
+func TestDecideReportsAnAlreadyAnsweredPressDistinctly(t *testing.T) {
+	e := &Engine{Allowed: map[int64]bool{1: true}, pending: map[string]*pendingApproval{
+		"tok": {chatID: 7, tool: "shell", ch: make(chan Choice, 1)},
+	}}
+	if d, _ := e.Decide("tok", 1, 7, ChoiceDeny); d != DecisionRecorded {
+		t.Fatalf("first press: %v", d)
+	}
+	d, choice := e.Decide("tok", 1, 7, ChoiceAllow)
+	if d != DecisionAnswered {
+		t.Fatalf("second press: %v, want DecisionAnswered", d)
+	}
+	if got := <-e.pending["tok"].ch; got != ChoiceDeny || choice != ChoiceAllow {
+		t.Fatalf("the agent keeps the first answer: %v, press said %v", got, choice)
 	}
 }
 
@@ -237,6 +292,38 @@ func TestApprovalData(t *testing.T) {
 		if _, _, ok := ParseApproval(bad); ok {
 			t.Errorf("%q should not parse", bad)
 		}
+	}
+}
+
+func TestDeliverRetriesAFailedSend(t *testing.T) {
+	old := sendRetryWait
+	sendRetryWait = time.Millisecond
+	defer func() { sendRetryWait = old }()
+	f := newFakeService(4000, false)
+	f.failSends = 2
+	Deliver(context.Background(), f, 1, "hi", nil)
+	if ev := f.log(); len(ev) != 1 || ev[0].Text != "hi" {
+		t.Fatalf("a transient failure lost the message: %+v", ev)
+	}
+	if f.sends != 3 {
+		t.Fatalf("tried %d times, want 3", f.sends)
+	}
+}
+
+func TestDeliverKeepsTheRestAfterAFailure(t *testing.T) {
+	old := sendRetryWait
+	sendRetryWait = time.Millisecond
+	defer func() { sendRetryWait = old }()
+	f := newFakeService(10, false)
+	f.failSends = 1 << 30 // the service is down
+	var logged []string
+	Deliver(context.Background(), f, 1, "aaaaa\nbbbbb\nccccc", func(f string, a ...any) { logged = append(logged, f) })
+	parts := len(SplitMessage("aaaaa\nbbbbb\nccccc", 10, false))
+	if f.sends != parts*sendAttempts {
+		t.Fatalf("tried %d sends for %d parts, want every part retried", f.sends, parts)
+	}
+	if len(logged) != parts {
+		t.Fatalf("logged %d failures for %d parts", len(logged), parts)
 	}
 }
 

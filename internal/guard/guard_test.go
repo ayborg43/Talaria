@@ -2,8 +2,11 @@ package guard
 
 import (
 	"encoding/json"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -62,6 +65,10 @@ func TestPolicyRejectsBadRules(t *testing.T) {
 		"two stars":       {"a**": "deny"},
 		"blank name":      {"": "deny"},
 		"padded name":     {" shell": "deny"},
+		"misspelt tool":   {"wriet_file": "deny"},
+		"misspelt family": {"wriet_*": "deny"},
+		"unknown tool":    {"send_email": "deny"},
+		"bare prefix":     {"read": "deny"},
 	} {
 		if _, err := ParsePolicy(rules, nil); err == nil {
 			t.Errorf("%s should be rejected", name)
@@ -69,6 +76,55 @@ func TestPolicyRejectsBadRules(t *testing.T) {
 	}
 	if _, err := ParsePolicy(map[string]string{"shell": " DENY "}, nil); err != nil {
 		t.Errorf("verdicts are case-insensitive: %v", err)
+	}
+	// A connected service's tools cannot be listed at load, and a lone *
+	// covers everything on purpose; all of these are accepted.
+	for _, name := range []string{"mcp_mail_send", "mcp_*", "mcp_mail_*", "browser_*", "*", "read_file"} {
+		if _, err := ParsePolicy(map[string]string{name: "deny"}, nil); err != nil {
+			t.Errorf("%s should be accepted: %v", name, err)
+		}
+	}
+}
+
+// The rule-name check only works if knownTools names every tool Talaria
+// registers. Registrations live across packages, so this test reads them back
+// out of the source: every Name given to a registry must be known, and nothing
+// else may be.
+func TestKnownToolsMatchesTheRegisteredTools(t *testing.T) {
+	root := ".."
+	registered := map[string]bool{}
+	nameRe := regexp.MustCompile(`(?m)^\s*Name:\s*"([a-z][a-z0-9_]*)"`)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(string(src), "Register(") {
+			return nil
+		}
+		for _, m := range nameRe.FindAllStringSubmatch(string(src), -1) {
+			registered[m[1]] = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(registered) == 0 {
+		t.Fatal("found no registrations; the extractor is broken")
+	}
+	for name := range registered {
+		if !knownTools[name] {
+			t.Errorf("tool %q is registered but not known to the rule check", name)
+		}
+	}
+	for name := range knownTools {
+		if !registered[name] {
+			t.Errorf("tool %q is known to the rule check but never registered", name)
+		}
 	}
 }
 
@@ -429,6 +485,25 @@ func TestToolsWithLastingEffectsAreNeverRememberedByDefault(t *testing.T) {
 	}
 	if !p.Rememberable("skill_delete") {
 		t.Error("the list is not everything")
+	}
+}
+
+// The CLI and the gateway share the grants file through separate handles
+// (separate locks, possibly separate processes). Concurrent edits must lose
+// neither.
+func TestConcurrentGrantEditsFromTwoHandlesLoseNothing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "grants.json")
+	a := &Grants{Path: path}
+	b := &Grants{Path: path}
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(2)
+		go func() { defer wg.Done(); a.Add("telegram:1", fmt.Sprintf("tool_a_%d", i)) }()
+		go func() { defer wg.Done(); b.Add("telegram:1", fmt.Sprintf("tool_b_%d", i)) }()
+	}
+	wg.Wait()
+	if got := a.List("telegram:1"); len(got) != 40 {
+		t.Fatalf("%d grants survived, want 40: %v", len(got), got)
 	}
 }
 

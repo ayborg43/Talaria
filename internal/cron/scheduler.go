@@ -41,6 +41,9 @@ type Scheduler struct {
 	Timeout     time.Duration // per-run limit; default 10m
 	MaxTimeout  time.Duration // the most a job may ask for with its own timeout; default 2h
 	MaxParallel int           // concurrent runs; default 2
+	// ShutdownTimeout bounds how long Run waits for in-flight runs after ctx
+	// ends; default 30s. Runs that ignore cancellation are abandoned after it.
+	ShutdownTimeout time.Duration
 
 	now     func() time.Time // tests override
 	sem     chan struct{}
@@ -138,11 +141,27 @@ func (s *Scheduler) Run(ctx context.Context) {
 		s.tick(ctx)
 		select {
 		case <-ctx.Done():
-			s.wg.Wait()
+			s.waitForRuns()
 			return
 		case <-t.C:
 		case <-s.wakeChan():
 		}
+	}
+}
+
+// waitForRuns waits for in-flight runs, for at most ShutdownTimeout: a job
+// that ignores cancellation must not hold the shutdown forever.
+func (s *Scheduler) waitForRuns() {
+	grace := s.ShutdownTimeout
+	if grace <= 0 {
+		grace = 30 * time.Second
+	}
+	done := make(chan struct{})
+	go func() { s.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(grace):
+		s.logf("cron: shutdown timed out waiting for runs; abandoning them")
 	}
 }
 
@@ -193,8 +212,11 @@ func (s *Scheduler) tick(ctx context.Context) {
 			case s.sem <- struct{}{}:
 				defer func() { <-s.sem }()
 			case <-rctx.Done():
-				if ctx.Err() == nil { // cancelled while waiting for a slot
+				switch {
+				case ctx.Err() == nil: // cancelled while waiting for a slot
 					s.finishCancelled(ctx, j)
+				case !s.Store.Exists(j.ID): // shutdown before it started, and claiming deleted it
+					s.deliverShutdownNote(j, "Talaria shut down before it started; start it again if you still want it")
 				}
 				return
 			}
@@ -256,6 +278,14 @@ func (s *Scheduler) finishCancelled(ctx context.Context, j Job) {
 	s.Deliver(ctx, j.ChatID, fmt.Sprintf("🛑 %s was cancelled before it started.", j.Name))
 }
 
+// deliverShutdownNote tells the chat that a claimed one-shot died with the
+// shutdown. It uses a fresh context: the scheduler's own is already done.
+func (s *Scheduler) deliverShutdownNote(j Job, why string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	s.Deliver(ctx, j.ChatID, say(j, false, why))
+}
+
 func (s *Scheduler) runJob(ctx, rctx context.Context, r *run, j Job) {
 	runCtx, cancel := context.WithTimeout(rctx, s.timeoutFor(j))
 	defer cancel()
@@ -266,7 +296,14 @@ func (s *Scheduler) runJob(ctx, rctx context.Context, r *run, j Job) {
 	reply, err := s.Exec(runCtx, j)
 	end()
 	if ctx.Err() != nil {
-		return // shutting down: not a failure of the job
+		// Shutting down: not a failure of the job, so a recurring job stays
+		// silent and runs again. But a claimed one-shot was deleted from the
+		// store, so without a note here the user would never learn it died.
+		// Dropped jobs stay silent whatever stopped them.
+		if !errors.Is(err, ErrDrop) && !s.Store.Exists(j.ID) {
+			s.deliverShutdownNote(j, "Talaria shut down while it was running; start it again if you still want it")
+		}
+		return
 	}
 	s.mu.Lock()
 	cancelled := r.cancelled

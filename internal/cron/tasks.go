@@ -25,26 +25,19 @@ const (
 	maxTaskMinutes     = 120
 )
 
-// TaskCount is how many background tasks a chat has going: running, waiting
-// for a slot, or stored and not yet picked up.
-func TaskCount(s *Store, ctl Control, gateway string, chatID int64) int {
-	n := 0
-	seen := map[string]bool{}
-	if ctl != nil {
-		for _, r := range ctl.Runs(gateway, chatID) {
-			if r.Kind == KindTask {
-				n++
-				seen[r.ID] = true
-			}
+// runningTasks is the IDs of the chat's tasks the scheduler has going: running
+// or waiting for a slot.
+func runningTasks(ctl Control, gateway string, chatID int64) map[string]bool {
+	running := map[string]bool{}
+	if ctl == nil {
+		return running
+	}
+	for _, r := range ctl.Runs(gateway, chatID) {
+		if r.Kind == KindTask {
+			running[r.ID] = true
 		}
 	}
-	jobs, _ := s.List()
-	for _, j := range jobs {
-		if j.Kind == KindTask && j.ChatID == chatID && j.Gateway == gateway && !seen[j.ID] {
-			n++
-		}
-	}
-	return n
+	return running
 }
 
 // RegisterTaskTools adds task_start, task_list and task_cancel for one chat. A
@@ -73,9 +66,6 @@ func RegisterTaskTools(r *tool.Registry, s *Store, ctl Control, gateway string, 
 			if err := json.Unmarshal(raw, &a); err != nil {
 				return "", err
 			}
-			if n := TaskCount(s, ctl, gateway, chatID); n >= maxTasksPerChat {
-				return "", fmt.Errorf("this chat already has %d background tasks going (the most is %d): wait for one to finish or cancel one with task_cancel", n, maxTasksPerChat)
-			}
 			minutes := a.TimeoutMinutes
 			if minutes <= 0 {
 				minutes = defaultTaskMinutes
@@ -85,8 +75,9 @@ func RegisterTaskTools(r *tool.Registry, s *Store, ctl Control, gateway string, 
 			if err != nil {
 				return "", err
 			}
-			j, err := s.AddNow(Job{Name: a.Name, Kind: KindTask, Prompt: a.Task, Gateway: gateway, ChatID: chatID,
-				AllowRisky: a.AllowRisky, Profile: profile, Environment: environment, TimeoutSec: minutes * 60})
+			j, err := s.AddTask(Job{Name: a.Name, Kind: KindTask, Prompt: a.Task, Gateway: gateway, ChatID: chatID,
+				AllowRisky: a.AllowRisky, Profile: profile, Environment: environment, TimeoutSec: minutes * 60},
+				runningTasks(ctl, gateway, chatID), maxTasksPerChat)
 			if err != nil {
 				return "", err
 			}

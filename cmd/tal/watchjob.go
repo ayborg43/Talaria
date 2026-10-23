@@ -20,6 +20,19 @@ import (
 // and what the model does about a change is limited to what runs unattended,
 // whatever the gateway's yolo setting says, because the text it is reading came
 // from outside.
+// pollBudget is how long the poll itself may take: half the job's remaining
+// time, so that when something changed there is still room for the look at
+// what it means. A slow poll must not starve the analysis run.
+func pollBudget(ctx context.Context) time.Duration {
+	budget := cron.WatchPollTimeout / 2
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 {
+			budget = remaining / 2
+		}
+	}
+	return min(max(budget, time.Minute), cron.WatchPollTimeout/2)
+}
+
 func (r *jobRunner) runWatch(ctx context.Context, j cron.Job) (string, error) {
 	ws := r.rt.Watches()
 	if ws == nil {
@@ -41,7 +54,7 @@ func (r *jobRunner) runWatch(ctx context.Context, j cron.Job) (string, error) {
 		Origin:      "watch:" + w.ID, Gateway: j.Gateway, ChatID: j.ChatID, NoCron: true, NoHistory: true,
 	})
 
-	pollCtx, cancel := context.WithTimeout(ctx, cron.WatchPollTimeout)
+	pollCtx, cancel := context.WithTimeout(ctx, pollBudget(ctx))
 	result, callErr := a.Call(pollCtx, w.Tool, w.Args)
 	cancel()
 	if ctx.Err() != nil {

@@ -438,3 +438,22 @@ func TestWatchPollsAreCountedByOutcome(t *testing.T) {
 		}
 	}
 }
+
+// The poll may take half the job's remaining time, so that when something
+// changed there is still room for the look at what it means; never the whole
+// job, and never nothing.
+func TestPollBudgetLeavesRoomForTheAnalysis(t *testing.T) {
+	if got := pollBudget(context.Background()); got != cron.WatchPollTimeout/2 {
+		t.Fatalf("no deadline: %s", got)
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(10*time.Minute))
+	defer cancel()
+	if got := pollBudget(ctx); got < 4*time.Minute+50*time.Second || got > 5*time.Minute {
+		t.Fatalf("10 minutes left: %s", got)
+	}
+	short, cancelShort := context.WithDeadline(context.Background(), time.Now().Add(30*time.Second))
+	defer cancelShort()
+	if got := pollBudget(short); got != time.Minute {
+		t.Fatalf("30 seconds left: %s, want the 1m floor", got)
+	}
+}

@@ -75,3 +75,49 @@ func TestAlwaysAllowButtonOnTelegram(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A callback can arrive without a message: inline mode carries an inline ID
+// instead of one. Answering it must not crash the gateway, and there is no
+// message to rewrite with the verdict.
+func TestCallbackWithoutAMessageDoesNotCrash(t *testing.T) {
+	f := newFake(t)
+	dir := t.TempDir()
+	target := filepath.Join(dir, "out.txt")
+	pol, _ := guard.ParsePolicy(nil, nil)
+	g := &guard.Guard{Policy: pol, Grants: &guard.Grants{Path: filepath.Join(dir, "grants.json")}, Audit: &guard.Log{Path: filepath.Join(dir, "audit.log")}}
+
+	args, _ := json.Marshal(map[string]string{"path": target, "content": "x"})
+	call := provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "1", Name: "write_file", Arguments: string(args)}}}
+	p := &scripted{replies: []provider.Message{call, {Role: provider.RoleAssistant, Content: "done"}}}
+	newAgent := func(chatID int64, approve func(string, string) bool) *agent.Agent {
+		reg := tool.NewRegistry()
+		tool.RegisterBuiltins(reg)
+		return &agent.Agent{Provider: p, Model: "m", Tools: reg, Approve: approve, Gate: g.For("chat", "telegram", chatID)}
+	}
+	start(t, f, []int64{1}, newAgent)
+
+	// Chat 0 is not a real Telegram chat, but a self-hosted Bot API server can
+	// send one, and the gateway must survive what it sends.
+	f.updates <- []Update{userMsg(1, 1, 0, "private", "write")}
+	var prompt sentMsg
+	f.waitFor("the prompt", func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		for _, m := range f.sent {
+			if m.HasKB {
+				prompt = m
+				return true
+			}
+		}
+		return false
+	})
+	f.updates <- []Update{{UpdateID: 2, CallbackQuery: &CallbackQuery{
+		ID: "q", From: User{ID: 1}, Data: prompt.Callback[0], Message: nil,
+	}}}
+	f.waitFor("the reply", func() bool { return f.sawText("done") })
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.edit) != 0 {
+		t.Fatalf("edited %d messages for a callback with no message", len(f.edit))
+	}
+}

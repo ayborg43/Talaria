@@ -9,6 +9,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"talaria/internal/filelock"
 )
 
 // Grants are the tools a user has chosen to always allow, per chat. They live
@@ -107,6 +109,16 @@ func (g *Grants) Reset(chat string) (int, error) {
 func (g *Grants) edit(change func(map[string][]string)) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if err := os.MkdirAll(filepath.Dir(g.Path), 0o700); err != nil {
+		return err
+	}
+	// The CLI (`tal policy forget`) and the gateway share this file; without
+	// the inter-process lock two edits at once silently drop one of them.
+	unlock, err := filelock.Lock(g.Path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	m, err := g.load()
 	if err != nil {
 		return err
@@ -121,11 +133,7 @@ func (g *Grants) edit(change func(map[string][]string)) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(g.Path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, "grants-*.tmp")
+	tmp, err := os.CreateTemp(filepath.Dir(g.Path), "grants-*.tmp")
 	if err != nil {
 		return err
 	}

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"talaria/internal/filelock"
 )
 
 const (
@@ -79,6 +81,17 @@ func (s *Store) now() time.Time {
 	return time.Now()
 }
 
+// lockFile takes the inter-process lock for the jobs file, so the CLI and the
+// gateway cannot read, change and save it in between each other. Callers hold
+// s.mu first and release in the reverse order. Reads need no lock: saves are
+// atomic renames, so a read never sees half a file.
+func (s *Store) lockFile() (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(s.Path), 0o700); err != nil {
+		return nil, err
+	}
+	return filelock.Lock(s.Path)
+}
+
 func (s *Store) load() ([]Job, error) {
 	raw, err := os.ReadFile(s.Path)
 	if err != nil {
@@ -139,8 +152,9 @@ func (s *Store) List() ([]Job, error) {
 	return jobs, err
 }
 
-// Add validates and stores a job, assigning its ID and first run time.
-func (s *Store) Add(j Job) (Job, error) {
+// checkAdd normalises and validates a job for Add, assigning everything but
+// its ID. It touches no state, so callers can fail before taking any lock.
+func checkAdd(j Job, now time.Time) (Job, error) {
 	j.Schedule = strings.Join(strings.Fields(j.Schedule), " ")
 	j.Prompt = strings.TrimSpace(j.Prompt)
 	if j.Gateway == "" {
@@ -168,7 +182,6 @@ func (s *Store) Add(j Job) (Job, error) {
 	if err != nil {
 		return Job{}, err
 	}
-	now := s.now()
 	next, ok := sch.Next(now)
 	if !ok {
 		return Job{}, fmt.Errorf("schedule %q never fires (a time in the past, or a date that does not exist)", j.Schedule)
@@ -177,13 +190,12 @@ func (s *Store) Add(j Job) (Job, error) {
 		j.Name = snippet(j.Prompt, 40)
 	}
 	j.CreatedAt, j.NextRun = now, next
+	return j, nil
+}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	jobs, err := s.load()
-	if err != nil {
-		return Job{}, err
-	}
+// insertLocked assigns an ID and saves the job; the caller holds both locks
+// and a fresh load, so the cap and the ID check see every job.
+func (s *Store) insertLocked(jobs []Job, j Job) (Job, error) {
 	if len(jobs) >= maxJobs {
 		return Job{}, fmt.Errorf("too many jobs (max %d): remove one first", maxJobs)
 	}
@@ -191,11 +203,29 @@ func (s *Store) Add(j Job) (Job, error) {
 	return j, s.save(append(jobs, j))
 }
 
-// AddNow stores a job to run as soon as the scheduler next looks, once. It is
-// how a background task starts: the scheduler claims it, runs it and delivers
-// its result like any other job.
-func (s *Store) AddNow(j Job) (Job, error) {
-	now := s.now()
+// Add validates and stores a job, assigning its ID and first run time.
+func (s *Store) Add(j Job) (Job, error) {
+	j, err := checkAdd(j, s.now())
+	if err != nil {
+		return Job{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := s.lockFile()
+	if err != nil {
+		return Job{}, err
+	}
+	defer unlock()
+	jobs, err := s.load()
+	if err != nil {
+		return Job{}, err
+	}
+	return s.insertLocked(jobs, j)
+}
+
+// checkAddNow normalises and validates a job for AddNow, assigning everything
+// but its ID. It touches no state, so callers can fail before taking any lock.
+func checkAddNow(j Job, now time.Time) (Job, error) {
 	j.Schedule = "@at " + now.UTC().Format(time.RFC3339)
 	j.Prompt = strings.TrimSpace(j.Prompt)
 	switch {
@@ -217,38 +247,102 @@ func (s *Store) AddNow(j Job) (Job, error) {
 		j.Name = snippet(j.Prompt, 40)
 	}
 	j.CreatedAt, j.NextRun = now, now
+	return j, nil
+}
 
+// AddNow stores a job to run as soon as the scheduler next looks, once. It is
+// how a background task starts: the scheduler claims it, runs it and delivers
+// its result like any other job.
+func (s *Store) AddNow(j Job) (Job, error) {
+	j, err := checkAddNow(j, s.now())
+	if err != nil {
+		return Job{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := s.lockFile()
+	if err != nil {
+		return Job{}, err
+	}
+	defer unlock()
 	jobs, err := s.load()
 	if err != nil {
 		return Job{}, err
 	}
-	if len(jobs) >= maxJobs {
-		return Job{}, fmt.Errorf("too many jobs (max %d): remove one first", maxJobs)
+	return s.insertLocked(jobs, j)
+}
+
+// AddTask stores a background task if the chat has room for one: running tasks
+// (counted by the caller from the scheduler, which the store cannot see) plus
+// stored ones must leave a free slot under max. Stored tasks the caller
+// already counted are not counted twice. The count and the insert happen under
+// one lock, so two calls at once cannot both pass.
+func (s *Store) AddTask(j Job, running map[string]bool, max int) (Job, error) {
+	j, err := checkAddNow(j, s.now())
+	if err != nil {
+		return Job{}, err
 	}
-	j.ID = newID(jobs)
-	return j, s.save(append(jobs, j))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := s.lockFile()
+	if err != nil {
+		return Job{}, err
+	}
+	defer unlock()
+	jobs, err := s.load()
+	if err != nil {
+		return Job{}, err
+	}
+	n := len(running)
+	for _, sj := range jobs {
+		if sj.Kind == KindTask && sj.ChatID == j.ChatID && sj.Gateway == j.Gateway && !running[sj.ID] {
+			n++
+		}
+	}
+	if n >= max {
+		return Job{}, fmt.Errorf("this chat already has %d background tasks going (the most is %d): wait for one to finish or cancel one with task_cancel", n, max)
+	}
+	return s.insertLocked(jobs, j)
 }
 
 // GoalCheckinTimeout is how long one check-in on a goal may work.
 const GoalCheckinTimeout = 30 * time.Minute
 
 // ScheduleGoal makes the goal's check-ins happen every interval, replacing any
-// schedule it had. It is safe to call again: a goal has at most one.
+// schedule it had. It is safe to call again: a goal has at most one. The
+// removal and the new schedule happen under one lock, so a crash or a
+// concurrent call cannot leave none or two.
 func (s *Store) ScheduleGoal(goalID, gateway string, chatID int64, name string, every time.Duration, allowRisky bool, profile, environment string) error {
 	if every < MinInterval {
 		return fmt.Errorf("check-ins must be at least %s apart", MinInterval)
 	}
-	if err := s.UnscheduleGoal(goalID); err != nil {
-		return err
-	}
-	_, err := s.Add(Job{
+	j, err := checkAdd(Job{
 		Name: name, Kind: KindGoal, Goal: goalID, Gateway: gateway, ChatID: chatID, AllowRisky: allowRisky,
 		Profile: profile, Environment: environment,
 		Schedule: "@every " + every.String(), Prompt: "check in on goal " + goalID,
 		TimeoutSec: int(GoalCheckinTimeout / time.Second),
-	})
+	}, s.now())
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := s.lockFile()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	jobs, err := s.load()
+	if err != nil {
+		return err
+	}
+	keep := jobs[:0]
+	for _, sj := range jobs {
+		if !(sj.Kind == KindGoal && sj.Goal == goalID) {
+			keep = append(keep, sj)
+		}
+	}
+	_, err = s.insertLocked(keep, j)
 	return err
 }
 
@@ -256,6 +350,11 @@ func (s *Store) ScheduleGoal(goalID, gateway string, chatID int64, name string, 
 func (s *Store) UnscheduleGoal(goalID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := s.lockFile()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	jobs, err := s.load()
 	if err != nil {
 		return err
@@ -278,18 +377,38 @@ const WatchPollTimeout = 10 * time.Minute
 // MinWatchInterval is the shortest time between polls.
 const MinWatchInterval = 5 * time.Minute
 
-// ScheduleWatch makes a watch poll every interval, replacing any schedule it had.
+// ScheduleWatch makes a watch poll every interval, replacing any schedule it
+// had. The removal and the new schedule happen under one lock, so a crash or
+// a concurrent call cannot leave none or two.
 func (s *Store) ScheduleWatch(watchID, gateway string, chatID int64, name string, every time.Duration) error {
 	if every < MinWatchInterval {
 		return fmt.Errorf("a watch polls at most every %s", MinWatchInterval)
 	}
-	if err := s.UnscheduleWatch(watchID); err != nil {
-		return err
-	}
-	_, err := s.Add(Job{
+	j, err := checkAdd(Job{
 		Name: name, Kind: KindWatch, Watch: watchID, Gateway: gateway, ChatID: chatID,
 		Schedule: "@every " + every.String(), Prompt: "poll watch " + watchID, TimeoutSec: int(WatchPollTimeout / time.Second),
-	})
+	}, s.now())
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := s.lockFile()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	jobs, err := s.load()
+	if err != nil {
+		return err
+	}
+	keep := jobs[:0]
+	for _, sj := range jobs {
+		if !(sj.Kind == KindWatch && sj.Watch == watchID) {
+			keep = append(keep, sj)
+		}
+	}
+	_, err = s.insertLocked(keep, j)
 	return err
 }
 
@@ -297,6 +416,11 @@ func (s *Store) ScheduleWatch(watchID, gateway string, chatID int64, name string
 func (s *Store) UnscheduleWatch(watchID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := s.lockFile()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	jobs, err := s.load()
 	if err != nil {
 		return err
@@ -349,6 +473,11 @@ func (s *Store) Remove(id, gateway string, chatID int64) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := s.lockFile()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	jobs, err := s.load()
 	if err != nil {
 		return err
@@ -371,6 +500,11 @@ func (s *Store) Remove(id, gateway string, chatID int64) error {
 func (s *Store) ClaimDue(now time.Time, gateway string) ([]Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := s.lockFile()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	jobs, err := s.load()
 	if err != nil || len(jobs) == 0 {
 		return nil, err
@@ -408,6 +542,11 @@ func (s *Store) ClaimDue(now time.Time, gateway string) ([]Job, error) {
 func (s *Store) Finish(id string, at time.Time, status string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := s.lockFile()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	jobs, err := s.load()
 	if err != nil {
 		return err
@@ -419,6 +558,23 @@ func (s *Store) Finish(id string, at time.Time, status string) error {
 		}
 	}
 	return nil // one-shot jobs are already gone
+}
+
+// Exists reports whether a job with the ID is stored. A claimed one-shot is
+// not: claiming deleted it. An unreadable file reads as absent.
+func (s *Store) Exists(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	jobs, err := s.load()
+	if err != nil {
+		return false
+	}
+	for _, j := range jobs {
+		if j.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func newID(existing []Job) string {

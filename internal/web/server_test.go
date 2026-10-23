@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"talaria/internal/agent"
+	"talaria/internal/config"
 	"talaria/internal/gateway/chat"
 	"talaria/internal/provider"
 	"talaria/internal/subagent"
@@ -247,9 +248,10 @@ func TestEveryRouteNeedsASignIn(t *testing.T) {
 	}
 }
 
-
 func TestSettingsRoundTrip(t *testing.T) {
 	r := newRig(t)
+	r.srv.Cfg = &config.Config{}
+	r.srv.ConfigPath = filepath.Join(t.TempDir(), "config.json")
 
 	// Needs sign in
 	resp, _ := r.do("GET", "/api/settings", nil)
@@ -261,7 +263,7 @@ func TestSettingsRoundTrip(t *testing.T) {
 		t.Errorf("POST /api/settings without sign in: %d", resp.StatusCode)
 	}
 
-	r.signIn(t)
+	r.login()
 
 	// GET returns the current config
 	resp, body := r.do("GET", "/api/settings", nil)
@@ -269,7 +271,9 @@ func TestSettingsRoundTrip(t *testing.T) {
 		t.Fatalf("GET /api/settings: %d %s", resp.StatusCode, body)
 	}
 	var view struct {
-		Profiles []struct{ Name string } ` + "`" + `json:"profiles"` + "`" + `
+		Profiles []struct {
+			Name string `json:"name"`
+		} `json:"profiles"`
 	}
 	if err := json.Unmarshal(body, &view); err != nil {
 		t.Fatalf("bad settings json: %v", err)
@@ -303,79 +307,12 @@ func TestSettingsRoundTrip(t *testing.T) {
 	}
 
 	// DELETE the profile
-	resp, body = r.do("POST", "/api/settings", map[string]string{"Name": "my-profile", "_delete": "true"})
+	resp, body = r.do("POST", "/api/settings", map[string]any{"Name": "my-profile", "_delete": true})
 	if resp.StatusCode != 200 {
 		t.Fatalf("POST /api/settings delete: %d %s", resp.StatusCode, body)
 	}
 
 	// GET shows no profiles again
-	resp, body = r.do("GET", "/api/settings", nil)
-	if resp.StatusCode != 200 {
-		t.Fatalf("GET /api/settings after delete: %d", resp.StatusCode)
-	}
-	if err := json.Unmarshal(body, &view); err != nil {
-		t.Fatalf("bad settings json: %v", err)
-	}
-	if len(view.Profiles) != 0 {
-		t.Errorf("expected no profiles after delete, got %d", len(view.Profiles))
-	}
-}
-
-
-func TestSettingsRoundTrip(t *testing.T) {
-	r := newRig(t)
-
-	resp, _ := r.do("GET", "/api/settings", nil)
-	if resp.StatusCode != 401 {
-		t.Errorf("GET /api/settings without sign in: %d", resp.StatusCode)
-	}
-	resp, _ = r.do("POST", "/api/settings", map[string]string{})
-	if resp.StatusCode != 401 {
-		t.Errorf("POST /api/settings without sign in: %d", resp.StatusCode)
-	}
-
-	r.signIn(t)
-
-	resp, body := r.do("GET", "/api/settings", nil)
-	if resp.StatusCode != 200 {
-		t.Fatalf("GET /api/settings: %d %s", resp.StatusCode, body)
-	}
-	var view struct {
-		Profiles []struct{ Name string }
-	}
-	if err := json.Unmarshal(body, &view); err != nil {
-		t.Fatalf("bad settings json: %v", err)
-	}
-	if len(view.Profiles) != 0 {
-		t.Errorf("expected no profiles, got %d", len(view.Profiles))
-	}
-
-	resp, body = r.do("POST", "/api/settings", map[string]string{"Name": "my-profile", "Type": "openai", "APIKey": "sk-test123", "BaseURL": "https://api.openai.com/v1", "Model": "gpt-4o-mini"})
-	if resp.StatusCode != 200 {
-		t.Fatalf("POST /api/settings add: %d %s", resp.StatusCode, body)
-	}
-
-	resp, body = r.do("GET", "/api/settings", nil)
-	if resp.StatusCode != 200 {
-		t.Fatalf("GET /api/settings after add: %d", resp.StatusCode)
-	}
-	if err := json.Unmarshal(body, &view); err != nil {
-		t.Fatalf("bad settings json: %v", err)
-	}
-	if len(view.Profiles) != 1 || view.Profiles[0].Name != "my-profile" {
-		t.Errorf("expected my-profile, got %+v", view.Profiles)
-	}
-
-	resp, body = r.do("POST", "/api/settings", map[string]string{"Name": "my-profile", "Model": "gpt-4o"})
-	if resp.StatusCode != 200 {
-		t.Fatalf("POST /api/settings edit: %d %s", resp.StatusCode, body)
-	}
-
-	resp, body = r.do("POST", "/api/settings", map[string]string{"Name": "my-profile", "_delete": "true"})
-	if resp.StatusCode != 200 {
-		t.Fatalf("POST /api/settings delete: %d %s", resp.StatusCode, body)
-	}
-
 	resp, body = r.do("GET", "/api/settings", nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("GET /api/settings after delete: %d", resp.StatusCode)

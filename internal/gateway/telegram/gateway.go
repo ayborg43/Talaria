@@ -61,6 +61,10 @@ type Gateway struct {
 	Backends *chat.Backends
 	Prefs    chat.ChatPrefs
 
+	// OffsetPath, if set, persists the poll cursor there, so a restart does
+	// not replay (and re-run the agent on) updates already handled.
+	OffsetPath string
+
 	once sync.Once
 	eng  *chat.Engine
 }
@@ -95,7 +99,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 		g.PollTimeout = 30
 	}
 
-	offset, backoff := 0, time.Second
+	offset, backoff := loadOffset(g.OffsetPath, g.logf), time.Second
 	for ctx.Err() == nil {
 		updates, err := g.API.GetUpdates(ctx, offset, g.PollTimeout)
 		if err != nil {
@@ -116,6 +120,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 		for _, u := range updates {
 			offset = u.UpdateID + 1
 			g.handle(ctx, eng, u)
+			saveOffset(g.OffsetPath, offset, g.logf)
 		}
 	}
 	eng.Wait(5 * time.Second)
@@ -150,9 +155,14 @@ func (g *Gateway) handleCallback(ctx context.Context, eng *chat.Engine, q *Callb
 		g.API.AnswerCallback(ctx, q.ID, chat.MsgExpired)
 	case chat.DecisionForbidden:
 		g.API.AnswerCallback(ctx, q.ID, chat.MsgNotAllowed)
+	case chat.DecisionAnswered:
+		g.API.AnswerCallback(ctx, q.ID, chat.MsgAnswered)
 	default:
 		verdict := chat.Verdict(choice)
 		g.API.AnswerCallback(ctx, q.ID, verdict)
+		if q.Message == nil { // an inline answer carries no message to rewrite; the verdict stands on its own
+			return
+		}
 		g.API.EditMessageText(ctx, chatID, q.Message.MessageID, q.Message.Text+"\n\n"+verdict)
 	}
 }

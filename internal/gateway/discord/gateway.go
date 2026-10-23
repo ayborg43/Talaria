@@ -202,6 +202,8 @@ func (g *Gateway) onInteraction(ctx context.Context, data json.RawMessage) {
 		err = g.API.Respond(ctx, in, respMessage, chat.MsgExpired, true)
 	case chat.DecisionForbidden:
 		err = g.API.Respond(ctx, in, respMessage, chat.MsgNotAllowed, true)
+	case chat.DecisionAnswered:
+		err = g.API.Respond(ctx, in, respMessage, chat.MsgAnswered, true)
 	default:
 		// Replace the prompt with itself plus the verdict; that also removes the buttons.
 		prompt := ""

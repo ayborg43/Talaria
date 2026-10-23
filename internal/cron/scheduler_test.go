@@ -170,6 +170,69 @@ func TestRunStopsOnCancelAndDoesNotReportCancelledJobs(t *testing.T) {
 	}
 }
 
+// A claimed one-shot was deleted from the store; if the shutdown kills it mid
+// run, a note is the only trace left, so one is delivered.
+func TestShutdownReportsAOneShotThatDiedWithIt(t *testing.T) {
+	started := make(chan struct{})
+	h := newHarness(t, func(ctx context.Context, _ Job) (string, error) {
+		close(started)
+		<-ctx.Done()
+		return "", ctx.Err()
+	})
+	h.store.AddNow(Job{Kind: KindTask, Name: "report", Prompt: "p", ChatID: 1})
+	h.sched.now = func() time.Time { return utc("2026-10-20 10:06") }
+	h.sched.Tick = 10 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { h.sched.Run(ctx); close(done) }()
+	<-started
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+	if len(h.got) != 1 || !strings.Contains(h.got[0].text, "report") || !strings.Contains(h.got[0].text, "shut down") {
+		t.Fatalf("a task that died with the shutdown was not reported: %+v", h.got)
+	}
+}
+
+// A run that ignores cancellation must not hold the shutdown forever.
+func TestRunDoesNotWaitForeverForJobsThatIgnoreCancellation(t *testing.T) {
+	h := newHarness(t, func(context.Context, Job) (string, error) {
+		select {} // never returns, whatever the context does
+	})
+	h.store.Add(Job{Schedule: "@every 5m", Prompt: "p", ChatID: 1})
+	h.sched.now = func() time.Time { return utc("2026-10-20 10:06") }
+	h.sched.Tick = 10 * time.Millisecond
+	h.sched.ShutdownTimeout = 100 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { h.sched.Run(ctx); close(done) }()
+	deadline := time.Now().Add(2 * time.Second)
+	started := 0
+	for {
+		h.mu.Lock()
+		started = len(h.execed)
+		h.mu.Unlock()
+		if started > 0 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if started == 0 {
+		t.Fatal("the job never started")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run waited forever for a run that ignores cancellation")
+	}
+}
+
 func TestRunTimeout(t *testing.T) {
 	h := newHarness(t, func(ctx context.Context, _ Job) (string, error) {
 		<-ctx.Done()

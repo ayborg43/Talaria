@@ -95,7 +95,7 @@ func retryable(status int) bool {
 // limits, overload) before any of the response has been read.
 func post(ctx context.Context, c *http.Client, url string, headers map[string]string, body []byte) (*http.Response, error) {
 	if c == nil {
-		c = http.DefaultClient
+		c = newHTTPClient() // never DefaultClient: it follows redirects, which would carry the key along
 	}
 	for attempt := 1; ; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))

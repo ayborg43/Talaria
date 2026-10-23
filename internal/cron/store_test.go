@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -163,5 +165,102 @@ func TestFinish(t *testing.T) {
 	jobs, _ := s.List()
 	if jobs[0].LastStatus != "ok" || !jobs[0].LastRun.Equal(at) {
 		t.Fatalf("outcome not recorded: %+v", jobs[0])
+	}
+}
+
+// The CLI and the gateway share the jobs file through separate Store handles
+// (separate locks, possibly separate processes). Concurrent writers must lose
+// nothing and mint no duplicate ID.
+func TestConcurrentWritersFromTwoHandlesLoseNothing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jobs.json")
+	a := &Store{Path: path, Now: func() time.Time { return utc("2026-10-20 10:00") }}
+	b := &Store{Path: path, Now: func() time.Time { return utc("2026-10-20 10:00") }}
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(2)
+		go func() { defer wg.Done(); a.AddNow(Job{Prompt: "a", ChatID: 1}) }()
+		go func() { defer wg.Done(); b.AddNow(Job{Prompt: "b", ChatID: 1}) }()
+	}
+	wg.Wait()
+	jobs, err := a.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 40 {
+		t.Fatalf("%d jobs survived, want 40", len(jobs))
+	}
+	seen := map[string]bool{}
+	for _, j := range jobs {
+		if seen[j.ID] {
+			t.Fatalf("duplicate job ID %s", j.ID)
+		}
+		seen[j.ID] = true
+	}
+}
+
+// Rescheduling a goal replaces its one check-in job atomically: concurrent
+// reschedules cannot leave none or two.
+func TestConcurrentGoalReschedulesLeaveExactlyOne(t *testing.T) {
+	s := newStore(t, utc("2026-10-20 10:00"))
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.ScheduleGoal("g", "telegram", 7, "g", time.Hour, false, "", "")
+		}()
+	}
+	wg.Wait()
+	jobs, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, j := range jobs {
+		if j.Kind == KindGoal && j.Goal == "g" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d check-in jobs for one goal", n)
+	}
+}
+
+// Two task_start calls in one turn race for the last free slot; exactly one
+// may take it.
+func TestConcurrentTaskStartsShareTheLastSlot(t *testing.T) {
+	s := newStore(t, utc("2026-10-20 10:00"))
+	for i := 0; i < 2; i++ {
+		if _, err := s.AddNow(Job{Kind: KindTask, Prompt: "p", ChatID: 7, Gateway: "telegram"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var wg sync.WaitGroup
+	var won atomic.Int32
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := s.AddTask(Job{Kind: KindTask, Prompt: "p", ChatID: 7, Gateway: "telegram"}, nil, 3)
+			if err == nil {
+				won.Add(1)
+			} else if !strings.Contains(err.Error(), "already has") {
+				t.Errorf("unexpected error: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if won.Load() != 1 {
+		t.Fatalf("%d racers won the last slot", won.Load())
+	}
+	jobs, _ := s.List()
+	n := 0
+	for _, j := range jobs {
+		if j.Kind == KindTask {
+			n++
+		}
+	}
+	if n != 3 {
+		t.Fatalf("%d tasks stored", n)
 	}
 }

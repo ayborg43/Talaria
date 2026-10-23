@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"sync"
@@ -456,7 +457,12 @@ func (e *Engine) askApproval(c *chat, name, args string) bool {
 	}
 
 	e.mu.Lock()
-	token := newToken(e.pending)
+	token, ok := newToken(e.pending)
+	if !ok {
+		e.mu.Unlock()
+		e.logf("approval for %s denied: no randomness for its token", name)
+		return false
+	}
 	p := &pendingApproval{chatID: c.id, tool: name, ch: make(chan Choice, 1)}
 	e.pending[token] = p
 	e.mu.Unlock()
@@ -511,12 +517,13 @@ const (
 	DecisionExpired   Decision = iota // no such request any more
 	DecisionForbidden                 // not an allowed user, or not that request's chat
 	DecisionRecorded                  // the answer reached the agent
+	DecisionAnswered                  // the request was already answered; this press changed nothing
 )
 
 // Decide records the answer to an approval prompt. The caller then shows the
-// user the outcome: MsgExpired, MsgNotAllowed, or Verdict of the returned choice
-// (which differs from the one given when that button was never offered) with
-// the prompt edited to match.
+// user the outcome: MsgExpired, MsgNotAllowed, MsgAnswered, or Verdict of the
+// returned choice (which differs from the one given when that button was never
+// offered) with the prompt edited to match.
 func (e *Engine) Decide(token string, user, chatID int64, choice Choice) (Decision, Choice) {
 	e.mu.Lock()
 	p := e.pending[token]
@@ -532,23 +539,29 @@ func (e *Engine) Decide(token string, user, chatID int64, choice Choice) (Decisi
 	}
 	select {
 	case p.ch <- choice:
-	default: // already answered
+		return DecisionRecorded, choice
+	default: // already answered: say so, rather than a verdict that contradicts what ran
+		return DecisionAnswered, choice
 	}
-	return DecisionRecorded, choice
 }
+
+// tokenRand is where approval tokens come from: crypto/rand.Reader, replaced
+// in tests to simulate its failure.
+var tokenRand io.Reader = rand.Reader
 
 // newToken makes the name of an approval request: unguessable, so that a button
 // left on screen from before a restart, or one made up, cannot answer a new
-// request.
-func newToken(taken map[string]*pendingApproval) string {
+// request. Without randomness there is no safe token, so it reports failure
+// and the caller denies the approval instead of crashing the process.
+func newToken(taken map[string]*pendingApproval) (string, bool) {
 	for {
 		var b [8]byte
-		if _, err := rand.Read(b[:]); err != nil {
-			panic("no randomness: " + err.Error()) // nothing safe to do without it
+		if _, err := io.ReadFull(tokenRand, b[:]); err != nil {
+			return "", false
 		}
 		t := hex.EncodeToString(b[:])
 		if _, dup := taken[t]; !dup {
-			return t
+			return t, true
 		}
 	}
 }
