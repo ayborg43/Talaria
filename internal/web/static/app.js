@@ -703,29 +703,46 @@ async function loadSettings() {
 }
 
 function profileNameCard(p) {
-  const saved = p.HasKey ? h('span', { class: 'pill info', text: 'key set via ' + (p.KeySource || p.APIKeyEnv || 'config') }) : h('span', { class: 'pill', text: 'no key' });
+  const saved = p.has_key ? h('span', { class: 'pill info', text: 'key set via ' + (p.key_source || p.api_key_env || 'config') }) : h('span', { class: 'pill', text: 'no key' });
   const card = h('div', { class: 'card' });
   const head = h('div', { class: 'row' });
-  head.append(h('span', { class: 'grow', text: p.Name }), saved);
+  head.append(h('span', { class: 'grow', text: p.name }), saved);
+  if (p.active) head.append(h('span', { class: 'pill ok', text: 'IN USE' }));
+  else if (p.default) head.append(h('span', { class: 'pill brass', text: 'DEFAULT' }));
   card.append(head);
-  card.append(h('div', { class: 'field-note', text: p.Type + ' · ' + p.BaseURL + ' · model ' + p.model }));
+  card.append(h('div', { class: 'field-note', text: [p.type, p.base_url, p.model && 'model ' + p.model].filter(Boolean).join(' · ') || 'No address or model set.' }));
+  if (p.status) card.append(h('div', { class: 'field-note', text: p.available ? p.status : 'Unavailable: ' + p.status }));
   const btns = h('div', { class: 'btn-row' });
-  btns.append(h('button', { class: 'btn primary', type: 'button', text: 'Edit', onclick: () => editProfile(p.Name) }));
-  btns.append(h('button', { class: 'btn danger', type: 'button', text: 'Delete', onclick: () => deleteProfile(p.Name) }));
+  if (S.settings.active_profile && !p.active) {
+    const use = h('button', { class: 'btn primary', type: 'button', text: 'Use', onclick: () => useProfile(p.name) });
+    if (!p.available) use.disabled = true;
+    btns.append(use);
+  }
+  btns.append(h('button', { class: 'btn', type: 'button', text: 'Edit', onclick: () => editProfile(p.name) }));
+  btns.append(h('button', { class: 'btn danger', type: 'button', text: 'Delete', onclick: () => deleteProfile(p.name) }));
   card.append(btns);
   return card;
 }
 
+async function useProfile(name) {
+  try {
+    await api('/api/settings', { method: 'POST', body: { use_profile: name } });
+  } catch (e) { if (!(e instanceof AuthError)) toast(e.message); return; }
+  toast('Now using ' + name + '. The conversation continues with the new model.');
+  loadSettings();
+  api('/api/state').then((d) => { S.model = d.model; renderChrome(); }).catch(() => {});
+}
+
 function editProfile(name) {
   settingsEditing = name;
-  const p = S.settings.profiles.find(x => x.Name === name) || { Name: name };
+  const p = S.settings.profiles.find(x => x.name === name) || { name };
   const form = h('div', { class: 'card' },
     h('h2', null, 'Edit Profile'),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Profile name', for: 'prof-name' }), h('input', { id: 'prof-name', name: 'prof-name', autocomplete: 'off', type: 'text', value: p.Name })),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Type', for: 'prof-type' }), h('input', { id: 'prof-type', name: 'prof-type', autocomplete: 'off', type: 'text', value: p.Type || 'openai' })),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Base URL', for: 'prof-baseurl' }), h('input', { id: 'prof-baseurl', name: 'prof-baseurl', autocomplete: 'off', type: 'text', value: p.BaseURL || '' })),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Model', for: 'prof-model' }), h('input', { id: 'prof-model', name: 'prof-model', autocomplete: 'off', type: 'text', value: p.Model || '' })),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key env var', for: 'prof-apikeyenv' }), h('input', { id: 'prof-apikeyenv', name: 'prof-apikeyenv', autocomplete: 'off', type: 'text', value: p.APIKeyEnv || '' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Profile name', for: 'prof-name' }), h('input', { id: 'prof-name', name: 'prof-name', autocomplete: 'off', type: 'text', value: p.name })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Type', for: 'prof-type' }), h('input', { id: 'prof-type', name: 'prof-type', autocomplete: 'off', type: 'text', value: p.type || 'openai' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Base URL', for: 'prof-baseurl' }), h('input', { id: 'prof-baseurl', name: 'prof-baseurl', autocomplete: 'off', type: 'text', value: p.base_url || '' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Model', for: 'prof-model' }), h('input', { id: 'prof-model', name: 'prof-model', autocomplete: 'off', type: 'text', value: p.model || '' })),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key env var', for: 'prof-apikeyenv' }), h('input', { id: 'prof-apikeyenv', name: 'prof-apikeyenv', autocomplete: 'off', type: 'text', value: p.api_key_env || '' })),
     h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key', for: 'prof-apikey' }), h('input', { id: 'prof-apikey', name: 'prof-apikey', autocomplete: 'off', type: 'password', placeholder: 'leave blank to keep current' })),
     h('div', { class: 'field-note', text: 'The key is saved to config.json (mode 0600). Prefer api_key_env over pasting the key directly.' }),
     h('div', { class: 'btn-row' },
@@ -735,10 +752,29 @@ function editProfile(name) {
   keepScroll(editBody, () => editBody.replaceChildren(form));
 }
 
+function presetBar() {
+  const hint = h('div', { class: 'field-note', text: 'Pick a provider to fill in the address and model, or fill it by hand.' });
+  const bar = h('div', { class: 'presets' });
+  for (const pr of S.settings.presets || []) {
+    bar.append(h('button', {
+      type: 'button', text: pr.label, onclick: (e) => {
+        $$('#settings-body .presets button').forEach((b) => b.classList.toggle('on', b === e.currentTarget));
+        const fill = (id, v) => { if (v) $('#' + id).value = v; };
+        fill('prof-type', pr.type); fill('prof-baseurl', pr.base_url); fill('prof-model', pr.model); fill('prof-apikeyenv', pr.key_env);
+        const name = $('#prof-name');
+        if (!name.value.trim()) name.value = pr.label.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        hint.textContent = pr.hint;
+      }
+    }));
+  }
+  return h('div', null, bar, hint);
+}
+
 function newProfileForm() {
   settingsEditing = 'new';
   const form = h('div', { class: 'card' },
     h('h2', null, 'Add AI Profile'),
+    presetBar(),
     h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Profile name', for: 'prof-name' }), h('input', { id: 'prof-name', name: 'prof-name', autocomplete: 'off', type: 'text', placeholder: 'e.g. openrouter' })),
     h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Type', for: 'prof-type' }), h('input', { id: 'prof-type', name: 'prof-type', autocomplete: 'off', type: 'text', value: 'openai' })),
     h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Base URL', for: 'prof-baseurl' }), h('input', { id: 'prof-baseurl', name: 'prof-baseurl', autocomplete: 'off', type: 'text', placeholder: 'https://api.openai.com/v1' })),
@@ -786,14 +822,15 @@ function renderSettings() {
   out.push(h('div', { class: 'card' },
     h('h2', null, 'Default Key'),
     h('div', null,
-      s.HasDefaultKey ? h('span', { class: 'pill info', text: s.DefaultKeyEnv + ' is set' }) : h('span', { class: 'pill', text: 'no default key set' }),
+      s.has_default_key ? h('span', { class: 'pill info', text: s.default_key_env + ' is set' }) : h('span', { class: 'pill', text: 'no default key set' }),
       h('div', { class: 'field-note', text: 'Set TALARIA_API_KEY in your server environment to use the default profile without a config file.' })),
     h('button', { class: 'btn big', type: 'button', text: 'Add AI Profile', onclick: newProfileForm })));
 
   // Profiles
-  if (s.profiles.length) {
+  const profiles = s.profiles || [];
+  if (profiles.length) {
     out.push(h('h2', null, 'Profiles'));
-    for (const p of s.profiles) out.push(profileNameCard(p));
+    for (const p of profiles) out.push(profileNameCard(p));
   } else {
     out.push(h('div', { class: 'card' }, h('h2', null, 'Profiles'), h('div', { class: 'empty', text: 'No profiles configured yet. Add one below.' })));
   }

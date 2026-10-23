@@ -207,6 +207,14 @@ b,strong{font-weight:600}
 @keyframes grow{from{transform:scaleY(.15)}}
 .chart-f{display:flex;justify-content:space-between;margin-top:6px;font-family:var(--mono);font-size:10.5px;color:var(--faint)}
 .field-note{font-size:12.5px;color:var(--muted);margin:6px 0 0}
+.stack>h2{font-family:var(--display);font-weight:600;font-size:20px;margin:6px 4px 0}
+.field{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.field-label{font-size:12.5px;font-weight:600;color:var(--muted)}
+.field input{height:46px;border-radius:14px;border:1px solid var(--bubble-line);background:var(--field);padding:0 14px;font-size:16px;outline:none;width:100%}
+.field input:focus{border-color:var(--brass)}
+.presets{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 2px}
+.presets button{padding:8px 13px;border-radius:99px;border:1px solid var(--bubble-line);background:var(--card);color:var(--ink2);font-size:13.5px}
+.presets button.on{border-color:var(--brass);background:var(--brass-soft);color:var(--brass-text);font-weight:600}
 .steps{margin:6px 0 0;padding-left:20px;font-size:13.5px;color:var(--ink2)}.steps li+li{margin-top:4px}
 .foot{text-align:center;font-family:var(--mono);font-size:11px;color:var(--faint);padding:8px 0}
 

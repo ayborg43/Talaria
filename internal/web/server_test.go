@@ -362,6 +362,129 @@ func TestSettingsPrefersAKeyVariableOverAPastedKey(t *testing.T) {
 	}
 }
 
+// liveBackends wires the rig's engine to its config the way production does:
+// profiles resolve from the config as it is now, providers are cached, and
+// Forget drops the cache. It reports how often the cache was dropped.
+func liveBackends(t *testing.T, cfg *config.Config) (*chat.Backends, *int) {
+	t.Helper()
+	cache := map[string]chat.Backend{}
+	forgot := 0
+	return &chat.Backends{
+		Default: "main",
+		Names:   []string{"main"},
+		Open: func(name string) (chat.Backend, error) {
+			if b, ok := cache[name]; ok {
+				return b, nil
+			}
+			p, ok := cfg.Profiles[name]
+			if !ok {
+				return chat.Backend{}, errors.New("no profile named " + name)
+			}
+			if p.APIKey == "" && p.APIKeyEnv == "" {
+				return chat.Backend{}, errors.New("needs an API key")
+			}
+			b := chat.Backend{Provider: scripted{}, Model: p.Model, Desc: p.Type + ", " + p.Model}
+			cache[name] = b
+			return b, nil
+		},
+		Forget: func() { forgot++; cache = map[string]chat.Backend{} },
+	}, &forgot
+}
+
+func getSettings(t *testing.T, r *rig) (profiles []struct {
+	Name      string `json:"name"`
+	Active    bool   `json:"active"`
+	Default   bool   `json:"default"`
+	Available bool   `json:"available"`
+	Status    string `json:"status"`
+}, active string, presets int,
+) {
+	t.Helper()
+	_, b := r.do("GET", "/api/settings", nil)
+	var view struct {
+		ActiveProfile string `json:"active_profile"`
+		Profiles      []struct {
+			Name      string `json:"name"`
+			Active    bool   `json:"active"`
+			Default   bool   `json:"default"`
+			Available bool   `json:"available"`
+			Status    string `json:"status"`
+		} `json:"profiles"`
+		Presets []struct {
+			Label string `json:"label"`
+		} `json:"presets"`
+	}
+	if err := json.Unmarshal(b, &view); err != nil {
+		t.Fatalf("bad settings json: %v", err)
+	}
+	return view.Profiles, view.ActiveProfile, len(view.Presets)
+}
+
+// A profile added, changed or removed in Settings works at once: no restart.
+func TestAProfileAddedInSettingsWorksWithoutARestart(t *testing.T) {
+	r := newRig(t)
+	r.srv.Cfg = &config.Config{Profiles: map[string]config.Profile{
+		"main": {Type: "openai", Model: "m1", APIKey: "k"},
+	}}
+	r.srv.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	backends, forgot := liveBackends(t, r.srv.Cfg)
+	r.srv.Engine.Backends = backends
+	r.login()
+
+	profiles, active, presets := getSettings(t, r)
+	if active != "main" || len(profiles) != 1 || !profiles[0].Active || !profiles[0].Default || !profiles[0].Available {
+		t.Fatalf("at first: active=%q profiles=%+v", active, profiles)
+	}
+	if presets == 0 {
+		t.Fatal("the settings page offers no provider presets")
+	}
+
+	if resp, _ := r.do("POST", "/api/settings", map[string]string{"name": "alt", "type": "openai", "model": "m2", "api_key": "k2"}); resp.StatusCode != 200 {
+		t.Fatalf("add: %d", resp.StatusCode)
+	}
+	if *forgot == 0 {
+		t.Fatal("saving did not drop the cached providers")
+	}
+	profiles, active, _ = getSettings(t, r)
+	if len(profiles) != 2 || active != "main" {
+		t.Fatalf("after adding: active=%q profiles=%+v", active, profiles)
+	}
+	if resp, _ := r.do("POST", "/api/settings", map[string]string{"use_profile": "alt"}); resp.StatusCode != 200 {
+		t.Fatalf("switch: %d", resp.StatusCode)
+	}
+	_, b := r.do("GET", "/api/state", nil)
+	var st struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(b, &st); err != nil || st.Model != "m2" {
+		t.Fatalf("the chat still reports %q", st.Model)
+	}
+	// An edit takes effect too, and removing a profile unplugs it.
+	if resp, _ := r.do("POST", "/api/settings", map[string]string{"name": "alt", "model": "m3"}); resp.StatusCode != 200 {
+		t.Fatalf("edit: %d", resp.StatusCode)
+	}
+	profiles, _, _ = getSettings(t, r)
+	for _, p := range profiles {
+		if p.Name == "alt" && p.Status != "openai, m3" {
+			t.Fatalf("after editing: %+v", p)
+		}
+	}
+	if resp, _ := r.do("POST", "/api/settings", map[string]any{"name": "alt", "_delete": true}); resp.StatusCode != 200 {
+		t.Fatalf("delete: %d", resp.StatusCode)
+	}
+	if resp, _ := r.do("POST", "/api/settings", map[string]string{"use_profile": "alt"}); resp.StatusCode != 400 {
+		t.Fatalf("switching to a removed profile: %d", resp.StatusCode)
+	}
+}
+
+func TestSwitchingModelsNeedsMoreThanOne(t *testing.T) {
+	r := newRig(t)
+	r.login()
+	if resp, _ := r.do("POST", "/api/settings", map[string]string{"use_profile": "x"}); resp.StatusCode != 503 {
+		t.Fatalf("%d", resp.StatusCode)
+	}
+}
+
 func TestEveryResponseCarriesTheProtections(t *testing.T) {
 	r := newRig(t)
 	for _, p := range []string{"/", "/app.js", "/app.css", "/sw.js", "/manifest.webmanifest", "/icons/icon-192.png", "/fonts/instrument.woff2", "/api/state", "/nothing-here"} {

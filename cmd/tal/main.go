@@ -756,6 +756,11 @@ func gatewayBackends(cfg *config.Config, def config.Resolved, defProvider provid
 			cache[name] = b
 			return b, nil
 		},
+		Forget: func() {
+			mu.Lock()
+			defer mu.Unlock()
+			cache = map[string]chat.Backend{}
+		},
 	}
 }
 

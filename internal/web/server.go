@@ -305,7 +305,18 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	msgs, seq, epoch, running := s.Hub.Snapshot()
 	paused := s.Pause != nil && s.Pause.Paused()
-	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs, "seq": seq, "epoch": epoch, "running": running, "agents": s.Hub.Workers(), "model": s.Model, "version": s.Version, "paused": paused, "zone": s.zone().String()})
+	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs, "seq": seq, "epoch": epoch, "running": running, "agents": s.Hub.Workers(), "model": s.activeModel(), "version": s.Version, "paused": paused, "zone": s.zone().String()})
+}
+
+// activeModel is the model this chat is talking to: its chosen profile's, or
+// the server's when switching is not set up or the choice cannot be used.
+func (s *Server) activeModel() string {
+	if s.Engine != nil && s.Engine.Backends != nil {
+		if be, err := s.Engine.Backends.Open(s.Engine.ActiveProfile(ChatID)); err == nil && be.Model != "" {
+			return be.Model
+		}
+	}
+	return s.Model
 }
 
 // ---- settings ----
@@ -313,7 +324,9 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 // settingsView is what the settings page shows: everything except actual API keys.
 type settingsView struct {
 	DefaultProfile      string            `json:"default_profile"`
+	ActiveProfile       string            `json:"active_profile"` // the profile this chat is using; "" when switching is not set up
 	Profiles            []settingsProfile `json:"profiles"`
+	Presets             []config.Preset   `json:"presets"`         // one-click starting points for a new profile
 	HasDefaultKey       bool              `json:"has_default_key"` // TALARIA_API_KEY is set
 	DefaultKeyEnv       string            `json:"default_key_env"`
 	DefaultKeySet       bool              `json:"default_key_set"`
@@ -330,6 +343,10 @@ type settingsProfile struct {
 	APIKeyEnv string `json:"api_key_env,omitempty"`
 	HasKey    bool   `json:"has_key"` // a key is configured for this profile
 	KeySource string `json:"key_source,omitempty"`
+	Active    bool   `json:"active,omitempty"`    // this chat is using it
+	Default   bool   `json:"default,omitempty"`   // chats use it until they pick another
+	Available bool   `json:"available,omitempty"` // it can be used right now
+	Status    string `json:"status,omitempty"`    // what it is, or why it cannot be used
 }
 
 func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
@@ -342,6 +359,14 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 		SubagentMaxSteps:    s.Cfg.Subagents.MaxSteps,
 		SubagentMaxParallel: s.Cfg.Subagents.MaxParallel,
 		KeyEnvs:             config.DefaultKeyEnvs(),
+		Presets:             config.Presets(),
+	}
+	var backends *chat.Backends
+	if s.Engine != nil {
+		backends = s.Engine.Backends
+	}
+	if backends != nil {
+		view.ActiveProfile = s.Engine.ActiveProfile(ChatID)
 	}
 	if defKeyEnv := os.Getenv("TALARIA_API_KEY"); defKeyEnv != "" {
 		view.HasDefaultKey = true
@@ -354,6 +379,16 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 			sp.HasKey = true
 			sp.KeySource = "api_key in the config file"
 		}
+		if backends != nil {
+			sp.Active = name == view.ActiveProfile
+			sp.Default = name == backends.Default
+			if be, err := backends.Open(name); err != nil {
+				sp.Status = err.Error()
+			} else {
+				sp.Available = true
+				sp.Status = be.Desc
+			}
+		}
 		view.Profiles = append(view.Profiles, sp)
 	}
 	slices.SortFunc(view.Profiles, func(a, b settingsProfile) int { return cmp.Compare(a.Name, b.Name) })
@@ -362,22 +397,35 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 
 // settingsUpdateRequest is the payload for POST /api/settings.
 type settingsUpdateRequest struct {
-	Name      string `json:"name"`
-	Type      string `json:"type,omitempty"`
-	BaseURL   string `json:"base_url,omitempty"`
-	Model     string `json:"model,omitempty"`
-	APIKey    string `json:"api_key,omitempty"`
-	APIKeyEnv string `json:"api_key_env,omitempty"`
-	Delete    bool   `json:"_delete,omitempty"`
+	Name       string `json:"name"`
+	Type       string `json:"type,omitempty"`
+	BaseURL    string `json:"base_url,omitempty"`
+	Model      string `json:"model,omitempty"`
+	APIKey     string `json:"api_key,omitempty"`
+	APIKeyEnv  string `json:"api_key_env,omitempty"`
+	Delete     bool   `json:"_delete,omitempty"`
+	UseProfile string `json:"use_profile,omitempty"` // switch this chat to a profile, saving nothing
 }
 
 func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
-	if s.Cfg == nil || s.ConfigPath == "" {
-		fail(w, http.StatusInternalServerError, "settings cannot be saved here")
-		return
-	}
 	var in settingsUpdateRequest
 	if !readJSON(w, r, &in) {
+		return
+	}
+	if in.UseProfile != "" {
+		if s.Engine == nil || s.Engine.Backends == nil {
+			fail(w, http.StatusServiceUnavailable, "only one model is configured")
+			return
+		}
+		if err := s.Engine.SetProfile(ChatID, strings.TrimSpace(in.UseProfile)); err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+	if s.Cfg == nil || s.ConfigPath == "" {
+		fail(w, http.StatusInternalServerError, "settings cannot be saved here")
 		return
 	}
 	if in.Name == "" {
@@ -390,9 +438,14 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, fmt.Sprintf("unknown profile type %q (use %q, %q or %q)", in.Type, provider.TypeOpenAI, provider.TypeAnthropic, provider.TypeDeepSeek))
 		return
 	}
+	// Copy on write: the engine reads these profiles while chats run.
+	profiles := make(map[string]config.Profile, len(s.Cfg.Profiles)+1)
+	for k, v := range s.Cfg.Profiles {
+		profiles[k] = v
+	}
 	if in.Delete {
-		delete(s.Cfg.Profiles, in.Name)
-	} else if p, ok := s.Cfg.Profiles[in.Name]; ok {
+		delete(profiles, in.Name)
+	} else if p, ok := profiles[in.Name]; ok {
 		// Edit existing profile
 		if in.Type != "" {
 			p.Type = in.Type
@@ -410,21 +463,22 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		if in.APIKey != "" {
 			p.APIKey = in.APIKey
 		}
-		s.Cfg.Profiles[in.Name] = p
+		profiles[in.Name] = p
 	} else {
 		p := config.Profile{Type: in.Type, BaseURL: in.BaseURL, Model: in.Model, APIKeyEnv: in.APIKeyEnv}
 		if in.APIKey != "" {
 			p.APIKey = in.APIKey
 		}
-		if s.Cfg.Profiles == nil {
-			s.Cfg.Profiles = map[string]config.Profile{}
-		}
-		s.Cfg.Profiles[in.Name] = p
+		profiles[in.Name] = p
 	}
+	s.Cfg.Profiles = profiles
 	if err := config.Write(s.ConfigPath, s.Cfg); err != nil {
 		s.logf("web: settings save: %v", err)
 		fail(w, http.StatusInternalServerError, "could not save settings")
 		return
+	}
+	if s.Engine != nil && s.Engine.Backends != nil && s.Engine.Backends.Forget != nil {
+		s.Engine.Backends.Forget() // added and changed profiles work at once, with no restart
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

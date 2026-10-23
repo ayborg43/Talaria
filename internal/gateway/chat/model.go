@@ -28,6 +28,10 @@ type Backends struct {
 	// Open returns the backend for a profile. An error says why it cannot be
 	// used right now (a missing API key, say); the gateway shows it to the user.
 	Open func(name string) (Backend, error)
+	// Forget drops cached providers, so the next Open rebuilds them from the
+	// current config. Call it after profiles are added, changed or removed.
+	// It may be nil, when there is nothing cached.
+	Forget func()
 }
 
 // ChatPrefs remembers each chat's choices across restarts.
@@ -138,6 +142,44 @@ func (g *Engine) selected(c *chat) string {
 		return c.profile
 	}
 	return g.Backends.Default
+}
+
+// ActiveProfile is the model profile a chat is using: its choice, or the
+// default. It is "" when model switching is not set up.
+func (e *Engine) ActiveProfile(chatID int64) string {
+	if e.Backends == nil {
+		return ""
+	}
+	return e.selected(e.chatFor(chatID))
+}
+
+// SetProfile switches a chat to a profile and saves the choice, taking effect
+// on the next message. Unlike /model it says nothing in the chat: API callers
+// report the result themselves. The profile is validated by opening it, so one
+// added since startup works at once.
+func (e *Engine) SetProfile(chatID int64, name string) error {
+	b := e.Backends
+	if b == nil {
+		return fmt.Errorf("model switching is not set up: only one model is configured")
+	}
+	if name == "default" || name == "reset" {
+		name = b.Default
+	}
+	if _, err := b.Open(name); err != nil {
+		return fmt.Errorf("cannot switch to %s: %v", name, err)
+	}
+	stored := name // the default is stored as "" so the chat follows it if the config changes
+	if name == b.Default {
+		stored = ""
+	}
+	c := e.chatFor(chatID)
+	c.mu.Lock()
+	c.profile = stored
+	c.mu.Unlock()
+	if e.Prefs != nil {
+		return e.Prefs.SetProfile(chatID, stored)
+	}
+	return nil
 }
 
 // describeModels lists the profiles a chat can pick, marking its current one.
