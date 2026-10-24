@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"talaria/internal/agent"
 	"talaria/internal/guard"
 	"talaria/internal/provider"
 )
@@ -944,5 +945,25 @@ func TestConfigWrite(t *testing.T) {
 	}
 	if fi.Mode()&0o077 != 0 {
 		t.Fatalf("config file not private: %v", fi.Mode())
+	}
+}
+
+// Which calls ask first: deletes and posts unless the file says strict, and a word it does not know is an error
+// when the file loads, not a quiet fall back to something else.
+func TestPermissionsModeInConfig(t *testing.T) {
+	c, err := Load(write(t, `{}`, 0o600))
+	if err != nil || c.Policy.AskMode() != agent.AskDestructive {
+		t.Fatalf("the default asks only to delete and post: %v %v", c.Policy.AskMode(), err)
+	}
+	c, err = Load(write(t, `{"policy":{"permissions":"strict","social_sites":["example.social"]}}`, 0o600))
+	if err != nil || c.Policy.AskMode() != agent.AskRisky || len(c.Policy.SocialSites) != 1 {
+		t.Fatalf("strict: %v %+v", err, c.Policy)
+	}
+	c, err = Load(write(t, `{"policy":{"permissions":"deletes_and_posts"}}`, 0o600))
+	if err != nil || c.Policy.AskMode() != agent.AskDestructive {
+		t.Fatalf("%v", err)
+	}
+	if _, err := Load(write(t, `{"policy":{"permissions":"relaxed"}}`, 0o600)); err == nil || !strings.Contains(err.Error(), "relaxed") {
+		t.Fatalf("an unknown mode was accepted: %v", err)
 	}
 }

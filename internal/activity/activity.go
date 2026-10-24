@@ -26,6 +26,8 @@ type Worker struct {
 	Label string `json:"label"`
 	// Doing is what it is in the middle of: a tool it is running, or what it waits for. Empty means thinking.
 	Doing string `json:"doing,omitempty"`
+	// Model is the model it works with, when known: helpers may use a different one from the main agent.
+	Model string `json:"model,omitempty"`
 	// AgeMs is how long it has been working, as of when it was reported. A page adds the time since, so
 	// the phone's clock and the server's need not agree.
 	AgeMs int64     `json:"ageMs"`
@@ -40,6 +42,18 @@ type Sink interface {
 	Doing(id int64, what string)
 	// Stop says it has finished, however it ended.
 	Stop(id int64)
+}
+
+// Modeler is an optional extra for a Sink that shows which model each worker uses.
+type Modeler interface {
+	SetModel(id int64, model string)
+}
+
+// SetModel says which model a worker uses, on a sink that may be nil or may not show it.
+func SetModel(s Sink, id int64, model string) {
+	if m, ok := s.(Modeler); ok && id != 0 && model != "" {
+		m.SetModel(id, model)
+	}
 }
 
 // Begin starts a worker on a sink that may be nil, and returns a function that ends it. Doing may be nil

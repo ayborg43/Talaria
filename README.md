@@ -215,8 +215,46 @@ you answered), whether it succeeded, and how long it took. Subagent calls carry 
 
 In a chat, `/log` (`!log` in Discord) shows that chat's last ten calls. Turn the log off with `"policy": {"audit": false}`.
 
-**Permission rules.** By default `write_file`, `shell`, skill changes, `cron_add` and similar tools ask first, and everything
-else runs. Rules in the config file change that per tool:
+**When Talaria asks (the default).** Talaria asks you before it **deletes** something and before it **posts on social media**,
+and does everything else on its own: running commands, writing files, browsing, saving notes and skills, scheduling, messaging
+you. Deleting means removing files or folders (`rm`, `find -delete`, `git clean`, `git reset --hard`, a force-push, dropping a
+database or a container, uninstalling packages and the like), deleting a skill, a schedule or a goal. Posting means the `x_post`
+tool, and clicking, typing or filling a form in the browser on X, Facebook, Instagram, Threads, LinkedIn, TikTok, Reddit,
+Bluesky and similar sites (add your own with `"policy": {"social_sites": ["example.com"]}`). Tools declare this themselves, so a
+connected service's `post`, `tweet` or `publish` tool counts as posting too.
+
+```json
+{ "policy": { "permissions": "deletes_and_posts" } }     // the default; "strict" asks before anything risky, as before
+```
+
+`TALARIA_PERMISSIONS` overrides the file, and the web app's **Settings → Permissions** changes it (after a restart). In `strict`,
+`write_file`, `shell` and the rest ask as described below, and after outside content was read anything that could send something
+out asks too.
+
+- **It is a net, not a wall.** A shell command is recognised as deleting by what it says: an unusual way of removing a file (a
+  script that does it from inside) can slip through. Use `strict` when you want every command put to you, and rules below to
+  forbid a tool outright (`deny` is always obeyed).
+- **Mail, chat and payment tools of a connected service** do not count as posting unless they say so: give the ones you want
+  asked about a rule (`"mcp_mail_send": "ask"`).
+- **The guard against reading something hostile and then acting on it** (outside content, then sending) is part of `strict`.
+  With only deletes and posts asking, a web page can still talk the agent into running a harmless-looking command, but not into
+  deleting something or posting without your seeing it.
+- **One yes covers one call.** In this mode Always is not offered, and an approval does not cover the rest of the conversation.
+
+**A question waits for you.** When Talaria needs your yes (Telegram, Discord and the web app), the question is **saved** and the
+agent **carries on** with whatever else it can do, then tells you what is waiting. Answer whenever you like, minutes or days
+later, even if Talaria has restarted in between: the saved step is carried out (or dropped, if you deny it) and the work picks
+up where it stopped, with the original request. Questions are kept in `~/.talaria/held_*.json` and lapse after a week. If the
+request cannot be saved, it is asked in the old way, where the agent waits for five minutes. Scheduled jobs and background tasks
+cannot ask, and are refused what needs asking, as before.
+
+**Telling it to message you on Telegram.** With Telegram connected, any agent, whether you asked it in the web app, in Discord or in
+a scheduled job, can send you a message there: say "research this and send me the summary on Telegram", or press the Telegram
+button next to the web app's message box for one message. The tool, `telegram_notify`, only ever sends to you (the users on the
+allowlist), at most 30 messages an hour.
+
+**Permission rules.** In `strict`, `write_file`, `shell`, skill changes, `cron_add` and similar tools ask first, and everything
+else runs. Rules in the config file change that per tool, in either mode:
 
 ```json
 {
@@ -543,11 +581,11 @@ until something changes.
 
 ## Web app (installable on your phone)
 
-Talaria has its own page, with the things you do all day: **Chat** (replies stream in as they are written, with a chip for each
-tool it uses), **Today** (your calendar and mail at a glance, with a countdown to your next event), **Needs you** (every question that is
-waiting for your Allow or Deny, and the history of what you decided) and **Control** (is it healthy, what it is doing on its own, what it is
-connected to, and a switch that holds everything). It works alongside Telegram, not instead of it: it is the same agent, with the same
-safety rules, and the same conversation history, goals, watches and reminders.
+Talaria has its own page, with four places: **Chat** (replies stream in as they are written, with a chip for each tool it uses),
+**Today** (your calendar and mail at a glance, with a countdown to your next event), **Agents** (what is **waiting for your OK**, who is
+working and on which model, what runs on its own, what finished, and a switch that holds everything) and **Settings** (AI models,
+permissions, connections, notifications, and the account). It works alongside Telegram, not instead of it: it is the same agent,
+with the same safety rules, and the same conversation history, goals, watches and reminders.
 
 1. **Give it a domain with https.** Point a name you own (say `talaria.example.com`) at your server with an A record, then in Dokploy open
    the app, its **Domains** tab, and add it: service `talaria`, port `8080`, HTTPS on with a Let's Encrypt certificate. Phones refuse to
@@ -558,7 +596,7 @@ safety rules, and the same conversation history, goals, watches and reminders.
    TALARIA_WEB_PUBLIC_URL=https://talaria.example.com
    ```
 3. **Open the address on your phone and sign in**, then install it. *iPhone:* in Safari tap Share, then Add to Home Screen, open it from
-   there. *Android:* tap Install in the Control tab, or the browser's menu. Then, in the Control tab, turn on notifications.
+   there. *Android:* tap Install in Settings → About & account, or the browser's menu. Then, in Settings → Notifications, turn on notifications.
 
 On a machine of your own: set `TALARIA_WEB_PASSWORD` and run `tal gateway`; it listens on `:8080` (change it with `TALARIA_WEB_LISTEN`).
 Without `TALARIA_WEB_PUBLIC_URL` it works in a browser on that machine but cannot be installed on a phone.
@@ -575,10 +613,11 @@ Without `TALARIA_WEB_PUBLIC_URL` it works in a browser on that machine but canno
 - **Who is working.** While anything is working, a strip under the chat header names each worker, what it is doing right now, and for
   how long: the main agent ("using email_list"), each subagent it has handed a task to (by the name it gave the task, with a note when
   it is waiting for a free place), and the background tasks, goal check-ins, watches and scheduled jobs that are running. The header
-  says how many ("3 agents working"). The **Agents** tab in the bottom bar, with a badge counting who is working, has the full
-  picture: **Working now**, what is **set up to run on its own** (goals, watches, reminders and when they next run), and what has
+  says how many ("3 agents working"). The **Agents** tab in the bottom bar, with a badge counting what waits for your OK (or, if nothing does, who is working), has the full
+  picture: **Waiting for you** (the questions, which stay saved until you answer), **Working now** (each worker's number and the model it is using),
+  what is **set up to run on its own** (goals, watches, reminders and when they next run), and what has
   **finished lately** with how long it took. It is live, survives a reload, and a helper cut short by Stop disappears at once.
-- **Pausing everything.** In Control. Goals, watches and reminders stop being started and wait; what was due runs when you resume. The
+- **Pausing everything.** On the Agents screen (**Pause all**). Goals, watches and reminders stop being started and wait; what was due runs when you resume. The
   switch is kept in a file, so a restart does not quietly undo it. Chat still works while paused.
 - **Light and dark** follow your phone. **Offline,** the app opens and says so; nothing from your conversation, mail or calendar is stored
   on the phone, only the app itself.
@@ -608,10 +647,14 @@ What a subagent is, and is not:
 
 - **Isolated.** It sees its instructions, what the agent knows about you (notes and skills), and the task: not the
   conversation. The task has to contain everything it needs.
-- **Same model, same tools.** It uses the model of the conversation it was started from (including one picked with
-  `/model`), with the same tools: files, shell, MCP servers.
-- **Same approvals.** A risky call asks you exactly as it would from the main agent, labelled with the subagent's name,
-  and in Telegram it arrives as the usual Allow / Deny buttons. In scheduled jobs the same rule as always applies: nothing
+- **Same tools, and by default the same model.** It uses the model of the conversation it was started from (including one picked with
+  `/model`), with the same tools: files, shell, MCP servers. When you have more than one profile that works (a gateway with
+  `profiles` in the config), `delegate` offers them to the agent as a `model` choice, with what each is good at (`best_for`), so a
+  cheap, fast profile can do the lookups while a strong one does the thinking. The Agents screen shows each helper's number and
+  the model it is using; leave the choice out and it uses the main agent's.
+- **Same approvals.** A call that needs your yes asks exactly as it would from the main agent, labelled with the subagent's name,
+  and in Telegram it arrives as the usual Allow / Deny buttons. The question is saved like any other, so the helper carries on
+  and the saved call runs when you answer. In scheduled jobs the same rule as always applies: nothing
   that needs approval runs unless the job was created with `allow_risky`.
 - **Read, act, report.** A subagent cannot save notes or skills, schedule jobs, or start more subagents (`memory`,
   `skill_save`, `skill_delete`, `cron_add`, `cron_remove` and `delegate` are withheld). Only the main agent changes what

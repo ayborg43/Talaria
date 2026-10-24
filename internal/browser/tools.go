@@ -60,6 +60,7 @@ func Register(r *tool.Registry, m *Manager, owner string) {
 		Description:   "Click a link, button or other element. Returns the page afterwards.",
 		Schema:        obj(refProp, "ref"),
 		NeedsApproval: true,
+		RiskFor:       t.postsHere,
 		Describe:      t.describeClick,
 		Run:           t.click,
 	})
@@ -69,6 +70,7 @@ func Register(r *tool.Registry, m *Manager, owner string) {
 		Schema: obj(refProp+`,"text":{"type":"string"},"append":{"type":"boolean","description":"add to the existing text instead of replacing it"},`+
 			`"submit":{"type":"boolean","description":"press Enter afterwards"}`, "ref", "text"),
 		NeedsApproval: true,
+		RiskFor:       t.postsHere,
 		Describe:      t.describeType,
 		LogArgs:       t.logType,
 		Run:           t.typeText,
@@ -78,6 +80,7 @@ func Register(r *tool.Registry, m *Manager, owner string) {
 		Description:   "Press a key on whatever has focus: " + strings.Join(KeyNames(), ", ") + ". Returns the page afterwards.",
 		Schema:        obj(`"key":{"type":"string","enum":`+jsonList(KeyNames())+`}`, "key"),
 		NeedsApproval: true,
+		RiskFor:       t.postsHere,
 		Describe:      t.describePress,
 		Run:           t.press,
 	})
@@ -86,6 +89,7 @@ func Register(r *tool.Registry, m *Manager, owner string) {
 		Description:   "Choose an option in a drop-down list, by its text or value. Returns the page afterwards.",
 		Schema:        obj(refProp+`,"value":{"type":"string"}`, "ref", "value"),
 		NeedsApproval: true,
+		RiskFor:       t.postsHere,
 		Describe:      t.describeSelect,
 		Run:           t.selectOption,
 	})
@@ -398,6 +402,15 @@ func (t *toolset) closeTab(ctx context.Context, _ json.RawMessage) (string, erro
 // The descriptions below are what the user is asked about. They name the
 // element and the page, which is what they need to judge a click: "element 7"
 // tells them nothing, "the Place order button on shop.example" does.
+
+// postsHere says whether a call that acts on the page could post something: the page is on a social media site.
+// It looks at the page as it was last read, which is what the call will act on.
+func (t *toolset) postsHere(json.RawMessage) tool.Risk {
+	if _, url := t.where(); tool.SocialURL(url, t.m.Social) {
+		return tool.RiskPosts
+	}
+	return 0
+}
 
 func (t *toolset) where() (*Page, string) {
 	p := t.m.Peek(t.owner)

@@ -47,6 +47,7 @@ func RegisterVault(r *tool.Registry, m *Manager, owner string, creds Credentials
 			"field":{"type":"string","enum":["username","password","value"],"description":"which part; for a login it is username or password, for a saved key it is value"}},
 			"required":["ref","credential","field"]}`),
 		NeedsApproval: true,
+		RiskFor:       t.postsHere,
 		Describe:      t.describeFill,
 		Run:           t.fill,
 	})

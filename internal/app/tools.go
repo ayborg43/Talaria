@@ -14,6 +14,7 @@ import (
 	"talaria/internal/goal"
 	"talaria/internal/mailbox"
 	"talaria/internal/memory"
+	"talaria/internal/notify"
 	"talaria/internal/skill"
 	"talaria/internal/tool"
 	"talaria/internal/x"
@@ -50,6 +51,9 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 	}
 	if rt.cfg.X != nil {
 		x.RegisterTools(tools, rt.cfg.X)
+	}
+	if send := rt.notifier(); send != nil {
+		notify.RegisterTool(tools, send, &rt.notifyLimit)
 	}
 	return tools
 }
@@ -117,7 +121,7 @@ func (rt *Runtime) browserFor(env execenv.Env) *browser.Manager {
 	if n := rt.cfg.Browser.NoSandbox; n != nil {
 		opts.NoSandbox = *n
 	}
-	m := &browser.Manager{Env: starter, Opts: opts}
+	m := &browser.Manager{Env: starter, Opts: opts, Social: rt.cfg.SocialSites}
 	if rt.browsers == nil {
 		rt.browsers = map[any]*browser.Manager{}
 	}

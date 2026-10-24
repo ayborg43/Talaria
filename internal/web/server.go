@@ -98,8 +98,12 @@ type Server struct {
 	PublicURL string // https://talaria.example.com: where people reach it, for the origin check
 	Model     string
 	Version   string
-	Started   time.Time
-	Logf      func(string, ...any)
+	// Telegram says the agent can message the user on Telegram, so the page offers to send a result there.
+	Telegram bool
+	// Permissions is which calls ask first in this run: config.PermissionsDeletesAndPosts or config.PermissionsStrict.
+	Permissions string
+	Started     time.Time
+	Logf        func(string, ...any)
 	// TrustProxy says the address of a request is the last one a front proxy put in X-Forwarded-For.
 	TrustProxy bool
 
@@ -315,7 +319,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	msgs, seq, epoch, running := s.Hub.Snapshot()
 	paused := s.Pause != nil && s.Pause.Paused()
-	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs, "seq": seq, "epoch": epoch, "running": running, "agents": s.Hub.Workers(), "model": s.activeModel(), "version": s.Version, "paused": paused, "zone": s.zone().String()})
+	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs, "seq": seq, "epoch": epoch, "running": running, "agents": s.Hub.Workers(), "model": s.activeModel(), "version": s.Version, "paused": paused, "zone": s.zone().String(), "telegram": s.Telegram})
 }
 
 // activeModel is the model this chat is talking to: what answered last, or
@@ -337,20 +341,25 @@ func (s *Server) activeModel() string {
 
 // settingsView is what the settings page shows: everything except actual API keys.
 type settingsView struct {
-	DefaultProfile      string             `json:"default_profile"`
-	ActiveProfile       string             `json:"active_profile"` // the profile this chat is using; "" when switching is not set up
-	Profiles            []settingsProfile  `json:"profiles"`
-	Presets             []config.Preset    `json:"presets"`   // one-click starting points for a new profile
-	Strengths           []string           `json:"strengths"` // labels a profile can claim, so the router picks it
-	Email               settingsEmail      `json:"email"`
-	Calendars           []settingsCalendar `json:"calendars"`
-	Chats               []settingsChat     `json:"chats"`           // telegram and discord: status, never secrets
-	HasDefaultKey       bool               `json:"has_default_key"` // TALARIA_API_KEY is set
-	DefaultKeyEnv       string             `json:"default_key_env"`
-	DefaultKeySet       bool               `json:"default_key_set"`
-	KeyEnvs             []string           `json:"key_envs"`
-	SubagentMaxSteps    int                `json:"subagent_max_steps"`
-	SubagentMaxParallel int                `json:"subagent_max_parallel"`
+	DefaultProfile string             `json:"default_profile"`
+	ActiveProfile  string             `json:"active_profile"` // the profile this chat is using; "" when switching is not set up
+	Profiles       []settingsProfile  `json:"profiles"`
+	Presets        []config.Preset    `json:"presets"`   // one-click starting points for a new profile
+	Strengths      []string           `json:"strengths"` // labels a profile can claim, so the router picks it
+	Email          settingsEmail      `json:"email"`
+	Calendars      []settingsCalendar `json:"calendars"`
+	Chats          []settingsChat     `json:"chats"`           // telegram and discord: status, never secrets
+	HasDefaultKey  bool               `json:"has_default_key"` // TALARIA_API_KEY is set
+	DefaultKeyEnv  string             `json:"default_key_env"`
+	DefaultKeySet  bool               `json:"default_key_set"`
+	KeyEnvs        []string           `json:"key_envs"`
+	// Permissions is which calls ask first once saved; PermissionsRunning is what is in force now (it differs until a
+	// restart), and PermissionsEnv says TALARIA_PERMISSIONS overrides the file.
+	Permissions         string `json:"permissions"`
+	PermissionsRunning  string `json:"permissions_running"`
+	PermissionsEnv      bool   `json:"permissions_env,omitempty"`
+	SubagentMaxSteps    int    `json:"subagent_max_steps"`
+	SubagentMaxParallel int    `json:"subagent_max_parallel"`
 }
 
 // settingsEmail is the mailbox as Settings shows it: everything but the password.
@@ -541,6 +550,9 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 	view := settingsView{
 		DefaultProfile:      s.Cfg.DefaultProfile,
 		SubagentMaxSteps:    s.Cfg.Subagents.MaxSteps,
+		Permissions:         permissionsName(s.Cfg.Policy.Permissions),
+		PermissionsRunning:  permissionsName(s.Permissions),
+		PermissionsEnv:      s.Getenv != nil && s.Getenv("TALARIA_PERMISSIONS") != "",
 		SubagentMaxParallel: s.Cfg.Subagents.MaxParallel,
 		KeyEnvs:             config.DefaultKeyEnvs(),
 		Presets:             config.Presets(),
@@ -607,6 +619,7 @@ type settingsUpdateRequest struct {
 	TestEmail    bool             `json:"test_email,omitempty"`    // list the mailbox's folders, saving nothing
 	TestCalendar string           `json:"test_calendar,omitempty"` // read one feed for a day, saving nothing
 	TestX        bool             `json:"test_x,omitempty"`        // check the X sign-in, saving nothing
+	Permissions  string           `json:"permissions,omitempty"`   // which calls ask first: deletes_and_posts or strict
 }
 
 func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
@@ -698,6 +711,10 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.Cfg == nil || s.ConfigPath == "" {
 		fail(w, http.StatusInternalServerError, "settings cannot be saved here")
+		return
+	}
+	if in.Permissions != "" {
+		s.savePermissions(w, in.Permissions)
 		return
 	}
 	if in.Email != nil {
@@ -794,6 +811,28 @@ func okRestart(w http.ResponseWriter, restart bool) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// permissionsName is a permission mode as the page shows it: the empty one means the default.
+func permissionsName(p string) string {
+	if p == config.PermissionsStrict {
+		return config.PermissionsStrict
+	}
+	return config.PermissionsDeletesAndPosts
+}
+
+// savePermissions chooses which calls ask the user first. The agents read it when they are built, so it applies
+// after a restart.
+func (s *Server) savePermissions(w http.ResponseWriter, mode string) {
+	if mode != config.PermissionsDeletesAndPosts && mode != config.PermissionsStrict {
+		fail(w, http.StatusBadRequest, fmt.Sprintf("permissions must be %q or %q", config.PermissionsDeletesAndPosts, config.PermissionsStrict))
+		return
+	}
+	s.Cfg.Policy.Permissions = mode
+	if !s.writeConfig(w) {
+		return
+	}
+	okRestart(w, permissionsName(s.Permissions) != mode || (s.Getenv != nil && s.Getenv("TALARIA_PERMISSIONS") != ""))
 }
 
 func (s *Server) saveEmail(w http.ResponseWriter, in *emailUpdate) {
@@ -976,7 +1015,10 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) send(w http.ResponseWriter, r *http.Request) {
-	var in struct{ Text string }
+	var in struct {
+		Text     string
+		Telegram bool
+	}
 	if !readJSON(w, r, &in) {
 		return
 	}
@@ -1000,9 +1042,16 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	if name == "new" { // the old conversation is gone before the engine confirms it in the new one
 		s.Hub.Reset()
 	}
-	s.Engine.Incoming(ChatID, UserID, text)
+	toAgent := text
+	if in.Telegram && s.Telegram && name == "" {
+		toAgent += telegramAsk
+	}
+	s.Engine.Incoming(ChatID, UserID, toAgent)
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// telegramAsk is added, out of sight, to a message sent with "also send to Telegram" on.
+const telegramAsk = "\n\n(When you have finished, also send me the result on Telegram with telegram_notify, written so it reads on its own.)"
 
 func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 	var in struct{ Token, Choice string }
@@ -1138,7 +1187,7 @@ func (s *Server) control(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{
 		"version": s.Version, "model": s.Model, "uptimeSec": int64(time.Since(s.Started).Seconds()),
 		"paused": s.Pause != nil && s.Pause.Paused(), "activity": s.Hub.Activity(24),
-		"jobs": []JobInfo{}, "links": []LinkInfo{}, "pending": len(s.Hub.Pending()),
+		"jobs": []JobInfo{}, "links": []LinkInfo{}, "pending": len(s.Hub.Pending()), "permissions": permissionsName(s.Permissions),
 	}
 	if s.Sources.Jobs != nil {
 		out["jobs"] = s.Sources.Jobs()

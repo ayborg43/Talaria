@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"talaria/internal/agent"
-	"talaria/internal/execenv"
 	"talaria/internal/metrics"
 	"talaria/internal/tool"
 )
@@ -77,18 +76,32 @@ type Engine struct {
 	// retries them in the background. Nil drops them after logging, as before.
 	Outbox *Outbox
 
+	// HeldPath, if set, makes a request for permission wait for the user's answer instead of holding the work up:
+	// the request is kept in this file, the agent carries on with what it can, and when the user answers, even
+	// after a restart, the call is run (or dropped) and the work is taken up again. Held may be given instead,
+	// ready made.
+	HeldPath string
+	Held     *HeldStore
+	// Destructive says only deleting and posting ask, so a yes covers that one call and no more: "always allow"
+	// is not offered, and one approval does not cover the rest of the conversation.
+	Destructive bool
+
 	lim     limiter
 	root    context.Context
 	workers sync.WaitGroup
 	mu      sync.Mutex
 	chats   map[int64]*chat
 	pending map[string]*pendingApproval
-	nextID  int
+	// answered remembers the held requests answered during this run, so a second press says so.
+	answered map[string]bool
+	nextID   int
 }
 
 type chat struct {
-	id    int64
-	queue chan string
+	id     int64
+	queue  chan string
+	resume chan resumeJob // answered requests, to carry out and carry on from
+	task   string         // what the user last asked for, kept with a request that has to wait
 
 	mu      sync.Mutex
 	agent   *agent.Agent // nil: build a fresh one on the next message
@@ -120,6 +133,12 @@ func (e *Engine) HasCommand(name string) bool {
 	}
 	_, ok := e.Commands[name]
 	return ok
+}
+
+// resumeJob is a held request the user has answered.
+type resumeJob struct {
+	h      Held
+	choice Choice
 }
 
 type pendingApproval struct {
@@ -155,6 +174,10 @@ func (e *Engine) Start(ctx context.Context) {
 	e.root = ctx
 	e.chats = map[int64]*chat{}
 	e.pending = map[string]*pendingApproval{}
+	e.answered = map[string]bool{}
+	if e.Held == nil && e.HeldPath != "" {
+		e.Held = &HeldStore{Path: e.HeldPath}
+	}
 	e.mu.Unlock()
 	if e.ApprovalTimeout == 0 {
 		e.ApprovalTimeout = 5 * time.Minute
@@ -354,7 +377,7 @@ func (e *Engine) chatFor(id int64) *chat {
 	defer e.mu.Unlock()
 	c, ok := e.chats[id]
 	if !ok {
-		c = &chat{id: id, queue: make(chan string, queueDepth)}
+		c = &chat{id: id, queue: make(chan string, queueDepth), resume: make(chan resumeJob, queueDepth)}
 		if e.Prefs != nil {
 			c.profile = e.Prefs.Profile(id)
 			c.envName = e.Prefs.Environment(id)
@@ -387,6 +410,8 @@ func (e *Engine) worker(c *chat) {
 			return
 		case text := <-c.queue:
 			e.runOne(c, text)
+		case job := <-c.resume:
+			e.runOneWith(c, "", &job)
 		}
 	}
 }
@@ -398,7 +423,11 @@ func (e *Engine) editInterval() time.Duration {
 	return e.T.EditInterval()
 }
 
-func (e *Engine) runOne(c *chat, text string) {
+func (e *Engine) runOne(c *chat, text string) { e.runOneWith(c, text, nil) }
+
+// runOneWith runs one task: what the user wrote, or, with job, the work taken up again after the user answered a
+// request that had to wait.
+func (e *Engine) runOneWith(c *chat, text string, job *resumeJob) {
 	if rw, ok := e.T.(RunWatcher); ok {
 		rw.RunStart(c.id)
 		defer rw.RunEnd(c.id) // the first defer, so the last to run: after the reply is delivered
@@ -406,13 +435,25 @@ func (e *Engine) runOne(c *chat, text string) {
 	ctx, cancel := context.WithCancel(e.root)
 	c.mu.Lock()
 	c.cancel, c.runCtx = cancel, ctx
+	if job != nil {
+		c.task = job.h.Task
+	} else {
+		c.task = text
+	}
 	if c.agent == nil {
 		c.agent = e.NewAgent(c.id, func(name, args string) bool { return e.askApproval(c, name, args) })
 		c.applied, c.turns = e.defaultEnv(), 0 // a new agent starts in the default environment
+		if e.Held != nil {
+			c.agent.Defer = e.deferRequest(c)
+		}
 	}
 	a := c.agent
 	c.mu.Unlock()
-	e.applyBackend(c, a, text)
+	if job != nil {
+		e.applyBackend(c, a, job.h.Task) // the model for the work being taken up again is the one that work calls for
+	} else {
+		e.applyBackend(c, a, text)
+	}
 
 	defer func() {
 		a.OnText, a.OnToolStart, a.OnToolCall = nil, nil, nil
@@ -429,9 +470,6 @@ func (e *Engine) runOne(c *chat, text string) {
 	proceed, notice := e.applyEnvironment(ctx, c, a)
 	if !proceed {
 		return
-	}
-	if notice != "" {
-		text = notice + "\n\n" + text
 	}
 
 	var live *liveReply
@@ -453,6 +491,13 @@ func (e *Engine) runOne(c *chat, text string) {
 			tw.ToolStart(c.id, name)
 		}
 		a.OnToolCall = func(name, _, result string) { tw.ToolEnd(c.id, name, result) }
+	}
+
+	if job != nil {
+		text = e.carryOut(ctx, c, a, *job)
+	}
+	if notice != "" {
+		text = notice + "\n\n" + text
 	}
 
 	reply, err := a.Run(ctx, text)
@@ -521,22 +566,13 @@ func (e *Engine) askApproval(c *chat, name, args string) bool {
 	}()
 
 	base := agent.BaseTool(name)
-	// Where a call runs matters when deciding whether to allow it, and with
-	// per-chat environments the startup banner no longer says. Only the tools
-	// that go to the environment say so; the rest run where Talaria runs.
-	where := ""
-	if e.Environments != nil && env != "" && env != execenv.LocalName {
-		switch base {
-		case "shell", "read_file", "write_file", "list_dir":
-			where = " in " + env
-		}
-	}
+	where := e.where(env, base)
 	body, ok := e.approvalBody(c.id, args)
 	if !ok {
 		return false
 	}
 	text := fmt.Sprintf("Allow %s%s?\n%s", name, where, body)
-	always := e.Permissions != nil && e.Permissions.Rememberable(base) && !agent.IsFlagged(name)
+	always := e.Permissions != nil && !e.Destructive && e.Permissions.Rememberable(base) && !agent.IsFlagged(name)
 	msg, err := e.T.SendApproval(ctx, c.id, text, token, always)
 	if err != nil {
 		e.logf("approval prompt failed: %v", err)
@@ -553,7 +589,7 @@ func (e *Engine) askApproval(c *chat, name, args string) bool {
 				e.send(c.id, "I could not save that choice ("+err.Error()+"), so I will ask again next time.")
 			}
 		}
-		if choice != ChoiceDeny && !agent.IsFlagged(name) && ag != nil {
+		if choice != ChoiceDeny && !agent.IsFlagged(name) && !e.Destructive && ag != nil {
 			// One approval covers the rest of the conversation for tools
 			// the policy names. A flagged call never counts: outside
 			// content was read, so the next one asks again.
@@ -588,13 +624,14 @@ func (e *Engine) Decide(token string, user, chatID int64, choice Choice) (Decisi
 	e.mu.Lock()
 	p := e.pending[token]
 	e.mu.Unlock()
+	if p == nil {
+		return e.decideHeld(token, user, chatID, choice)
+	}
 	switch {
-	case p == nil:
-		return DecisionExpired, choice
 	case !e.Allowed[user] || chatID != p.chatID:
 		return DecisionForbidden, choice
 	}
-	if choice == ChoiceAlways && (e.Permissions == nil || agent.IsFlagged(p.tool) || !e.Permissions.Rememberable(agent.BaseTool(p.tool))) {
+	if choice == ChoiceAlways && (e.Permissions == nil || e.Destructive || agent.IsFlagged(p.tool) || !e.Permissions.Rememberable(agent.BaseTool(p.tool))) {
 		choice = ChoiceAllow // no such button was offered, so no such answer is valid
 	}
 	select {

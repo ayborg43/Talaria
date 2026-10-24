@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"talaria/internal/agent"
 	"talaria/internal/app"
 	"talaria/internal/config"
 	"talaria/internal/cron"
@@ -246,4 +247,15 @@ func webLinks(cfg *config.Config, rt *app.Runtime, model string, getenv func(str
 		out = append(out, web.LinkInfo{Name: "Model", Detail: model, Tag: "MODEL"})
 		return out
 	}
+}
+
+// askMode is which calls ask the user first: TALARIA_PERMISSIONS (deletes_and_posts or strict) if set, else the config's.
+func askMode(cfg *config.Config, getenv func(string) string) agent.AskMode {
+	switch strings.TrimSpace(strings.ToLower(getenv("TALARIA_PERMISSIONS"))) {
+	case config.PermissionsStrict:
+		return agent.AskRisky
+	case config.PermissionsDeletesAndPosts:
+		return agent.AskDestructive
+	}
+	return cfg.Policy.AskMode()
 }

@@ -186,6 +186,7 @@ func RegisterTools(r *tool.Registry, s *Store, gateway string, chatID int64, tar
 	r.Register(tool.Tool{
 		Name:          "cron_remove",
 		NeedsApproval: true, // removing a schedule can silence something the user relies on
+		Risk:          tool.RiskDeletes,
 		Description:   "Delete one of this chat's scheduled jobs by id.",
 		Schema:        json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {

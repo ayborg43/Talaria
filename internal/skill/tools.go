@@ -74,6 +74,7 @@ func RegisterTools(r *tool.Registry, s *Store) {
 		Description:   "Delete a saved skill by name.",
 		Schema:        json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}`),
 		NeedsApproval: true,
+		Risk:          tool.RiskDeletes,
 		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var a struct{ Name string }
 			if err := json.Unmarshal(raw, &a); err != nil {

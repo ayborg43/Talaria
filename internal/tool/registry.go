@@ -31,7 +31,12 @@ type Tool struct {
 	// something behind that acts later. After the conversation has read outside
 	// content such a call asks first, even if it would normally run without asking.
 	Egress func(args json.RawMessage) bool
-	Run    func(ctx context.Context, args json.RawMessage) (string, error)
+	// Risk says what any call of this tool does that the user may want to decide on: it deletes something, or
+	// posts publicly. RiskFor adds to it for a call whose arguments make the difference (a shell command that
+	// removes files, a click on a social site). A user who asks to be asked only about those reads them here.
+	Risk    Risk
+	RiskFor func(args json.RawMessage) Risk
+	Run     func(ctx context.Context, args json.RawMessage) (string, error)
 	// RunRich, if set, is used instead of Run, for a tool whose result has pictures.
 	RunRich func(ctx context.Context, args json.RawMessage) (Result, error)
 	// Describe, if set, says in plain words what a call will do, for the
@@ -42,6 +47,15 @@ type Tool struct {
 	// raw arguments, for a call whose arguments hold something that should not
 	// be written down (what is typed into a password field).
 	LogArgs func(args json.RawMessage) string
+}
+
+// RiskOf is what one call could do, from the tool's own declaration and the call's arguments.
+func (t Tool) RiskOf(args json.RawMessage) Risk {
+	r := t.Risk
+	if t.RiskFor != nil {
+		r |= t.RiskFor(args)
+	}
+	return r
 }
 
 // Result is what a tool returns when it has more than text.

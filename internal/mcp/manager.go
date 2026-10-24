@@ -204,6 +204,7 @@ func (m *Manager) Register(r *tool.Registry) {
 				Description:   fmt.Sprintf("[MCP server %q] %s", s.name, et.tool.Description),
 				Schema:        et.tool.InputSchema,
 				NeedsApproval: et.approve,
+				Risk:          riskOf(s.name, name, et.class),
 				Untrusted:     true, // what a connected service returns is text from outside
 				Egress:        egress(et.class),
 				Run: func(ctx context.Context, args json.RawMessage) (string, error) {
@@ -254,4 +255,17 @@ func FirstLine(s string, n int) string {
 func egress(c Class) func(json.RawMessage) bool {
 	out := c != ClassRead && c != ClassDraft
 	return func(json.RawMessage) bool { return out }
+}
+
+// riskOf says what a connected service's tool does that its owner may want to decide on, as far as its name and
+// its server's tell: removing things, and posting on a social network.
+func riskOf(server, name string, c Class) tool.Risk {
+	var r tool.Risk
+	if c == ClassDelete {
+		r |= tool.RiskDeletes
+	}
+	if c == ClassSend && tool.LooksLikePost(server, name) {
+		r |= tool.RiskPosts
+	}
+	return r
 }

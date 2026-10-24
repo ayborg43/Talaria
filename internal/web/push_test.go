@@ -131,7 +131,7 @@ func TestANotificationIsEncryptedSignedAndReadableOnlyByThePhone(t *testing.T) {
 	if err := p.Subscribe(ph.sub); err != nil {
 		t.Fatal(err)
 	}
-	p.Notify("Needs your OK", "Allow shell?", "approval", "/#needs")
+	p.Notify("Needs your OK", "Allow shell?", "approval", "/#agents")
 
 	if len(ps.got) != 1 {
 		t.Fatalf("%d requests", len(ps.got))
@@ -141,7 +141,7 @@ func TestANotificationIsEncryptedSignedAndReadableOnlyByThePhone(t *testing.T) {
 		t.Fatalf("headers: %v", r.Header)
 	}
 	var m map[string]string
-	if err := json.Unmarshal(ph.decrypt(t, ps.bodies[0]), &m); err != nil || m["title"] != "Needs your OK" || m["body"] != "Allow shell?" || m["tag"] != "approval" || m["url"] != "/#needs" {
+	if err := json.Unmarshal(ph.decrypt(t, ps.bodies[0]), &m); err != nil || m["title"] != "Needs your OK" || m["body"] != "Allow shell?" || m["tag"] != "approval" || m["url"] != "/#agents" {
 		t.Fatalf("%v %v", m, err)
 	}
 	if strings.Contains(string(ps.bodies[0]), "Allow shell") {

@@ -63,6 +63,27 @@ func BaseTool(name string) string {
 	return name
 }
 
+// AskMode says which tool calls ask the user first.
+type AskMode int
+
+const (
+	// AskRisky: every call a tool marks as needing approval, and, once outside content has been read, calls that could
+	// send something out. The strict way, and the default for an Agent built by hand.
+	AskRisky AskMode = iota
+	// AskDestructive: only a call that deletes something or posts in public (see tool.Risk). Everything else runs.
+	AskDestructive
+)
+
+// Request is a call that needs the user's permission before it runs.
+type Request struct {
+	Name    string // the tool as the user is told of it: with a subagent's label, or marked as flagged
+	Tool    string // the tool's own name
+	Args    string // the call's arguments, as the model wrote them: what is run if it is allowed
+	Shown   string // what the user is asked about: a description of the call, else its arguments
+	Why     string // what makes it need permission ("This deletes something."), if known
+	Flagged bool   // asked only because outside content was read earlier
+}
+
 // Agent holds one conversation and drives it to a final answer.
 type Agent struct {
 	Provider provider.Provider
@@ -82,9 +103,16 @@ type Agent struct {
 	// tools to another environment) without the history ever contradicting it.
 	Context func() string
 
+	// Ask says which calls ask the user first. The zero value is the strict way.
+	Ask AskMode
 	// Approve is asked before any call the Gate says to ask about (by default,
 	// tools with NeedsApproval). Nil means deny.
 	Approve func(name, args string) bool
+	// Defer, if set, is offered a call that needs permission before Approve is asked. A front end that can keep
+	// the request until the user answers (a chat, which may be closed and reopened) keeps it and returns a note
+	// for the model, so the conversation goes on instead of waiting; the call is run later with CallApproved if
+	// it is allowed. ok=false means it could not keep it, and Approve is asked as usual.
+	Defer func(ctx context.Context, r Request) (note string, ok bool)
 	// Gate, if set, rules on every tool call, scrubs results and keeps a record.
 	Gate Gate
 	// BeforeModel, if set, is asked before every request to the model, and may refuse it: this is
@@ -299,7 +327,27 @@ type execResult struct {
 }
 
 // execute never returns an error: failures go back to the model as text so it can recover.
-func (a *Agent) execute(ctx context.Context, call provider.ToolCall) (res execResult) {
+func (a *Agent) execute(ctx context.Context, call provider.ToolCall) execResult {
+	return a.executeAs(ctx, call, false)
+}
+
+// CallApproved runs a call the user has already allowed, without asking again. The permission rules still apply: a
+// tool a rule denies is not run because someone once said yes.
+func (a *Agent) CallApproved(ctx context.Context, name string, args json.RawMessage) (string, error) {
+	quiet := *a
+	quiet.Approve, quiet.Defer = nil, nil
+	if len(args) == 0 {
+		args = json.RawMessage(`{}`)
+	}
+	res := quiet.executeAs(ctx, provider.ToolCall{ID: "approved", Name: name, Arguments: string(args)}, true)
+	if msg, failed := strings.CutPrefix(res.text, "error: "); failed {
+		return "", errors.New(msg)
+	}
+	return res.text, nil
+}
+
+// executeAs runs one call. approved says the user has already allowed exactly this call.
+func (a *Agent) executeAs(ctx context.Context, call provider.ToolCall, approved bool) (res execResult) {
 	entry := Entry{Tool: call.Name, Args: call.Arguments, Label: a.Label, Status: "not run"}
 	defer func() {
 		metrics.Inc("talaria_tool_calls_total", "status", strings.ReplaceAll(entry.Status, " ", "_"))
@@ -319,6 +367,10 @@ func (a *Agent) execute(ctx context.Context, call provider.ToolCall) (res execRe
 		entry.Args = t.LogArgs([]byte(call.Arguments))
 	}
 	needs := t.NeedsApproval || (t.NeedsApprovalFor != nil && t.NeedsApprovalFor(json.RawMessage(call.Arguments)))
+	risk := t.RiskOf(json.RawMessage(call.Arguments))
+	if a.Ask == AskDestructive {
+		needs = risk != 0 // what a tool would rather be asked about does not matter: only deleting and posting do
+	}
 	verdict := Verdict{Via: "auto"}
 	if a.Gate != nil {
 		verdict = a.Gate.Verdict(call.Name, needs)
@@ -326,7 +378,7 @@ func (a *Agent) execute(ctx context.Context, call provider.ToolCall) (res execRe
 		verdict.Action = Ask
 	}
 	flagged := false
-	if a.GuardUntrusted && verdict.Action == Allow && verdict.Via != "rule" && a.ReadOutside() && t.Egress != nil && t.Egress(json.RawMessage(call.Arguments)) {
+	if a.GuardUntrusted && a.Ask != AskDestructive && verdict.Action == Allow && verdict.Via != "rule" && a.ReadOutside() && t.Egress != nil && t.Egress(json.RawMessage(call.Arguments)) {
 		verdict = Verdict{Action: Ask, Via: "outside content"}
 		flagged = true
 	}
@@ -348,11 +400,23 @@ func (a *Agent) execute(ctx context.Context, call provider.ToolCall) (res execRe
 		if flagged {
 			name = Flagged(name)
 		}
-		if a.Approve == nil || !a.Approve(name, shown) {
-			metrics.Inc("talaria_approvals_total", "decision", "denied")
-			return execResult{text: "error: the user denied this tool call"}
+		switch {
+		case approved:
+			entry.Via = "approved"
+		default:
+			if a.Defer != nil {
+				if note, ok := a.Defer(ctx, Request{Name: name, Tool: call.Name, Args: call.Arguments, Shown: shown, Why: risk.Note(), Flagged: flagged}); ok {
+					metrics.Inc("talaria_approvals_total", "decision", "deferred")
+					entry.Status = "waiting for permission"
+					return execResult{text: note}
+				}
+			}
+			if a.Approve == nil || !a.Approve(name, shown) {
+				metrics.Inc("talaria_approvals_total", "decision", "denied")
+				return execResult{text: "error: the user denied this tool call"}
+			}
+			metrics.Inc("talaria_approvals_total", "decision", "allowed")
 		}
-		metrics.Inc("talaria_approvals_total", "decision", "allowed")
 	}
 	entry.Allowed = true
 

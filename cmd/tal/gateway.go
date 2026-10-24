@@ -23,6 +23,8 @@ import (
 	"talaria/internal/guard"
 	"talaria/internal/metrics"
 	"talaria/internal/ops"
+	"talaria/internal/provider"
+	"talaria/internal/subagent"
 	"talaria/internal/version"
 	"talaria/internal/web"
 )
@@ -165,6 +167,7 @@ func runGateway(c *cli) error {
 		defer pool.Close() // stops every environment the chats started, and the default one too
 	}
 	backends := gatewayBackends(c.cfg, c.res, c.p, c.getenv)
+	c.rt.SetHelpers(helperModels(backends))
 
 	var webHub *web.Hub // the web app's hub, once it is made: it is also what shows who is working
 
@@ -267,8 +270,20 @@ func runGateway(c *cli) error {
 			OffsetPath: filepath.Join(c.home, "telegram_offset.json"),
 			OutboxPath: filepath.Join(c.home, "outbox_telegram.json"),
 		}
+		if !c.yolo {
+			g.HeldPath, g.Destructive = filepath.Join(c.home, "held_telegram.json"), c.rt.AsksOnlyToDestroy()
+		}
 		if gd := c.rt.Guard(); gd != nil {
 			g.Permissions = guard.ChatPermissions{G: gd, Gateway: s.name}
+		}
+		if len(allowed) > 0 {
+			// Whatever the agent is working on, from the web app or a scheduled job too, it can message the user here.
+			c.rt.SetNotifier(func(ctx context.Context, text string) error {
+				for id := range allowed {
+					g.Send(ctx, id, text)
+				}
+				return nil
+			})
 		}
 		g.NewAgent = newAgent(s, telegramNote, g.Selection)
 		s.run, s.send, s.selection = g.Run, g.Send, g.Selection
@@ -306,6 +321,9 @@ func runGateway(c *cli) error {
 			Prefs:      &chat.FilePrefs{Path: filepath.Join(c.home, "discord_chats.json")},
 			OutboxPath: filepath.Join(c.home, "outbox_discord.json"),
 		}
+		if !c.yolo {
+			g.HeldPath, g.Destructive = filepath.Join(c.home, "held_discord.json"), c.rt.AsksOnlyToDestroy()
+		}
 		if gd := c.rt.Guard(); gd != nil {
 			g.Permissions = guard.ChatPermissions{G: gd, Gateway: s.name}
 		}
@@ -333,13 +351,17 @@ func runGateway(c *cli) error {
 		if gd := c.rt.Guard(); gd != nil {
 			eng.Permissions = guard.ChatPermissions{G: gd, Gateway: s.name}
 		}
+		if !c.yolo {
+			eng.Held, eng.Destructive = &chat.HeldStore{Path: filepath.Join(c.home, "held_web.json")}, c.rt.AsksOnlyToDestroy()
+			webHub.Held = eng.Held.Has
+		}
 		eng.NewAgent = newAgent(s, webNote, eng.Selection)
 		eng.Commands, eng.OnUserMessage, eng.StopBackground = attach(s, logf)
 		zone, _ := calendarZone(c.cfg, c.getenv)
 		model := c.res.Model
 		srv := &web.Server{
 			Hub: webHub, Auth: &web.Auth{Password: webSet.Password, Path: filepath.Join(c.home, "web_sessions.json"), Secure: webSet.Secure},
-			Engine: eng, Push: push, Pause: pause, PublicURL: webSet.PublicURL, Model: model, Version: version.String(), Started: time.Now(),
+			Engine: eng, Push: push, Pause: pause, Telegram: c.rt.CanNotify(), Permissions: permissionsLabel(c.rt), PublicURL: webSet.PublicURL, Model: model, Version: version.String(), Started: time.Now(),
 			Sources: webSources(c.rt, zone, webLinks(c.cfg, c.rt, model, c.getenv, webSet.PublicURL)), Logf: logf, TrustProxy: webSet.Secure,
 			ConfigPath: config.Path(c.home, c.getenv),
 			Cfg:        c.cfg,
@@ -447,3 +469,40 @@ func sharedWarning(allowed int, say func(string)) {
 const sharedNote = "warning: more than one person is allowed in. Their conversations and history are kept apart, but everything else is shared: " +
 	"the agent's notes and skills, the saved logins and connected accounts (anyone allowed in can have the agent use them), the files and the " +
 	"workspace, and the model account's spending. Only allow people you would give all of that to."
+
+// helperModels offers every profile that can be used right now to subagents, so the main agent can hand a plain
+// lookup to a cheap model and a hard problem to a strong one. A profile that cannot be opened (no key) is left out.
+func helperModels(b *chat.Backends) func() []subagent.Helper {
+	return func() []subagent.Helper {
+		var out []subagent.Helper
+		names := b.Names
+		if b.List != nil {
+			names = b.List()
+		}
+		for _, name := range names {
+			be, err := b.Open(name)
+			if err != nil {
+				continue
+			}
+			out = append(out, subagent.Helper{
+				Name: name, Desc: be.Desc, Best: be.Best,
+				Open: func() (provider.Provider, string, error) {
+					be, err := b.Open(name)
+					return be.Provider, be.Model, err
+				},
+			})
+		}
+		if len(out) < 2 {
+			return nil // one model to choose from is no choice
+		}
+		return out
+	}
+}
+
+// permissionsLabel names which calls ask first in this run, as the config spells it.
+func permissionsLabel(rt *app.Runtime) string {
+	if rt.AsksOnlyToDestroy() {
+		return config.PermissionsDeletesAndPosts
+	}
+	return config.PermissionsStrict
+}

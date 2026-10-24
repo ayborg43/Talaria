@@ -81,6 +81,10 @@ type Manager struct {
 	Env  execenv.Starter
 	Opts Options
 
+	// Social lists sites to treat as social media besides the usual ones: on them, a click, typing or a key
+	// press may post something, so it counts as posting for anyone who asked to be asked about that.
+	Social []string
+
 	// Resolve looks up a host's addresses; nil uses the system resolver. Tests replace it.
 	Resolve func(ctx context.Context, host string) ([]string, error)
 

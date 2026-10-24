@@ -22,6 +22,7 @@ import (
 	"talaria/internal/mailbox"
 	"talaria/internal/mcp"
 	"talaria/internal/memory"
+	"talaria/internal/notify"
 	"talaria/internal/provider"
 	"talaria/internal/skill"
 	"talaria/internal/subagent"
@@ -59,6 +60,10 @@ type Config struct {
 	Vault browser.Credentials
 	// ModelCallsPerHour limits requests to the model, across everything this process runs; 0 is no limit.
 	ModelCallsPerHour int
+	// Ask is which calls ask the user first; the zero value is the strict way. SocialSites are extra sites the
+	// browser treats as social media, where acting on a page counts as posting.
+	Ask         agent.AskMode
+	SocialSites []string
 	// TrustOutsideContent turns off the guard that makes anything able to send something
 	// out ask first once the conversation has read outside content.
 	TrustOutsideContent bool
@@ -115,6 +120,10 @@ type Runtime struct {
 	env      execenv.Env
 	pool     *subagent.Pool // nil when subagents are disabled
 	log      *slog.Logger
+
+	notifyMu    sync.Mutex
+	notifySend  notify.Sender
+	notifyLimit notify.Limit
 
 	budget *budget
 
@@ -276,6 +285,33 @@ func (o AgentOptions) gateway() string {
 	return ""
 }
 
+// SetNotifier lets agents message the user on Telegram, from wherever they were asked: the web app, a scheduled job.
+// Conversations started before this do not have the tool until they are restarted.
+func (rt *Runtime) SetNotifier(send notify.Sender) {
+	rt.notifyMu.Lock()
+	rt.notifySend = send
+	rt.notifyMu.Unlock()
+}
+
+func (rt *Runtime) notifier() notify.Sender {
+	rt.notifyMu.Lock()
+	defer rt.notifyMu.Unlock()
+	return rt.notifySend
+}
+
+// SetHelpers lets the main agent give subagents other models than its own, for tasks one suits better.
+func (rt *Runtime) SetHelpers(list func() []subagent.Helper) {
+	if rt.pool != nil {
+		rt.pool.Helpers = list
+	}
+}
+
+// CanNotify reports whether agents can message the user on Telegram.
+func (rt *Runtime) CanNotify() bool { return rt.notifier() != nil }
+
+// AsksOnlyToDestroy reports whether agents ask permission only for what deletes or posts, as opposed to the strict way.
+func (rt *Runtime) AsksOnlyToDestroy() bool { return rt.cfg.Ask == agent.AskDestructive }
+
 // NewAgent starts a fresh conversation with its own history session. Notes and
 // the skill index are read now, so the prompt stays stable for the conversation.
 func (rt *Runtime) NewAgent(o AgentOptions) *agent.Agent {
@@ -306,7 +342,8 @@ func (rt *Runtime) NewAgent(o AgentOptions) *agent.Agent {
 		Tools:          tools,
 		System:         system,
 		Approve:        o.Approve,
-		GuardUntrusted: !rt.cfg.TrustOutsideContent,
+		GuardUntrusted: !rt.cfg.TrustOutsideContent && rt.cfg.Ask != agent.AskDestructive,
+		Ask:            rt.cfg.Ask,
 		BeforeModel:    rt.budget.take,
 		Activity:       o.Activity,
 	}

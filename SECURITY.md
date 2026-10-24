@@ -20,6 +20,16 @@ far it has been checked.
 
 - Someone who already has your user account on the machine, or your unlocked vault and its key.
 - A shell command you approve: it runs as you.
+- **A deletion or a post that is not recognised.** By default (`policy.permissions: "deletes_and_posts"`) Talaria asks only
+  before it deletes something or posts on social media, so what counts is decided by the tool (a tool declares that it deletes
+  or posts), by what a shell command says (a list of deleting commands and patterns, best effort: a script that removes a file
+  from inside, or a command spelled in an unusual way, is not seen), and by the site a browser is on (a list of social sites).
+  In that mode the guard that makes anything able to send something out ask once outside content was read is off, so text on
+  a web page can talk the agent into commands that are not deletes or posts. `"strict"` restores asking for everything risky
+  and that guard. A connected service's send, pay or publish tools are asked about only if their name or a rule says so.
+- **Questions that wait.** A question is saved in `~/.talaria/held_*.json` (mode 0600) with the exact call, and carried out when
+  answered, so a question left for days can be answered long after the page that showed it has changed; it names what will
+  run and lapses after a week. Only a signed-in user (or an allowlisted chat) can answer it, once, by its unguessable token.
 - A false statement the model is talked into making to you. Nothing here checks the model's claims.
 - Prompt injection that needs no tool at all.
 - A compromised model provider, Telegram or Discord, or Docker. Messages and model requests pass through them.

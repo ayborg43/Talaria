@@ -100,6 +100,13 @@ func RegisterBuiltinsIn(r *Registry, env execenv.Env) {
 		Schema:        json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}`),
 		NeedsApproval: true,
 		Egress:        always, // a command can send anything anywhere
+		RiskFor: func(raw json.RawMessage) Risk {
+			var a struct{ Command string }
+			if json.Unmarshal(raw, &a) != nil {
+				return RiskDeletes // arguments that cannot be read are not known to be harmless
+			}
+			return ShellRisk(a.Command)
+		},
 		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var a struct{ Command string }
 			if err := json.Unmarshal(raw, &a); err != nil {

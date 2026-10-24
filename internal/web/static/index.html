@@ -59,6 +59,7 @@
     <div id="quick" class="quick"></div>
     <form id="composer" class="composer">
       <label class="sr" for="input">Message Talaria</label>
+      <button id="tg" class="round ghost tg" type="button" aria-label="Also send the result to Telegram" aria-pressed="false" title="Also send the result to my Telegram" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 4L3 11l6 2.2L11 20l3-4.5 4.5 3.5z"/><path d="M9 13.2L21 4"/></svg></button>
       <textarea id="input" rows="1" placeholder="Message Talaria" enterkeyhint="send" autocomplete="off" autocapitalize="sentences"></textarea>
       <button id="mic" class="round ghost" type="button" aria-label="Dictate" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
       <button id="send" class="round primary" type="submit" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
@@ -78,32 +79,20 @@
 
   <section id="screen-agents" class="screen" aria-label="Agents" hidden>
     <div class="scroll">
-      <header class="page-head"><div><h1 class="display page-title">Agents</h1><p class="muted">Who is working for you, now and lately.</p></div></header>
+      <header class="page-head">
+        <div><h1 class="display page-title">Agents</h1><p id="agents-sub" class="muted">Who is working for you, and what is waiting for your OK.</p></div>
+        <button id="pause-btn" class="pause" type="button" hidden></button>
+      </header>
       <div id="agents-body" class="stack"></div>
-    </div>
-  </section>
-
-  <section id="screen-needs" class="screen" aria-label="Needs You" hidden>
-    <div class="scroll">
-      <header class="page-head"><div><h1 class="display page-title">Needs You</h1><p class="muted">Nothing risky runs until you say so.</p></div></header>
-      <div class="segmented" role="tablist">
-        <button id="seg-wait" type="button" role="tab" aria-selected="true">Waiting</button>
-        <button id="seg-hist" type="button" role="tab" aria-selected="false">History</button>
-      </div>
-      <div id="needs-body" class="stack"></div>
-    </div>
-  </section>
-
-  <section id="screen-control" class="screen" aria-label="Control" hidden>
-    <div class="scroll">
-      <header class="page-head"><div><h1 class="display page-title">Control</h1><p class="muted">What Talaria is doing, and how to stop it.</p></div></header>
-      <div id="control-body" class="stack"></div>
     </div>
   </section>
 
   <section id="screen-settings" class="screen" aria-label="Settings" hidden>
     <div class="scroll">
-      <header class="page-head"><div><h1 class="display page-title">Settings</h1><p class="muted">Model profiles and API keys.</p></div></header>
+      <header class="page-head">
+        <button id="settings-back" class="icon-btn back" type="button" aria-label="Back to Settings" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <div><h1 id="settings-title" class="display page-title">Settings</h1><p id="settings-sub" class="muted">Models, permissions and connections.</p></div>
+      </header>
       <div id="settings-body" class="stack"></div>
     </div>
   </section>
@@ -112,9 +101,7 @@
     <a href="#chat" data-tab="chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.2A8 8 0 1 1 20 12z"/></svg><span>Chat</span></a>
     <a href="#today" data-tab="today"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/></svg><span>Today</span></a>
     <a href="#agents" data-tab="agents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="3.5"/><path d="M12 8V5M9 4.5h6"/><circle cx="9.5" cy="13.5" r="1" fill="currentColor"/><circle cx="14.5" cy="13.5" r="1" fill="currentColor"/><path d="M3 12.5v2M21 12.5v2"/></svg><span>Agents</span><b id="agent-badge" class="badge work" hidden>0</b></a>
-    <a href="#needs" data-tab="needs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg><span>Needs You</span><b id="badge" class="badge" hidden>0</b></a>
-    <a href="#control" data-tab="control"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 8h9M18 8h1M5 16h1M10 16h9"/><circle cx="16" cy="8" r="2"/><circle cx="8" cy="16" r="2"/></svg><span>Control</span></a>
-    <a href="#settings" data-tab="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 14a1.65 1.65 0 0 0-1-1.51V11a2 2 0 0 1 2-2h1a2 2 0 0 1 2 2v1a2 2 0 0 1 2 2a2 2 0 0 1 2-2v-.09A1.65 1.65 0 0 0 13 8a1.65 1.65 0 0 0-1-1.51V11a2 2 0 0 1 2-2h1a2 2 0 0 1 2 2a2 2 0 0 1 2-2v1a2 2 0 0 1 2 2v.09A1.65 1.65 0 0 0 19 15a1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 17 15a1.65 1.65 0 0 0-1-1.51V14a2 2 0 0 1 2-2h1a2 2 0 0 1 2 2a2 2 0 0 1 2-2v-.09A1.65 1.65 0 0 0 19 15a1.65 1.65 0 0 0-.33 1.82z"/></svg><span>Settings</span></a>
+    <a href="#settings" data-tab="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2.2"/><circle cx="8" cy="17" r="2.2"/></svg><span>Settings</span></a>
   </nav>
 </div>
 

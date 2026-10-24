@@ -46,6 +46,7 @@ func RegisterTools(r *tool.Registry, s *Service) {
 			"text":{"type":"string","description":"what to post, at most 280 characters"},
 			"reply_to":{"type":"string","description":"the mention's id to reply to"}},"required":["text"]}`),
 		NeedsApproval: true, // a post speaks as the user, in public
+		Risk:          tool.RiskPosts,
 		// A post sends something out, so it asks first even after reading outside content.
 		Egress: func(json.RawMessage) bool { return true },
 		Describe: func(raw json.RawMessage) string {

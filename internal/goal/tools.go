@@ -85,6 +85,13 @@ func RegisterTools(r *tool.Registry, b Binding) {
 			var a struct{ Status string }
 			return json.Unmarshal(raw, &a) != nil || a.Status == "open" || a.Status == "dropped"
 		},
+		RiskFor: func(raw json.RawMessage) tool.Risk {
+			var a struct{ Status string }
+			if json.Unmarshal(raw, &a) != nil || a.Status == "dropped" {
+				return tool.RiskDeletes // dropping a goal ends it for good
+			}
+			return 0
+		},
 		Run: b.update,
 	})
 }

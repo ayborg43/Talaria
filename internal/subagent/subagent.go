@@ -15,6 +15,7 @@ import (
 
 	"talaria/internal/activity"
 	"talaria/internal/agent"
+	"talaria/internal/provider"
 	"talaria/internal/tool"
 )
 
@@ -62,10 +63,22 @@ const description = `Hand a task to a subagent: a separate assistant that works 
 	`The subagent cannot see this conversation or ask you anything, so the task must contain everything it needs (paths, names, constraints) and say what form the answer should take. ` +
 	`It cannot save notes, skills or schedules, or delegate further. Do not use it for work that takes a step or two: do that yourself.`
 
+// Helper is another model a subagent can be given instead of the one the main agent is using: a cheaper one for
+// plain lookups, a stronger one for code. Open builds it, or says why it cannot be used just now.
+type Helper struct {
+	Name string   // what the agent asks for
+	Desc string   // the model, for the agent to choose by
+	Best []string // what the profile is said to be best at
+	Open func() (provider.Provider, string, error)
+}
+
 // Pool bounds how many subagents run at once and how long each may work.
 type Pool struct {
 	MaxSteps int
 	Timeout  time.Duration // per subagent; default 10 minutes
+	// Helpers, if set, lists the other models a subagent may use. It is asked at each registration and
+	// delegation, so a profile added in Settings is there at once.
+	Helpers func() []Helper
 
 	sem chan struct{}
 }
@@ -90,38 +103,90 @@ func NewPool(l Limits) *Pool {
 // If the parent has an Activity sink, it is told when each subagent starts waiting for a place, begins,
 // moves on to another tool, and finishes, so a front end can show who is working.
 func (p *Pool) Register(parent *agent.Agent, background func() string) {
-	parent.Tools.Register(tool.Tool{
-		Name:        "delegate",
-		Description: description,
-		Schema: json.RawMessage(`{"type":"object","properties":{
+	desc, schema := description, `{"type":"object","properties":{
 			"task":{"type":"string","description":"complete, self-contained instructions, including the form the answer should take"},
 			"name":{"type":"string","description":"a short label for this task, shown with its progress and approval prompts"}},
-			"required":["task"]}`),
-		Parallel: true,
+			"required":["task"]}`
+	if hs := p.helpers(); len(hs) > 0 {
+		var names []string
+		var lines []string
+		for _, h := range hs {
+			names = append(names, h.Name)
+			line := h.Name + ": " + h.Desc
+			if len(h.Best) > 0 {
+				line += ", best for " + strings.Join(h.Best, " and ")
+			}
+			lines = append(lines, line)
+		}
+		enum, _ := json.Marshal(names)
+		schema = `{"type":"object","properties":{
+			"task":{"type":"string","description":"complete, self-contained instructions, including the form the answer should take"},
+			"name":{"type":"string","description":"a short label for this task, shown with its progress and approval prompts"},
+			"model":{"type":"string","enum":` + string(enum) + `,"description":"which model should do it; leave it out for the one you are using"}},
+			"required":["task"]}`
+		desc += " It may use a different model from yours when that suits the task better: a cheap, fast one for plain lookups and summaries, a stronger one for hard reasoning or code. Models: " + strings.Join(lines, "; ") + "."
+	}
+	parent.Tools.Register(tool.Tool{
+		Name:        "delegate",
+		Description: desc,
+		Schema:      json.RawMessage(schema),
+		Parallel:    true,
 		// What a subagent brings back was read from wherever it looked, and it starts with a clean
 		// slate: a conversation that has read outside content must not be able to wash it through one.
 		Untrusted: true,
 		Egress:    tool.Always,
 		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
-			var a struct{ Task, Name string }
+			var a struct{ Task, Name, Model string }
 			if err := json.Unmarshal(raw, &a); err != nil {
 				return "", err
 			}
-			return p.run(ctx, parent, background, a.Task, a.Name)
+			return p.run(ctx, parent, background, a.Task, a.Name, a.Model)
 		},
 	})
 }
 
-func (p *Pool) run(ctx context.Context, parent *agent.Agent, background func() string, task, name string) (string, error) {
+func (p *Pool) helpers() []Helper {
+	if p.Helpers == nil {
+		return nil
+	}
+	return p.Helpers()
+}
+
+// modelFor is the provider and model a subagent works with: the main agent's, or the helper it asked for.
+func (p *Pool) modelFor(parent *agent.Agent, want string) (provider.Provider, string, error) {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return parent.Provider, parent.Model, nil
+	}
+	var names []string
+	for _, h := range p.helpers() {
+		names = append(names, h.Name)
+		if h.Name == want {
+			pr, model, err := h.Open()
+			if err != nil {
+				return nil, "", fmt.Errorf("model %q cannot be used just now (%v): leave model out to use your own", want, err)
+			}
+			return pr, model, nil
+		}
+	}
+	return nil, "", fmt.Errorf("no model called %q: choose one of %s, or leave it out to use your own", want, strings.Join(names, ", "))
+}
+
+func (p *Pool) run(ctx context.Context, parent *agent.Agent, background func() string, task, name, model string) (string, error) {
 	task = strings.TrimSpace(task)
 	if task == "" {
 		return "", errors.New("task is empty: say what the subagent should do")
+	}
+	pr, modelName, err := p.modelFor(parent, model)
+	if err != nil {
+		return "", err
 	}
 	label := cleanLabel(name, task)
 
 	sink := parent.Activity
 	id, end := activity.Begin(sink, activity.Sub, label)
 	defer end()
+	activity.SetModel(sink, id, modelName)
 	select { // wait for a free slot
 	case p.sem <- struct{}{}:
 		defer func() { <-p.sem }()
@@ -143,8 +208,8 @@ func (p *Pool) run(ctx context.Context, parent *agent.Agent, background func() s
 		}
 	}
 	sub := &agent.Agent{
-		Provider: parent.Provider,
-		Model:    parent.Model,
+		Provider: pr,
+		Model:    modelName,
 		// The browser is left out: a conversation has one tab, and subagents run
 		// at once, so they would be clicking in each other's pages.
 		Tools:    parent.Tools.Without(excluded...).WithoutPrefix("browser_"),
@@ -154,6 +219,7 @@ func (p *Pool) run(ctx context.Context, parent *agent.Agent, background func() s
 		// started it, and its calls go in the same record, under its label.
 		Gate:           parent.Gate,
 		GuardUntrusted: parent.GuardUntrusted,
+		Ask:            parent.Ask,
 		BeforeModel:    parent.BeforeModel, // a subagent spends from the same budget
 		Label:          label,
 		// Calls that ask go to the user through the parent's approval, labelled so
@@ -163,6 +229,15 @@ func (p *Pool) run(ctx context.Context, parent *agent.Agent, background func() s
 				return false
 			}
 			return parent.Approve(agent.Labelled(tool, label), args)
+		},
+		// A request that can wait for the user's answer is kept, labelled the same way, so the helper does not
+		// stand there holding the work up.
+		Defer: func(ctx context.Context, r agent.Request) (string, bool) {
+			if parent.Defer == nil {
+				return "", false
+			}
+			r.Name = agent.Labelled(r.Name, label)
+			return parent.Defer(ctx, r)
 		},
 		// Progress shows up wherever the parent's tool activity does.
 		OnToolStart: func(tool, args string) {

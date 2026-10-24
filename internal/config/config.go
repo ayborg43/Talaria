@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"talaria/internal/agent"
 	"talaria/internal/execenv"
 	"talaria/internal/guard"
 	"talaria/internal/mcp"
@@ -283,6 +284,28 @@ type Policy struct {
 	// leave a note behind ask first, even if it would normally run, except where a rule above says
 	// "allow"; "off" does not.
 	UntrustedContent string `json:"untrusted_content,omitempty"`
+	// Permissions says which calls ask the user first. "deletes_and_posts" (the default) asks only before
+	// something is deleted or posted on social media, and runs everything else; "strict" also asks before
+	// running commands, writing files, changing schedules and the like, and, after outside content has been
+	// read, before anything that could send something out. Rules above still apply in either.
+	Permissions string `json:"permissions,omitempty"`
+	// SocialSites are sites to treat as social media besides the usual ones (x.com, facebook.com and so on):
+	// on them, clicking or typing in the browser asks, as it may post.
+	SocialSites []string `json:"social_sites,omitempty"`
+}
+
+// Permission modes, as written in the config.
+const (
+	PermissionsDeletesAndPosts = "deletes_and_posts"
+	PermissionsStrict          = "strict"
+)
+
+// AskMode is which calls ask the user first.
+func (p Policy) AskMode() agent.AskMode {
+	if p.Permissions == PermissionsStrict {
+		return agent.AskRisky
+	}
+	return agent.AskDestructive
 }
 
 // GuardUntrusted reports whether calls that could send something out ask once outside content was read.
@@ -293,6 +316,11 @@ func (p Policy) AuditEnabled() bool { return p.Audit == nil || *p.Audit }
 
 // Parse validates the rules.
 func (p Policy) Parse() (*guard.Policy, error) {
+	switch p.Permissions {
+	case "", PermissionsDeletesAndPosts, PermissionsStrict:
+	default:
+		return nil, fmt.Errorf("permissions must be %q or %q, not %q", PermissionsDeletesAndPosts, PermissionsStrict, p.Permissions)
+	}
 	switch p.UntrustedContent {
 	case "", "ask", "off":
 	default:

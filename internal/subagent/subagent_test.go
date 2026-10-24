@@ -830,3 +830,86 @@ func TestAHelperWaitingForAPlaceSaysSoThenCarriesOn(t *testing.T) {
 		t.Fatalf("%v", s.lines())
 	}
 }
+
+type modelSink struct {
+	mu     sync.Mutex
+	models map[int64]string
+}
+
+func (s *modelSink) Start(kind, label string) int64 { return 5 }
+func (s *modelSink) Doing(int64, string)            {}
+func (s *modelSink) Stop(int64)                     {}
+func (s *modelSink) SetModel(id int64, m string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.models == nil {
+		s.models = map[int64]string{}
+	}
+	s.models[id] = m
+}
+
+// A subagent can be given another model than the main agent's: the delegate tool says which are on offer, the helper
+// is built with the one asked for, the front end is told which it is, and an unknown or unusable name is an error the
+// agent can read, not a silent fallback.
+func TestADelegatedTaskCanUseAnotherModel(t *testing.T) {
+	var subModel string
+	cheap := chatFunc(func(_ context.Context, req provider.Request) (provider.Message, error) {
+		subModel = "cheap-provider"
+		return text("quick answer"), nil
+	})
+	var seenDesc, seenSchema string
+	p := chatFunc(func(_ context.Context, req provider.Request) (provider.Message, error) {
+		if lastTool(req) {
+			return text("final: " + req.Messages[len(req.Messages)-1].Content), nil
+		}
+		for _, tl := range req.Tools {
+			if tl.Name == "delegate" {
+				seenDesc, seenSchema = tl.Description, string(tl.Parameters)
+			}
+		}
+		args, _ := json.Marshal(map[string]string{"task": "look it up", "model": "fast"})
+		return toolCalls(provider.ToolCall{ID: "1", Name: "delegate", Arguments: string(args)}), nil
+	})
+	pool := NewPool(Limits{})
+	pool.Helpers = func() []Helper {
+		return []Helper{
+			{Name: "fast", Desc: "deepseek, flash", Best: []string{"cheap"}, Open: func() (provider.Provider, string, error) { return cheap, "flash-1", nil }},
+			{Name: "broken", Desc: "x", Open: func() (provider.Provider, string, error) { return nil, "", fmt.Errorf("no API key") }},
+		}
+	}
+	sink := &modelSink{}
+	parent := newParent(p, pool)
+	parent.Activity = sink
+	got, err := parent.Run(context.Background(), "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "quick answer") || subModel != "cheap-provider" {
+		t.Fatalf("the helper did not use the model asked for: %q %q", got, subModel)
+	}
+	if sink.models[5] != "flash-1" {
+		t.Fatalf("the front end was not told which model: %v", sink.models)
+	}
+	if !strings.Contains(seenDesc, "fast: deepseek, flash, best for cheap") || !strings.Contains(seenSchema, `"enum":["fast","broken"]`) {
+		t.Fatalf("the choices were not offered:\n%s\n%s", seenDesc, seenSchema)
+	}
+
+	for want, name := range map[string]string{`no model called "nope"`: "nope", "cannot be used just now (no API key)": "broken"} {
+		_, _, err := pool.modelFor(parent, name)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v", name, err)
+		}
+	}
+	if pr, m, err := pool.modelFor(parent, ""); err != nil || m != "parent-model" || pr == nil {
+		t.Fatalf("no model asked for must mean the main agent's: %v %v", m, err)
+	}
+}
+
+func TestWithoutHelpersDelegateOffersNoModelChoice(t *testing.T) {
+	pool := NewPool(Limits{})
+	parent := newParent(chatFunc(func(context.Context, provider.Request) (provider.Message, error) { return text("x"), nil }), pool)
+	tl, _ := parent.Tools.Get("delegate")
+	if strings.Contains(string(tl.Schema), "model") {
+		t.Fatalf("a model choice with nothing to choose from: %s", tl.Schema)
+	}
+}

@@ -74,6 +74,13 @@ func RegisterTools(r *tool.Registry, b Binding) {
 			var a struct{ Action string }
 			return json.Unmarshal(raw, &a) != nil || a.Action == "resume" || a.Action == "delete"
 		},
+		RiskFor: func(raw json.RawMessage) tool.Risk {
+			var a struct{ Action string }
+			if json.Unmarshal(raw, &a) != nil || a.Action == "delete" {
+				return tool.RiskDeletes
+			}
+			return 0
+		},
 		Run: b.update,
 	})
 }

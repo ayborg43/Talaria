@@ -278,7 +278,7 @@ func TestYouAreNotNotifiedAboutWhatYouAreLookingAt(t *testing.T) {
 			reply = g
 		}
 	}
-	if ask.title != "Needs your OK" || ask.body != "Allow shell?" || ask.path != "/#needs" {
+	if ask.title != "Needs your OK" || ask.body != "Allow shell?" || ask.path != "/#agents" {
 		t.Fatalf("%+v", ask)
 	}
 	if reply.title != "Talaria" || reply.body != strings.TrimSpace(strings.Repeat("word ", 5)) {
@@ -493,5 +493,45 @@ func TestOnlyTheLatestFinishedAreKept(t *testing.T) {
 	}
 	if n := len(h.Recent()); n != maxRecent {
 		t.Fatalf("%d", n)
+	}
+}
+
+// Who is working says which model each is using, and what finished remembers it.
+func TestWorkersShowTheModelTheyUse(t *testing.T) {
+	h := &Hub{}
+	h.RunStart(1)
+	h.NoteModel(1, "deepseek-v4-pro")
+	id := h.Start(activity.Sub, "lookup")
+	h.SetModel(id, "flash-1")
+	got := h.Workers()
+	if len(got) != 2 || got[0].Kind != activity.Main || got[0].Model != "deepseek-v4-pro" || got[1].Model != "flash-1" {
+		t.Fatalf("%+v", got)
+	}
+	h.Stop(id)
+	if r := h.Recent(); len(r) != 1 || r[0].Model != "flash-1" {
+		t.Fatalf("%+v", r)
+	}
+	h.RunEnd(1)
+	h.RunStart(1) // the next task starts out under the model last used, until it says otherwise
+	if w := h.Workers(); len(w) != 1 || w[0].Model != "deepseek-v4-pro" {
+		t.Fatalf("%+v", w)
+	}
+}
+
+// A question still waiting after a restart stays a question; one nobody can answer any more expires.
+func TestAQuestionKeptAcrossARestartStaysPending(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "log.json")
+	h := &Hub{Path: path}
+	h.SendApproval(context.Background(), 1, "Allow a?", "keep", true)
+	h.SendApproval(context.Background(), 1, "Allow b?", "gone", true)
+	h.Close()
+	h2 := &Hub{Path: path, Held: func(token string) bool { return token == "keep" }}
+	states := map[string]string{}
+	msgs, _, _, _ := h2.Snapshot()
+	for _, m := range msgs {
+		states[m.Text] = m.State
+	}
+	if states["Allow a?"] != "pending" || states["Allow b?"] != "expired" {
+		t.Fatalf("%v", states)
 	}
 }

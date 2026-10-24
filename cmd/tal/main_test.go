@@ -297,3 +297,23 @@ func TestAllowlistIDsFromTheEnvironmentMustBePositive(t *testing.T) {
 		}
 	}
 }
+
+// TALARIA_PERMISSIONS wins over the file, and anything else leaves the file's choice.
+func TestAskModeFromEnvironmentAndConfig(t *testing.T) {
+	strict := &config.Config{Policy: config.Policy{Permissions: config.PermissionsStrict}}
+	def := &config.Config{}
+	env := func(v string) func(string) string { return func(string) string { return v } }
+	for _, tc := range []struct {
+		cfg  *config.Config
+		env  string
+		want agent.AskMode
+	}{
+		{def, "", agent.AskDestructive}, {strict, "", agent.AskRisky},
+		{def, "strict", agent.AskRisky}, {strict, "deletes_and_posts", agent.AskDestructive},
+		{strict, " STRICT ", agent.AskRisky}, {def, "nonsense", agent.AskDestructive},
+	} {
+		if got := askMode(tc.cfg, env(tc.env)); got != tc.want {
+			t.Errorf("env %q config %q: %v, want %v", tc.env, tc.cfg.Policy.Permissions, got, tc.want)
+		}
+	}
+}

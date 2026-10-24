@@ -69,6 +69,11 @@ type Gateway struct {
 	// retries them in the background.
 	OutboxPath string
 
+	// HeldPath, if set, keeps requests for permission there until the user answers, and Destructive says only
+	// deleting and posting ask; see chat.Engine.
+	HeldPath    string
+	Destructive bool
+
 	once sync.Once
 	eng  *chat.Engine
 }
@@ -84,6 +89,7 @@ func (g *Gateway) engine() *chat.Engine {
 			Backends: g.Backends, Prefs: g.Prefs, Permissions: g.Permissions,
 			Commands: g.Commands, OnUserMessage: g.OnUserMessage, StopBackground: g.StopBackground,
 			MessagesPerMinute: g.MessagesPerMinute,
+			HeldPath:          g.HeldPath, Destructive: g.Destructive,
 		}
 		if g.OutboxPath != "" {
 			g.eng.Outbox = &chat.Outbox{Path: g.OutboxPath}

@@ -71,6 +71,7 @@ type Finished struct {
 	Seconds int64     `json:"seconds"` // how long it worked
 	At      time.Time `json:"at"`
 	Stopped bool      `json:"stopped,omitempty"` // cut short when the agent was stopped, rather than finishing
+	Model   string    `json:"model,omitempty"`   // the model it used
 }
 
 const maxRecent = 30
@@ -95,6 +96,9 @@ type Hub struct {
 	Path     string   // where the conversation is kept between runs; "" keeps it in memory only
 	Notifier Notifier // may be nil
 	Now      func() time.Time
+	// Held, if set, says whether a question's token names a request still waiting, kept across restarts: such
+	// a question stays on the page as it was, rather than turning into one that expired.
+	Held func(token string) bool
 	// QuietAfter is how long a reply must stay unchanged before a notification is sent about it.
 	QuietAfter time.Duration
 
@@ -175,7 +179,9 @@ func (h *Hub) init() {
 		case m.Role == "tool" && m.State == "running":
 			m.State = "error"
 		case m.Role == "approval" && m.State == "pending":
-			m.State, m.Token = "expired", ""
+			if h.Held == nil || m.Token == "" || !h.Held(m.Token) {
+				m.State, m.Token = "expired", ""
+			}
 		}
 		h.msgs = append(h.msgs, m)
 		h.byID[m.ID] = m
@@ -523,7 +529,7 @@ func (h *Hub) SendApproval(_ context.Context, _ int64, text, token string, alway
 	h.init()
 	m := h.add(&Message{Role: "approval", Text: clip(text), State: "pending", Token: token, Always: always})
 	if h.Notifier != nil && h.awayLocked() {
-		go h.Notifier.Notify("Needs your OK", firstLine(text), "approval", "/#needs")
+		go h.Notifier.Notify("Needs your OK", firstLine(text), "approval", "/#agents")
 	}
 	return m.ID, nil
 }
@@ -541,6 +547,9 @@ func (h *Hub) setRunning(on bool) {
 	h.fan(Event{Seq: h.seq, Type: "run", On: on, Model: h.lastModel})
 	if on {
 		h.mainID = h.startLocked(activity.Main, "Talaria")
+		if w := h.workers[h.mainID]; w != nil {
+			w.Model = h.lastModel
+		}
 		return
 	}
 	// The run is over, so nothing it started is still going, and no tool is still running: whatever says
@@ -568,6 +577,21 @@ func (h *Hub) NoteModel(_ int64, model string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.lastModel = model
+	if w := h.workers[h.mainID]; w != nil && w.Model != model {
+		w.Model = model
+		h.pushAgents()
+	}
+}
+
+// SetModel says which model a worker uses (activity.Modeler).
+func (h *Hub) SetModel(id int64, model string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.init()
+	if w := h.workers[id]; w != nil && w.Model != model {
+		w.Model = model
+		h.pushAgents()
+	}
 }
 
 // Model is the model the latest task used, or "" before the first one.
@@ -597,7 +621,7 @@ func (h *Hub) finishLocked(w *activity.Worker, stopped bool) {
 	if w.Kind == activity.Main {
 		return
 	}
-	h.recent = append(h.recent, Finished{Kind: w.Kind, Label: w.Label, Seconds: int64(h.now().Sub(w.Since).Seconds()), At: h.now(), Stopped: stopped})
+	h.recent = append(h.recent, Finished{Kind: w.Kind, Label: w.Label, Seconds: int64(h.now().Sub(w.Since).Seconds()), At: h.now(), Stopped: stopped, Model: w.Model})
 	if len(h.recent) > maxRecent {
 		h.recent = append([]Finished(nil), h.recent[len(h.recent)-maxRecent:]...)
 	}

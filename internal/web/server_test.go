@@ -1398,7 +1398,7 @@ func TestThePageHasAnAgentsTabWithALiveBadge(t *testing.T) {
 			t.Errorf("the page lacks %s", want)
 		}
 	}
-	for _, want := range []string{"const TABS = ['chat', 'today', 'agents', 'needs', 'control', 'settings'];", "loadAgentsPage", "/api/agents", "agent-badge"} {
+	for _, want := range []string{"const TABS = ['chat', 'today', 'agents', 'settings'];", "loadAgentsPage", "/api/agents", "agent-badge"} {
 		if !strings.Contains(js, want) {
 			t.Errorf("the script lacks %q", want)
 		}
@@ -1456,6 +1456,144 @@ func TestTheChatThreadHasNothingThatMovesTheReader(t *testing.T) {
 			if strings.Contains(line, "thread.scrollTop =") || strings.Contains(line, "threadEl().scrollTop =") {
 				t.Errorf("the page scrolls the thread without recording it: %s", strings.TrimSpace(line))
 			}
+		}
+	}
+}
+
+// recorder is a model that keeps what the user last said to it.
+type recorder struct {
+	mu   sync.Mutex
+	seen []string
+}
+
+func (m *recorder) Chat(_ context.Context, req provider.Request) (provider.Message, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		if req.Messages[i].Role == provider.RoleUser {
+			m.seen = append(m.seen, req.Messages[i].Content)
+			break
+		}
+	}
+	return provider.Message{Role: provider.RoleAssistant, Content: "ok"}, nil
+}
+
+func (m *recorder) last() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.seen) == 0 {
+		return ""
+	}
+	return m.seen[len(m.seen)-1]
+}
+
+// "Also send the result to Telegram" reaches the agent as a request, out of sight, only where Telegram can be reached;
+// the conversation on the page shows what the person wrote.
+func TestSendAlsoToTelegramAsksTheAgentAndShowsNothingExtra(t *testing.T) {
+	r := newRig(t)
+	rec := &recorder{}
+	eng := &chat.Engine{T: r.hub, Allowed: map[int64]bool{UserID: true}, EditInterval: 5 * time.Millisecond,
+		NewAgent: func(_ int64, approve func(string, string) bool) *agent.Agent {
+			return &agent.Agent{Provider: rec, Model: "m", Tools: tool.NewRegistry(), MaxSteps: 2, Approve: approve}
+		}}
+	eng.Start(context.Background())
+	r.srv.Engine = eng
+	r.login()
+
+	if _, b := r.do("GET", "/api/state", nil); strings.Contains(string(b), `"telegram":true`) {
+		t.Fatalf("Telegram is offered where it cannot be reached: %s", b)
+	}
+	r.do("POST", "/api/send", map[string]any{"text": "research frogs", "telegram": true})
+	waitUntil(t, func() bool { return rec.last() != "" })
+	if strings.Contains(rec.last(), "telegram_notify") {
+		t.Fatalf("asked for Telegram where there is none: %q", rec.last())
+	}
+
+	r.srv.Telegram = true
+	if _, b := r.do("GET", "/api/state", nil); !strings.Contains(string(b), `"telegram":true`) {
+		t.Fatalf("Telegram is not offered: %s", b)
+	}
+	r.do("POST", "/api/send", map[string]any{"text": "research toads", "telegram": true})
+	waitUntil(t, func() bool { return strings.Contains(rec.last(), "toads") })
+	if got := rec.last(); !strings.HasPrefix(got, "research toads") || !strings.Contains(got, "telegram_notify") {
+		t.Fatalf("the agent was not asked to send the result: %q", got)
+	}
+	msgs, _, _ := r.state()
+	for _, m := range msgs {
+		if m.Role == "user" && strings.Contains(m.Text, "telegram_notify") {
+			t.Fatalf("the page shows the hidden request: %q", m.Text)
+		}
+	}
+	r.do("POST", "/api/send", map[string]any{"text": "plain one"})
+	waitUntil(t, func() bool { return strings.Contains(rec.last(), "plain one") })
+	if strings.Contains(rec.last(), "telegram_notify") {
+		t.Fatalf("a message sent without the toggle asked for Telegram: %q", rec.last())
+	}
+}
+
+func waitUntil(t *testing.T, ok func() bool) {
+	t.Helper()
+	for i := 0; i < 400; i++ {
+		if ok() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("timed out")
+}
+
+// Settings says which calls ask first, saves a change, says when it needs a restart, and refuses nonsense.
+func TestSettingsPermissionsModeRoundTrip(t *testing.T) {
+	r := newRig(t)
+	r.srv.Cfg = &config.Config{}
+	r.srv.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	r.srv.Permissions = config.PermissionsDeletesAndPosts
+	r.srv.Getenv = func(string) string { return "" }
+	r.login()
+
+	get := func() map[string]any {
+		_, b := r.do("GET", "/api/settings", nil)
+		var m map[string]any
+		json.Unmarshal(b, &m)
+		return m
+	}
+	if m := get(); m["permissions"] != "deletes_and_posts" || m["permissions_running"] != "deletes_and_posts" {
+		t.Fatalf("%v", m)
+	}
+	if resp, b := r.do("POST", "/api/settings", map[string]string{"permissions": "yolo"}); resp.StatusCode != 400 {
+		t.Fatalf("nonsense accepted: %d %s", resp.StatusCode, b)
+	}
+	if resp, b := r.do("POST", "/api/settings", map[string]string{"permissions": "deletes_and_posts"}); resp.StatusCode != 200 || strings.Contains(string(b), "restart_needed") {
+		t.Fatalf("no change needs no restart: %d %s", resp.StatusCode, b)
+	}
+	resp, b := r.do("POST", "/api/settings", map[string]string{"permissions": "strict"})
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "restart_needed") {
+		t.Fatalf("a change applies after a restart: %d %s", resp.StatusCode, b)
+	}
+	if m := get(); m["permissions"] != "strict" || m["permissions_running"] != "deletes_and_posts" {
+		t.Fatalf("%v", m)
+	}
+	raw, _ := os.ReadFile(r.srv.ConfigPath)
+	if !strings.Contains(string(raw), `"permissions": "strict"`) {
+		t.Fatalf("not saved: %s", raw)
+	}
+}
+
+// The page has four places, each with a reason: the old Needs You and Control screens are inside Agents and Settings.
+func TestThePageHasOnlyTheTabsThatEarnTheirPlace(t *testing.T) {
+	read := func(n string) string { b, _ := os.ReadFile(filepath.Join("static", n)); return string(b) }
+	html, js := read("index.html"), read("app.js")
+	if got := regexp.MustCompile(`data-tab="(\w+)"`).FindAllStringSubmatch(html, -1); len(got) != 4 {
+		t.Fatalf("the nav has %d tabs: %v", len(got), got)
+	}
+	for _, gone := range []string{`id="screen-needs"`, `id="screen-control"`, `data-tab="needs"`, `data-tab="control"`} {
+		if strings.Contains(html, gone) {
+			t.Errorf("the page still has %s", gone)
+		}
+	}
+	for _, want := range []string{"waitingSection", "historyCard", "who(w)", "SETTINGS_PAGES", "panePermissions", "paneModels", "tab === 'needs' || tab === 'control'", "renderTg"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("the script lacks %q", want)
 		}
 	}
 }

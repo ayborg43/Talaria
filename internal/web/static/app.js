@@ -38,6 +38,11 @@ const ICONS = {
   shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>',
   info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.01"/></svg>',
   eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></svg>',
+  cpu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="3"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/><rect x="10" y="10" width="4" height="4" rx="1"/></svg>',
+  lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="3"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
+  link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 18.7l1-1"/></svg>',
+  bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>',
+  user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>',
   chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="20" height="20"><path d="M9 6l6 6-6 6"/></svg>',
 };
 function icon(name) {
@@ -80,8 +85,8 @@ function toast(text) {
 // ---------- state ----------
 const S = {
   msgs: new Map(), order: [], epoch: 0, seq: 0, es: null, connected: false, running: false,
-  model: '', paused: false, zone: undefined, version: '', tab: 'chat', needs: 'wait',
-  today: null, control: null, blocks: new Map(), retry: 1000, installEvent: null,
+  model: '', paused: false, zone: undefined, version: '', tab: 'chat', sub: '', telegram: false, tgOn: false,
+  today: null, blocks: new Map(), retry: 1000, installEvent: null,
   pinned: true, ownTop: 0, smoothUntil: 0, lastUserScroll: 0, dirty: false, flushTimer: 0,
   agents: [], agentsAt: 0,
 };
@@ -181,21 +186,24 @@ function groupBlocks() {
 function parseAsk(text) {
   const first = text.split('\n')[0];
   const fence = /```[^\n]*\n([\s\S]*?)\n```/.exec(text);
-  let note = fence ? text.slice(fence.index + fence[0].length).trim() : '';
-  let code = fence ? fence[1] : text.slice(first.length).trim();
-  return { title: first, code, note };
+  const before = fence ? text.slice(first.length, fence.index).trim() : '';
+  const after = fence ? text.slice(fence.index + fence[0].length).trim() : '';
+  const code = fence ? fence[1] : text.slice(first.length).trim();
+  return { title: first, code, why: before, note: after };
 }
 
 function askCard(m, opts = {}) {
-  const { title, code, note } = parseAsk(m.text);
+  const { title, code, why, note } = parseAsk(m.text);
   const pending = m.state === 'pending';
   const card = h('div', { class: 'ask' + (pending ? '' : ' done') });
   card.append(h('div', { class: 'ask-head' },
     h('span', { class: 'ask-icon' }, icon('shield')),
     h('span', { class: 'ask-title', text: title }),
     pending && h('span', { class: 'pill brass', text: 'WAITING' })));
+  if (why) card.append(h('div', { class: 'ask-why', text: why }));
   if (code) card.append(h('div', { class: 'code', text: code }));
   if (pending) {
+    if (note) card.append(h('div', { class: 'note', text: note }));
     const answer = async (choice, btns) => {
       btns.forEach((b) => (b.disabled = true));
       try { await api('/api/approve', { method: 'POST', body: { token: m.token, choice } }); }
@@ -205,7 +213,7 @@ function askCard(m, opts = {}) {
     const mk = (label, cls, choice) => { const b = h('button', { class: 'btn ' + cls, type: 'button', text: label, onclick: () => answer(choice, btns) }); btns.push(b); return b; };
     card.append(h('div', { class: 'btn-row' }, mk('Deny', '', 'deny'), m.always && mk('Always', '', 'always'), mk('Allow', 'primary', 'allow')));
   } else {
-    const v = { allowed: ['ok', 'Allowed'], always: ['ok', 'Allowed, and always allowed'], denied: ['bad', 'Denied'], expired: ['quiet', note || 'No longer waiting'] }[m.state] || ['quiet', m.state];
+    const v = { allowed: ['ok', 'Allowed'], always: ['ok', 'Allowed, and always allowed'], denied: ['bad', 'Denied'], expired: ['quiet', 'No longer waiting'] }[m.state] || ['quiet', m.state];
     card.append(h('div', { class: 'verdict ' + v[0] }, icon(v[0] === 'bad' ? 'x' : v[0] === 'ok' ? 'check' : 'info'), v[1]));
   }
   return card;
@@ -367,15 +375,15 @@ function renderChrome() {
   $('#status-text').textContent = !S.connected ? 'Reconnecting…' : S.paused ? 'Paused · chat still works'
     : count > 1 ? `${count} agents working` : busy ? 'Working…' : 'Online' + (S.model ? ' · ' + S.model : '');
   const n = pendingAsks().length;
-  const badge = $('#badge'); badge.hidden = n === 0; badge.textContent = String(n);
-  const ab = $('#agent-badge'); ab.hidden = S.agents.length === 0; ab.textContent = String(S.agents.length);
+  const ab = $('#agent-badge');
+  ab.hidden = n === 0 && S.agents.length === 0; ab.textContent = String(n || S.agents.length); ab.classList.toggle('work', n === 0);
   const hasText = $('#input').value.trim().length > 0;
   $('#send').hidden = run && !hasText;
   $('#stop').hidden = !(run && !hasText);
   $('#send').disabled = !hasText;
   $('#quick').hidden = run || hasText;
   document.title = n ? `(${n}) Talaria` : 'Talaria';
-  if (S.tab === 'needs') renderNeeds();
+  if (S.tab === 'agents') { const sig = n + '|' + S.agents.length; if (sig !== S.agentsSig) { S.agentsSig = sig; renderAgentsPage(); } }
 }
 
 // ---------- who is working ----------
@@ -399,6 +407,7 @@ function renderAgents() {
     h('span', { class: 'pulse', 'aria-hidden': 'true' }),
     h('span', { class: 'k ' + w.kind, text: KINDS[w.kind] || w.kind.toUpperCase() }),
     h('span', { class: 'l', text: w.label }),
+    w.kind !== 'main' && w.model ? h('span', { class: 'm', text: w.model }) : null,
     h('span', { class: 'd', text: doingText(w) }),
     h('span', { class: 'tick', text: elapsed(w) }))));
 }
@@ -408,13 +417,16 @@ setInterval(() => {
   for (const w of S.agents) for (const t of $$(`[data-id="${w.id}"] .tick`)) t.textContent = elapsed(w);
 }, 1000);
 
+const who = (w) => (w.kind === 'main' ? 'Main agent' : 'Agent #' + w.id);
 function nowCard() {
-  const card = h('div', { class: 'card', id: 'now' }, h('h2', null, 'Working Now', h('small', { text: S.agents.length ? S.agents.length + ' running' : '' })));
+  const card = h('div', { class: 'card', id: 'now' }, h('h2', null, 'Working now', h('small', { text: S.agents.length ? S.agents.length + ' running' : '' })));
   if (!S.agents.length) { card.append(h('div', { class: 'empty', text: 'Nothing is working right now.' })); return card; }
   const rows = h('div', { class: 'rows' });
   for (const w of S.agents) {
     rows.append(h('div', { class: 'row', 'data-id': w.id }, h('span', { class: 'k ' + w.kind, text: KINDS[w.kind] || w.kind.toUpperCase() }),
-      h('span', { class: 'grow' }, h('span', { class: 't', text: w.label }), h('span', { class: 's mono', text: doingText(w) })),
+      h('span', { class: 'grow' }, h('span', { class: 't', text: w.label }),
+        h('span', { class: 's mono', text: [who(w), w.model].filter(Boolean).join(' · ') }),
+        h('span', { class: 's mono', text: doingText(w) })),
       h('span', { class: 'when tick', text: elapsed(w) })));
   }
   card.append(rows);
@@ -422,38 +434,101 @@ function nowCard() {
 }
 function updateNow() { const el = $('#now'); if (el && S.tab === 'agents') keepScroll(el, () => el.replaceWith(nowCard())); }
 
-// The Agents screen: who is working, what is set up to run on its own, and what has finished lately.
-let recentAgents = [], standing = [];
+// The Agents screen: what waits for you, who is working, what is set up to run on its own, what has finished, and
+// the switch that stops it all.
+let recentAgents = [], standing = [], ctl = null;
 async function loadAgentsPage() {
-  if (!$('#now')) $('#agents-body').replaceChildren(h('div', { class: 'skeleton' }));
-  try { const d = await api('/api/agents'); recentAgents = d.recent || []; standing = d.jobs || []; }
-  catch (e) { if (e instanceof AuthError) return; toast(e.message); }
+  const body = $('#agents-body');
+  if (!body.children.length) body.replaceChildren(h('div', { class: 'skeleton' }));
+  try {
+    const [d, c] = await Promise.all([api('/api/agents'), api('/api/control')]);
+    recentAgents = d.recent || []; standing = d.jobs || []; ctl = c; S.paused = c.paused;
+  } catch (e) { if (e instanceof AuthError) return; toast(e.message); }
   renderAgentsPage();
 }
 function ago(iso) {
   const s = Math.max(0, Math.round((Date.now() - new Date(iso)) / 1000));
   return s < 60 ? 'just now' : s < 3600 ? Math.floor(s / 60) + ' min ago' : s < 86400 ? Math.floor(s / 3600) + ' h ago' : fmtDay(new Date(iso));
 }
+function duration(sec) { return sec < 60 ? sec + 's' : Math.floor(sec / 60) + 'm ' + (sec % 60) + 's'; }
+const ASK_POLICY = {
+  deletes_and_posts: 'Talaria asks before deleting anything or posting on social media. Everything else it just does.',
+  strict: 'Talaria asks before running commands, changing files or sending anything out.',
+};
+function waitingSection() {
+  const pend = pendingAsks();
+  const card = h('div', { class: 'card wait' + (pend.length ? ' has' : '') }, h('h2', null, 'Waiting for you', h('small', { text: pend.length ? pend.length + ' to answer' : '' })));
+  if (!pend.length) {
+    card.append(h('div', { class: 'empty', text: 'Nothing is waiting for you.' }), h('div', { class: 'note center', text: ASK_POLICY[ctl && ctl.permissions] || ASK_POLICY.deletes_and_posts }));
+    return card;
+  }
+  card.append(h('div', { class: 'note', text: 'These are saved. Answer whenever you like: the work carries on from where it stopped.' }));
+  pend.forEach((m) => card.append(askCard(m)));
+  return card;
+}
+function historyCard() {
+  const done = S.order.map((id) => S.msgs.get(id)).filter((m) => m.role === 'approval' && m.state !== 'pending').reverse().slice(0, 40);
+  if (!done.length) return null;
+  const rows = h('div', { class: 'rows' });
+  for (const m of done) {
+    const bad = m.state === 'denied', expired = m.state === 'expired';
+    const mark = h('span', { class: 'mark ' + (bad ? 'bad' : expired ? 'quiet' : 'ok') }, icon(bad ? 'x' : expired ? 'info' : 'check'));
+    rows.append(h('div', { class: 'row' }, mark,
+      h('span', { class: 'grow' }, h('span', { class: 't', text: parseAsk(m.text).title }), h('span', { class: 's', text: { allowed: 'You allowed it', always: 'You always allow it', denied: 'You denied it', expired: 'It ran out of time' }[m.state] })),
+      h('span', { class: 'when', text: fmtWhen(new Date(m.at)) })));
+  }
+  const d = h('details', { class: 'card fold' }, h('summary', null, h('span', { class: 'display', text: 'Answered lately' }), h('small', { text: String(done.length) })), rows);
+  if (S.historyOpen) d.setAttribute('open', '');
+  d.addEventListener('toggle', () => { S.historyOpen = d.open; });
+  return d;
+}
+function activityCard() {
+  if (!ctl || !ctl.activity) return null;
+  const max = Math.max(1, ...ctl.activity), total = ctl.activity.reduce((a, b) => a + b, 0);
+  const bars = h('div', { class: 'bars', role: 'img', 'aria-label': `Activity over the last 24 hours: ${total} actions` });
+  ctl.activity.forEach((v, i) => { const b = h('i', { class: i === ctl.activity.length - 1 ? 'now' : '' }); b.style.height = Math.max(5, (v / max) * 100) + '%'; bars.append(b); });
+  return h('div', { class: 'card' }, h('h2', null, 'Activity', h('small', { text: total + ' actions in 24 h' })), bars, h('div', { class: 'chart-f' }, h('span', { text: '24 h ago' }), h('span', { text: 'now' })));
+}
 function renderAgentsPage() {
   if (S.tab !== 'agents') return;
-  const out = [nowCard()];
-  out.push(standing.length ? jobsCard(standing, 'Set Up to Run on Their Own')
-    : h('div', { class: 'card' }, h('h2', null, 'Set Up to Run on Their Own'), h('div', { class: 'empty', text: 'Nothing yet. Ask me for a reminder, a watch on your mail, or a goal to work on, and it will show here.' })));
-  const card = h('div', { class: 'card' }, h('h2', null, 'Finished Lately'));
-  if (!recentAgents.length) card.append(h('div', { class: 'empty', text: 'Helpers and background work that finish will be listed here.' }));
+  renderPause();
+  const out = [waitingSection(), nowCard()];
+  out.push(standing.length ? jobsCard(standing, 'Set up to run on their own')
+    : h('div', { class: 'card' }, h('h2', null, 'Set up to run on their own'), h('div', { class: 'empty', text: 'Nothing yet. Ask for a reminder, a watch on your mail, or a goal to work on, and it will show here.' })));
+  const fin = h('div', { class: 'card' }, h('h2', null, 'Finished lately'));
+  if (!recentAgents.length) fin.append(h('div', { class: 'empty', text: 'Helpers and background work that finish will be listed here.' }));
   else {
     const rows = h('div', { class: 'rows' });
     for (const f of recentAgents.slice(0, 15)) {
       rows.append(h('div', { class: 'row' }, h('span', { class: 'k ' + f.kind, text: KINDS[f.kind] || f.kind.toUpperCase() }),
-        h('span', { class: 'grow' }, h('span', { class: 't', text: f.label }), h('span', { class: 's', text: (f.stopped ? 'Stopped after ' : 'Took ') + (f.seconds < 60 ? f.seconds + 's' : Math.floor(f.seconds / 60) + 'm ' + (f.seconds % 60) + 's') })),
+        h('span', { class: 'grow' }, h('span', { class: 't', text: f.label }), h('span', { class: 's', text: (f.stopped ? 'Stopped after ' : 'Took ') + duration(f.seconds) + (f.model ? ' · ' + f.model : '') })),
         h('span', { class: 'when', text: ago(f.at) })));
     }
-    card.append(rows);
+    fin.append(rows);
   }
-  out.push(card);
+  out.push(fin);
+  const hist = historyCard(); if (hist) out.push(hist);
+  const act = activityCard(); if (act) out.push(act);
   const agentsBody = $('#agents-body');
   keepScroll(agentsBody, () => agentsBody.replaceChildren(...out));
 }
+let pauseArmed = false, pauseTimer;
+function renderPause() {
+  const b = $('#pause-btn');
+  if (!ctl) { b.hidden = true; return; }
+  b.hidden = false;
+  b.className = 'pause' + (S.paused ? ' on' : pauseArmed ? ' armed' : '');
+  b.textContent = S.paused ? 'Resume' : pauseArmed ? 'Tap again to pause' : 'Pause all';
+  $('#agents-sub').textContent = S.paused ? 'Paused: goals, watches and reminders are held until you resume. Chat still works.' : 'Who is working for you, and what is waiting for your OK.';
+}
+$('#pause-btn').addEventListener('click', async () => {
+  if (!S.paused && !pauseArmed) { pauseArmed = true; clearTimeout(pauseTimer); pauseTimer = setTimeout(() => { pauseArmed = false; renderPause(); }, 4000); renderPause(); return; }
+  pauseArmed = false; $('#pause-btn').disabled = true;
+  try { const r = await api('/api/pause', { method: 'POST', body: { paused: !S.paused } }); S.paused = r.paused; }
+  catch (e) { if (!(e instanceof AuthError)) toast(e.message); }
+  $('#pause-btn').disabled = false;
+  loadAgentsPage(); renderChrome();
+});
 
 // ---------- composer ----------
 const input = $('#input');
@@ -464,7 +539,7 @@ input.addEventListener('keydown', (e) => {
 });
 // Messages written while unreachable wait here, in memory only — the page
 // keeps nothing on the phone — and go out in order once the server answers.
-let outbox = [];
+let outbox = []; // {text, telegram}
 let flushing = false, flushAgain = false;
 async function flushOutbox() {
   if (flushing) { flushAgain = true; return; } // a trigger mid-flush buys one more pass, so nothing waits on a lost wakeup
@@ -474,7 +549,7 @@ async function flushOutbox() {
     flushAgain = false;
     let sent = 0;
     while (outbox.length) {
-      try { await api('/api/send', { method: 'POST', body: { text: outbox[0] } }); }
+      try { await api('/api/send', { method: 'POST', body: outbox[0] }); }
       catch { break; } // still unreachable (a 401 also shows the sign-in); the rest waits
       outbox.shift(); sent++;
     }
@@ -483,14 +558,14 @@ async function flushOutbox() {
   flushing = false;
 }
 
-async function sendText(text) {
+async function sendText(text, telegram = false) {
   text = text.trim();
   if (!text) return;
-  try { await api('/api/send', { method: 'POST', body: { text } }); }
+  try { await api('/api/send', { method: 'POST', body: { text, telegram: telegram || undefined } }); }
   catch (e) {
     if (e instanceof AuthError) return false;
     if (!navigator.onLine || e.message === 'You appear to be offline.') {
-      outbox.push(text);
+      outbox.push({ text, telegram: telegram || undefined });
       toast(outbox.length === 1 ? 'It will send when you are back online.' : `${outbox.length} messages will send when you are back online.`);
       return true; // queued, so the composer does not put it back
     }
@@ -503,9 +578,19 @@ $('#composer').addEventListener('submit', async (e) => {
   e.preventDefault();
   const text = input.value;
   if (!text.trim()) return;
+  const viaTelegram = S.tgOn;
   input.value = ''; autosize(); renderChrome();
-  if (!(await sendText(text))) { input.value = text; autosize(); renderChrome(); }
+  if (await sendText(text, viaTelegram)) { S.tgOn = false; renderTg(); }
+  else { input.value = text; autosize(); renderChrome(); }
 });
+// "Also send the result to Telegram": for the next message only, where the agent can reach Telegram.
+const tg = $('#tg');
+function renderTg() {
+  tg.hidden = !S.telegram;
+  tg.setAttribute('aria-pressed', String(S.tgOn)); tg.classList.toggle('on', S.tgOn);
+  input.placeholder = S.tgOn ? 'Also to Telegram…' : 'Message Talaria';
+}
+tg.addEventListener('click', () => { S.tgOn = !S.tgOn; renderTg(); input.focus(); });
 $('#stop').addEventListener('click', () => sendText('/stop'));
 $('#new-chat').addEventListener('click', () => { if (confirm('Start a new conversation? Talaria forgets this one (your notes and history stay).')) sendText('/new'); });
 for (const q of ["What's on today?", 'Summarise my inbox', 'What are you watching for me?']) {
@@ -533,6 +618,7 @@ async function loadState() {
   for (const m of d.messages) upsert(m);
   setAgents(d.agents);
   S.epoch = d.epoch; S.seq = d.seq; S.running = d.running; S.model = d.model; S.paused = d.paused; S.version = d.version;
+  S.telegram = !!d.telegram; renderTg();
   S.zone = d.zone || S.zone;
   if (!S.order.length) S.pinned = true; // a conversation that starts again starts at its bottom
   // Nothing is torn down: messages that are unchanged keep their elements, so the reader's place survives a reconnect.
@@ -566,17 +652,18 @@ async function reconnect() {
 }
 
 // ---------- tabs ----------
-const TABS = ['chat', 'today', 'agents', 'needs', 'control', 'settings'];
+const TABS = ['chat', 'today', 'agents', 'settings'];
 function route() {
-  const tab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'chat';
+  let [tab, sub = ''] = location.hash.slice(1).split('/');
+  if (tab === 'needs' || tab === 'control') tab = 'agents'; // those screens live there now
+  if (!TABS.includes(tab)) tab = 'chat';
   S.tab = tab;
+  S.sub = tab === 'settings' && SETTINGS_PAGES.some((p) => p.id === sub) ? sub : '';
   for (const t of TABS) $('#screen-' + t).hidden = t !== tab;
   $$('#tabs a').forEach((a) => (a.getAttribute('data-tab') === tab ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
   if (tab === 'today') loadToday();
   if (tab === 'agents') loadAgentsPage();
-  if (tab === 'settings') loadSettings();
-  if (tab === 'needs') renderNeeds();
-  if (tab === 'control') loadControl();
+  if (tab === 'settings') { if (S.settings) renderSettings(); loadSettings(); }
   if (tab === 'chat') { S.pinned = true; toBottom(); }
 }
 window.addEventListener('hashchange', route);
@@ -604,7 +691,7 @@ function renderToday() {
   $('#today-date').textContent = new Intl.DateTimeFormat([], { weekday: 'long', day: 'numeric', month: 'long', timeZone: S.zone }).format(now);
   const out = [];
   const n = pendingAsks().length;
-  if (n) out.push(h('a', { class: 'alert-card', href: '#needs' }, h('span', { class: 'ask-icon' }, icon('shield')),
+  if (n) out.push(h('a', { class: 'alert-card', href: '#agents' }, h('span', { class: 'ask-icon' }, icon('shield')),
     h('span', { class: 'grow' }, h('b', { text: n === 1 ? '1 thing needs your OK' : n + ' things need your OK' })), icon('chev')));
 
   // calendar
@@ -649,7 +736,6 @@ function renderToday() {
     out.push(card);
   }
 
-  if (d.jobs && d.jobs.length) out.push(jobsCard(d.jobs));
   const todayBody = $('#today-body');
   keepScroll(todayBody, () => todayBody.replaceChildren(...out));
 }
@@ -689,94 +775,14 @@ function jobsCard(jobs, title = 'Working for You') {
   return card;
 }
 
-// ---------- needs you ----------
-$('#seg-wait').addEventListener('click', () => { S.needs = 'wait'; renderNeeds(); });
-$('#seg-hist').addEventListener('click', () => { S.needs = 'hist'; renderNeeds(); });
-function renderNeeds() {
-  if (S.tab !== 'needs') return;
-  const pend = pendingAsks();
-  $('#seg-wait').textContent = 'Waiting · ' + pend.length; $('#seg-wait').setAttribute('aria-selected', S.needs === 'wait');
-  $('#seg-hist').setAttribute('aria-selected', S.needs === 'hist');
-  const out = [];
-  if (S.needs === 'wait') {
-    out.push(h('div', { class: 'banner' }, icon('info'), h('span', { text: 'Text from mail, calendars and the web is written by other people and can try to give orders. So whatever could send something out, or run a command, asks you first.' })));
-    if (!pend.length) out.push(h('div', { class: 'card empty' }, h('div', { text: 'Nothing is waiting for you.' }), h('div', { class: 'note', text: 'I will tell you here, and with a notification if you turn them on, when something needs your OK.' })));
-    pend.forEach((m) => out.push(askCard(m)));
-  } else {
-    const done = S.order.map((id) => S.msgs.get(id)).filter((m) => m.role === 'approval' && m.state !== 'pending').reverse().slice(0, 40);
-    if (!done.length) out.push(h('div', { class: 'card empty', text: 'Nothing decided yet.' }));
-    else {
-      const rows = h('div', { class: 'rows' });
-      for (const m of done) {
-        const bad = m.state === 'denied', expired = m.state === 'expired';
-        const mark = h('span', { class: 'avatar' }, icon(bad ? 'x' : expired ? 'info' : 'check'));
-        mark.style.width = mark.style.height = '30px'; mark.style.borderRadius = '99px';
-        mark.style.background = bad ? 'var(--bad-tint)' : expired ? 'var(--line2)' : 'var(--ok-tint)'; mark.style.color = bad ? 'var(--bad)' : expired ? 'var(--muted)' : 'var(--ok)';
-        rows.append(h('div', { class: 'row' }, mark,
-          h('span', { class: 'grow' }, h('span', { class: 't', text: parseAsk(m.text).title }), h('span', { class: 's', text: { allowed: 'You allowed it', always: 'You always allow it', denied: 'You denied it', expired: 'It ran out of time' }[m.state] })),
-          h('span', { class: 'when', text: fmtWhen(new Date(m.at)) })));
-      }
-      out.push(h('div', { class: 'card' }, rows));
-    }
-  }
-  const needsBody = $('#needs-body');
-  keepScroll(needsBody, () => needsBody.replaceChildren(...out));
-}
-
-// ---------- control ----------
-async function loadControl() {
-  try { S.control = await api('/api/control'); S.paused = S.control.paused; }
-  catch (e) { if (!(e instanceof AuthError)) toast(e.message); return; }
-  renderControl();
-}
-function uptime(sec) {
-  const d = Math.floor(sec / 86400), hh = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
-  return d ? `${d} d ${hh} h` : hh ? `${hh} h ${m} min` : `${m} min`;
-}
-let pauseArmed = false, pauseTimer;
-async function renderControl() {
-  const c = S.control; if (!c || S.tab !== 'control') return;
-  const out = [];
-  const health = h('div', { class: 'health' + (c.paused ? ' paused' : '') });
-  health.append(h('div', { class: 'health-top' }, h('span', { class: 'light' }),
-    h('span', { class: 'grow' }, h('span', { class: 't', text: c.paused ? 'Paused' : 'All systems normal' }),
-      h('span', { class: 's', text: c.paused ? 'Goals, watches and reminders are held until you resume' : `Up ${uptime(c.uptimeSec)} · ${c.model || 'model'}` }))));
-  const max = Math.max(1, ...c.activity), total = c.activity.reduce((a, b) => a + b, 0);
-  const bars = h('div', { class: 'bars', role: 'img', 'aria-label': `Activity over the last 24 hours: ${total} actions` });
-  c.activity.forEach((v, i) => { const b = h('i', { class: i === c.activity.length - 1 ? 'now' : '' }); b.style.height = Math.max(5, (v / max) * 100) + '%'; b.style.animationDelay = i * 15 + 'ms'; bars.append(b); });
-  health.append(h('div', null, h('div', { class: 'chart-h' }, h('span', { text: 'ACTIVITY · LAST 24 H' }), h('span', { text: total + ' actions' })), bars, h('div', { class: 'chart-f' }, h('span', { text: '24 h ago' }), h('span', { text: 'now' }))));
-  const btn = h('button', { class: 'btn big ' + (c.paused ? 'primary' : 'danger'), type: 'button', text: c.paused ? 'Resume everything' : pauseArmed ? 'Tap again to pause everything' : 'Pause everything' });
-  btn.addEventListener('click', async () => {
-    if (!c.paused && !pauseArmed) { pauseArmed = true; clearTimeout(pauseTimer); pauseTimer = setTimeout(() => { pauseArmed = false; renderControl(); }, 4000); renderControl(); return; }
-    pauseArmed = false; btn.disabled = true;
-    try { const r = await api('/api/pause', { method: 'POST', body: { paused: !c.paused } }); S.paused = r.paused; }
-    catch (e) { if (!(e instanceof AuthError)) toast(e.message); }
-    loadControl(); renderChrome();
-  });
-  health.append(btn);
-  out.push(health);
-
-  out.push(await notifyCard(c));
-  if (c.jobs.length) out.push(jobsCard(c.jobs));
-  else out.push(h('div', { class: 'card' }, h('h2', null, 'Working for You'), h('div', { class: 'empty', text: 'No goals, watches or reminders yet. Ask me in chat.' })));
-  if (c.links.length) {
-    const rows = h('div', { class: 'rows' });
-    for (const l of c.links) rows.append(h('div', { class: 'row' }, h('span', { class: 'link-dot' }), h('span', { class: 'grow' }, h('span', { class: 't', text: l.name }), h('span', { class: 's mono', text: l.detail })), h('span', { class: 'pill info', text: l.tag })));
-    out.push(h('div', { class: 'card' }, h('h2', null, 'Connected'), rows));
-  }
-  const inst = installCard(); if (inst) out.push(inst);
-  out.push(h('button', { class: 'btn big', type: 'button', text: 'Sign out', onclick: async () => { try { await api('/api/logout', { method: 'POST' }); } catch { /* signed out anyway */ } showLogin(); } }));
-  out.push(h('div', { class: 'foot', text: 'Talaria ' + (c.version || '') }));
-  const controlBody = $('#control-body');
-  keepScroll(controlBody, () => controlBody.replaceChildren(...out));
-}
-
 // ---------- settings ----------
 let settingsEditing = null;
 
 async function loadSettings() {
-  try { S.settings = await api('/api/settings'); }
-  catch (e) { if (!(e instanceof AuthError)) toast(e.message); return; }
+  try {
+    const [st, c] = await Promise.all([api('/api/settings'), api('/api/control')]);
+    S.settings = st; ctl = c; S.paused = c.paused;
+  } catch (e) { if (!(e instanceof AuthError)) toast(e.message); return; }
   renderSettings();
 }
 
@@ -854,7 +860,7 @@ function editProfile(name) {
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn primary big', type: 'button', text: 'Save', onclick: saveProfile }),
       h('button', { class: 'btn big', type: 'button', text: 'Cancel', onclick: () => { settingsEditing = null; renderSettings(); } })));
-  const editBody = $('#settings-body');
+  const editBody = $('#settings-pane');
   keepScroll(editBody, () => editBody.replaceChildren(form));
 }
 
@@ -864,7 +870,7 @@ function presetBar() {
   for (const pr of S.settings.presets || []) {
     bar.append(h('button', {
       type: 'button', text: pr.label, onclick: (e) => {
-        $$('#settings-body .presets button').forEach((b) => b.classList.toggle('on', b === e.currentTarget));
+        $$('#settings-pane .presets button').forEach((b) => b.classList.toggle('on', b === e.currentTarget));
         const fill = (id, v) => { if (v) $('#' + id).value = v; };
         fill('prof-type', pr.type); fill('prof-baseurl', pr.base_url); fill('prof-model', pr.model); fill('prof-apikeyenv', pr.key_env);
         const name = $('#prof-name');
@@ -892,7 +898,7 @@ function newProfileForm() {
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn primary big', type: 'button', text: 'Add', onclick: saveProfile }),
       h('button', { class: 'btn big', type: 'button', text: 'Cancel', onclick: () => { settingsEditing = null; renderSettings(); } })));
-  const newBody = $('#settings-body');
+  const newBody = $('#settings-pane');
   keepScroll(newBody, () => newBody.replaceChildren(form));
 }
 
@@ -905,7 +911,7 @@ async function saveProfile() {
     model: $('#prof-model').value.trim() || undefined,
     api_key_env: $('#prof-apikeyenv').value.trim() || undefined,
     api_key: $('#prof-apikey').value.trim() || undefined,
-    best_for: $$('#settings-body input[name="best-for"]:checked').map((el) => el.value),
+    best_for: $$('#settings-pane input[name="best-for"]:checked').map((el) => el.value),
   };
   try {
     await api('/api/settings', { method: 'POST', body });
@@ -1004,7 +1010,7 @@ function editCalendar(name) {
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: () => saveCalendar('edit', name) }),
       h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: renderSettings })));
-  const body = $('#settings-body');
+  const body = $('#settings-pane');
   keepScroll(body, () => { body.replaceChildren(form); });
 }
 
@@ -1079,35 +1085,131 @@ async function saveChatToken() {
   loadSettings();
 }
 
-function renderSettings() {
-  const s = S.settings; if (!s || S.tab !== 'settings') return;
-  const out = [];
+function uptime(sec) {
+  const d = Math.floor(sec / 86400), hh = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+  return d ? `${d} d ${hh} h` : hh ? `${hh} h ${m} min` : `${m} min`;
+}
 
-  // Default Key info
-  out.push(h('div', { class: 'card' },
-    h('h2', null, 'Default Key'),
-    h('div', null,
-      s.has_default_key ? h('span', { class: 'pill info', text: s.default_key_env + ' is set' }) : h('span', { class: 'pill', text: 'no default key set' }),
-      h('div', { class: 'field-note', text: 'Set TALARIA_API_KEY in your server environment to use the default profile without a config file.' })),
-    h('button', { class: 'btn big', type: 'button', text: 'Add AI Profile', onclick: newProfileForm })));
-
-  // Profiles
-  const profiles = s.profiles || [];
-  if (profiles.length) {
-    out.push(h('h2', null, 'Profiles'));
-    for (const p of profiles) out.push(profileNameCard(p));
-  } else {
-    out.push(h('div', { class: 'card' }, h('h2', null, 'Profiles'), h('div', { class: 'empty', text: 'No profiles configured yet. Add one below.' })));
+const SETTINGS_PAGES = [
+  { id: 'models', title: 'AI models', icon: 'cpu', sub: 'Which models work for you, and when each is used.' },
+  { id: 'permissions', title: 'Permissions', icon: 'lock', sub: 'When Talaria has to ask you first.' },
+  { id: 'connections', title: 'Connections', icon: 'link', sub: 'Email, calendars and chat apps.' },
+  { id: 'notifications', title: 'Notifications', icon: 'bell', sub: 'Hear from it when the app is closed.' },
+  { id: 'about', title: 'About & account', icon: 'user', sub: 'Status, installing, and signing out.' },
+];
+function settingsSummary(id) {
+  const s = S.settings || {}, c = ctl || {};
+  switch (id) {
+    case 'models': {
+      const ps = s.profiles || [], cur = ps.find((p) => p.active) || ps.find((p) => p.default);
+      return (cur && cur.model ? cur.model : S.model || 'Not set') + (ps.length > 1 ? ' · ' + ps.length + ' profiles' : '');
+    }
+    case 'permissions': return s.permissions === 'strict' ? 'Asks before anything risky' : 'Asks only to delete or post';
+    case 'connections': {
+      const on = [];
+      if (s.email && s.email.available) on.push('Email');
+      if ((s.calendars || []).some((x) => !x.builtin)) on.push('Calendars');
+      for (const ch of s.chats || []) if (ch.connected) on.push(chatName(ch.service));
+      return on.length ? on.join(', ') : 'Nothing connected yet';
+    }
+    case 'notifications': return { on: 'On for this device', off: 'Off', denied: 'Blocked in the browser', unsupported: 'Not supported here', 'needs-install': 'Add the app to your Home Screen first' }[S.push] || '';
+    case 'about': return 'Talaria ' + (c.version || S.version || '');
   }
+  return '';
+}
 
-  // Connections: mail, calendars, chat services
-  out.push(h('h2', null, 'Connections'));
-  out.push(emailCard());
-  out.push(calendarsCard());
-  out.push(chatsCard());
+function paneModels(s) {
+  const out = [], ps = s.profiles || [];
+  const cur = ps.find((p) => p.active) || ps.find((p) => p.default);
+  const usable = ps.filter((p) => p.available);
+  out.push(h('div', { class: 'card' }, h('h2', null, 'How models are used'),
+    h('div', { class: 'field-note', text: 'Main agent: ' + (cur ? cur.name + (cur.model ? ' (' + cur.model + ')' : '') : S.model || 'the default model') + '.' }),
+    h('div', { class: 'field-note', text: usable.length > 1
+      ? 'Each message can go to the profile that suits it: one marked Code for programming, one marked Cheap & fast for quick questions. Helpers can be given any profile too, so a cheap model does the lookups while a strong one does the thinking. The Agents screen shows which model each is using.'
+      : 'Add a second profile and Talaria can use a cheap model for quick jobs and a strong one for hard ones, and hand lookups to helpers on a cheaper model.' })));
+  for (const p of ps) out.push(profileNameCard(p));
+  if (!ps.length) out.push(h('div', { class: 'card' }, h('h2', null, 'Profiles'), h('div', { class: 'empty', text: (S.model ? S.model + ' comes from the server settings. ' : '') + 'Add a profile to keep more than one model and switch between them.' })));
+  out.push(h('button', { class: 'btn big', type: 'button', text: 'Add an AI profile', onclick: newProfileForm }));
+  out.push(h('div', { class: 'field-note', text: s.has_default_key ? s.default_key_env + ' is set, so the default profile works without a config file.' : 'Set TALARIA_API_KEY in your server environment to use the default profile without a config file.' }));
+  return out;
+}
 
-  const settingsBody = $('#settings-body');
-  keepScroll(settingsBody, () => settingsBody.replaceChildren(...out));
+async function savePermissions(mode) {
+  try {
+    const d = await api('/api/settings', { method: 'POST', body: { permissions: mode } });
+    toast(d.restart_needed ? 'Saved. It applies after Talaria restarts.' : 'Saved.');
+  } catch (e) { if (!(e instanceof AuthError)) toast(e.message); }
+  loadSettings();
+}
+function panePermissions(s) {
+  const opt = (id, title, text) => h('label', { class: 'opt' + (s.permissions === id ? ' on' : '') },
+    h('input', { type: 'radio', name: 'perm', value: id, checked: s.permissions === id, onchange: () => savePermissions(id) }),
+    h('span', { class: 'grow' }, h('b', { text: title }), h('span', { class: 's', text })));
+  const out = [h('div', { class: 'card' }, h('h2', null, 'When Talaria asks you first'),
+    opt('deletes_and_posts', 'Only to delete or to post', 'It runs commands, edits files, browses and sends you messages without asking. It asks before it deletes anything, and before it posts on social media.'),
+    opt('strict', 'Before anything risky', 'It also asks before running commands, writing files, changing schedules, and sending anything out after it has read mail or the web.'))];
+  if (s.permissions_env) out[0].append(h('div', { class: 'field-note', text: 'TALARIA_PERMISSIONS is set on the server, and it wins over this choice.' }));
+  else if (s.permissions !== s.permissions_running) out[0].append(h('div', { class: 'field-note', text: 'Saved. It applies after Talaria restarts: it is still working the old way for now.' }));
+  out.push(h('div', { class: 'card' }, h('h2', null, 'What counts'),
+    h('ul', { class: 'steps' },
+      h('li', { text: 'Deleting: removing files or folders, git clean and force-pushes, dropping databases, deleting skills, schedules or goals.' }),
+      h('li', { text: 'Posting: anything sent in public on X, Facebook, Instagram, LinkedIn, Reddit, TikTok, Bluesky and similar sites, by the X tool or by clicking and typing in the browser there.' })),
+    h('div', { class: 'field-note', text: 'A command that deletes is recognised by what it says, so an unusual one can slip past. Turn on the stricter choice if you want a second pair of eyes on every command.' })));
+  out.push(h('div', { class: 'card' }, h('h2', null, 'While it waits'),
+    h('div', { class: 'field-note', text: 'The question is saved, the agent carries on with anything else, and you will find it under Agents and in your notifications. Answer whenever you like, even after a restart: the saved step is then done and the work picks up where it stopped. Unanswered questions lapse after a week.' })));
+  return out;
+}
+
+function paneConnections(s) {
+  const out = [];
+  if ((s.chats || []).some((c) => c.service === 'telegram' && c.connected)) {
+    out.push(h('div', { class: 'banner' }, icon('info'), h('span', { text: 'Telegram is connected. Ask for the result to be sent there ("research this and send me the summary on Telegram"), or use the Telegram button next to the message box.' })));
+  }
+  out.push(emailCard(), calendarsCard(), chatsCard());
+  return out;
+}
+
+function paneNotifications() { return [notifyCard(ctl || { push: {} })]; }
+
+function paneAbout() {
+  const c = ctl || {};
+  const rows = h('div', { class: 'rows' });
+  for (const [k, v] of [['Version', c.version || S.version], ['Running for', c.uptimeSec != null ? uptime(c.uptimeSec) : ''], ['Model', c.model || S.model]]) {
+    if (v) rows.append(h('div', { class: 'row' }, h('span', { class: 'grow', text: k }), h('span', { class: 'mono s', text: v })));
+  }
+  const out = [h('div', { class: 'card' }, h('h2', null, 'Status'), rows)];
+  if ((c.links || []).length) {
+    const lr = h('div', { class: 'rows' });
+    for (const l of c.links) lr.append(h('div', { class: 'row' }, h('span', { class: 'link-dot' }), h('span', { class: 'grow' }, h('span', { class: 't', text: l.name }), h('span', { class: 's mono', text: l.detail })), h('span', { class: 'pill info', text: l.tag })));
+    out.push(h('div', { class: 'card' }, h('h2', null, 'Connected'), lr));
+  }
+  const inst = installCard(); if (inst) out.push(inst);
+  out.push(h('button', { class: 'btn big', type: 'button', text: 'Sign out', onclick: async () => { try { await api('/api/logout', { method: 'POST' }); } catch { /* signed out anyway */ } showLogin(); } }));
+  return out;
+}
+
+const PANES = { models: paneModels, permissions: panePermissions, connections: paneConnections, notifications: paneNotifications, about: paneAbout };
+const wideScreen = () => window.matchMedia('(min-width: 900px)').matches;
+window.matchMedia('(min-width: 900px)').addEventListener?.('change', () => { if (S.tab === 'settings') renderSettings(); });
+$('#settings-back').addEventListener('click', () => { location.hash = '#settings'; });
+
+async function renderSettings() {
+  const s = S.settings; if (!s || S.tab !== 'settings') return;
+  S.push = await pushState();
+  if (S.tab !== 'settings') return;
+  const wide = wideScreen();
+  const sub = S.sub || (wide ? 'models' : '');
+  const page = SETTINGS_PAGES.find((p) => p.id === sub);
+  $('#settings-title').textContent = page && !wide ? page.title : 'Settings';
+  $('#settings-sub').textContent = page && !wide ? page.sub : 'Models, permissions and connections.';
+  $('#settings-back').hidden = !page || wide;
+  const nav = h('nav', { class: 'set-nav', 'aria-label': 'Settings sections' }, SETTINGS_PAGES.map((p) => h('a', { class: 'set-item', href: '#settings/' + p.id, 'aria-current': p.id === sub ? 'page' : null },
+    h('span', { class: 'set-icon' }, icon(p.icon)),
+    h('span', { class: 'grow' }, h('span', { class: 't', text: p.title }), h('span', { class: 's', text: settingsSummary(p.id) })),
+    icon('chev'))));
+  const pane = h('div', { id: 'settings-pane', class: 'set-pane stack' }, page && wide ? h('h2', { class: 'pane-title', text: page.title }) : null, ...(page ? PANES[page.id](s) : []));
+  const body = $('#settings-body');
+  keepScroll(body, () => body.replaceChildren(h('div', { class: 'set-grid' + (page ? ' has-sub' : '') }, nav, pane)));
 }
 
 // ---------- notifications and installing ----------
@@ -1134,11 +1236,11 @@ async function disablePush() {
     if (sub) { await api('/api/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } }); await sub.unsubscribe(); }
   } catch (e) { if (!(e instanceof AuthError)) toast(e.message); }
 }
-async function notifyCard(c) {
-  const st = await pushState();
+function notifyCard(c) {
+  const st = S.push;
   const card = h('div', { class: 'card' }, h('h2', null, 'Notifications'));
-  const done = () => { loadControl(); };
-  if (!c.push.available) card.append(h('div', { class: 'note', text: 'Notifications are not set up on the server.' }));
+  const done = () => renderSettings();
+  if (!(c.push && c.push.available)) card.append(h('div', { class: 'note', text: 'Notifications are not set up on the server.' }));
   else if (st === 'on') card.append(h('div', { class: 'verdict ok' }, icon('check'), 'On for this device'), h('p', { class: 'field-note', text: 'I will notify you when something needs your OK, and when I have something to tell you while the app is closed.' }), h('p', null, h('button', { class: 'btn', type: 'button', text: 'Turn off', onclick: async () => { await disablePush(); done(); } })));
   else if (st === 'needs-install') card.append(h('div', { class: 'note', text: 'On iPhone, notifications work once Talaria is on your Home Screen:' }), h('ol', { class: 'steps' }, h('li', { text: 'Tap the Share button in Safari.' }), h('li', { text: 'Choose “Add to Home Screen”.' }), h('li', { text: 'Open Talaria from there, and come back to this screen.' })));
   else if (st === 'denied') card.append(h('div', { class: 'note', text: 'Notifications are blocked for this site. Allow them in your browser or phone settings, then come back.' }));
@@ -1146,8 +1248,8 @@ async function notifyCard(c) {
   else card.append(h('div', { class: 'note', text: 'Get a notification when something needs your OK, even when the app is closed.' }), h('p', null, h('button', { class: 'btn primary big', type: 'button', text: 'Turn on notifications', onclick: async (e) => { e.target.disabled = true; await enablePush(); done(); } })));
   return card;
 }
-window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installEvent = e; renderInstall(); if (S.tab === 'control') renderControl(); });
-window.addEventListener('appinstalled', () => { S.installEvent = null; renderInstall(); if (S.tab === 'control') renderControl(); });
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installEvent = e; renderInstall(); if (S.tab === 'settings') renderSettings(); });
+window.addEventListener('appinstalled', () => { S.installEvent = null; renderInstall(); if (S.tab === 'settings') renderSettings(); });
 
 // A banner at the top, so installing is never buried: a button where the browser allows it, and where it does not
 // (Safari) the two taps that do it. It goes away once the app is installed or for as long as this page stays open.
@@ -1165,13 +1267,13 @@ $('#install-go').addEventListener('click', async () => {
   if (!S.installEvent) return;
   S.installEvent.prompt();
   try { await S.installEvent.userChoice; } catch { /* the browser closed it */ }
-  S.installEvent = null; renderInstall(); if (S.tab === 'control') renderControl();
+  S.installEvent = null; renderInstall(); if (S.tab === 'settings') renderSettings();
 });
 $('#install-close').addEventListener('click', () => { installDismissed = true; renderInstall(); });
 function installCard() {
   if (standalone()) return null;
   const card = h('div', { class: 'card' }, h('h2', null, 'Install the App'));
-  if (S.installEvent) return (card.append(h('div', { class: 'note', text: 'Add Talaria to your home screen to open it like any app.' }), h('p', null, h('button', { class: 'btn primary big', type: 'button', text: 'Install', onclick: async () => { S.installEvent.prompt(); await S.installEvent.userChoice; S.installEvent = null; renderControl(); } }))), card);
+  if (S.installEvent) return (card.append(h('div', { class: 'note', text: 'Add Talaria to your home screen to open it like any app.' }), h('p', null, h('button', { class: 'btn primary big', type: 'button', text: 'Install', onclick: async () => { S.installEvent.prompt(); await S.installEvent.userChoice; S.installEvent = null; renderSettings(); } }))), card);
   if (isIOS()) return (card.append(h('ol', { class: 'steps' }, h('li', { text: 'Tap the Share button in Safari.' }), h('li', { text: 'Choose “Add to Home Screen”.' }), h('li', { text: 'Open Talaria from your Home Screen.' }))), card);
   // Chrome on Android offers installing from its own menu even when it has not offered a button yet.
   if (/android/i.test(navigator.userAgent)) return (card.append(h('div', { class: 'note', text: 'Your browser has not offered an Install button yet. You can still do it by hand:' }),
@@ -1192,7 +1294,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
   presence(); flushOutbox();
   if (!S.es) { loadState().then(connect).catch(() => {}); }
-  if (S.tab === 'today') loadToday(); if (S.tab === 'control') loadControl();
+  if (S.tab === 'today') loadToday(); if (S.tab === 'agents') loadAgentsPage();
 });
 window.addEventListener('online', () => { $('#offline').hidden = true; flushOutbox(); });
 window.addEventListener('offline', () => { $('#offline').hidden = false; });
