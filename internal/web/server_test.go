@@ -981,6 +981,80 @@ func TestANewChatStartsEmpty(t *testing.T) {
 	}
 }
 
+func TestConversationsAreKeptAndTakenUpAgain(t *testing.T) {
+	r := newRig(t)
+	r.login()
+	var err error
+	r.srv.Convos, err = OpenConvos(filepath.Join(t.TempDir(), "convos.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, seq, epoch := r.state()
+	ch := r.watch(seq, epoch)
+
+	r.do("POST", "/api/send", map[string]string{"text": "question one"})
+	until(t, ch, "the answer", func(e Event) bool {
+		return e.Type == "msg" && e.Msg.Role == "assistant" && e.Msg.Text == "echo: question one"
+	})
+	until(t, ch, "the turn ending", func(e Event) bool { return e.Type == "run" && !e.On })
+	r.srv.SaveActive() // what the hub's write-down does a moment later
+
+	resp, b := r.do("POST", "/api/chats", map[string]bool{"new": true})
+	if resp.StatusCode != 200 {
+		t.Fatalf("new: %d %s", resp.StatusCode, b)
+	}
+	until(t, ch, "being told to start again", func(e Event) bool { return e.Type == "reset" })
+	if msgs, _, _ := r.state(); len(msgs) != 0 {
+		t.Fatalf("the new chat is not blank: %+v", msgs)
+	}
+	_, b = r.do("GET", "/api/chats", nil)
+	var list struct {
+		Chats []struct {
+			ID       string `json:"id"`
+			Title    string `json:"title"`
+			Active   bool   `json:"active"`
+			Messages int    `json:"messages"`
+		} `json:"chats"`
+	}
+	if err := json.Unmarshal(b, &list); err != nil || len(list.Chats) != 2 {
+		t.Fatalf("two conversations, the blank one open: %s", b)
+	}
+	if list.Chats[0].Title != "New chat" || !list.Chats[0].Active {
+		t.Fatalf("the blank one is open: %+v", list.Chats[0])
+	}
+	if list.Chats[1].Title != "question one" || list.Chats[1].Active || list.Chats[1].Messages == 0 {
+		t.Fatalf("the old one is kept under its question: %+v", list.Chats[1])
+	}
+
+	if resp, _ := r.do("POST", "/api/chats", map[string]string{"open": "missing"}); resp.StatusCode != 404 {
+		t.Fatalf("an unknown conversation: %d", resp.StatusCode)
+	}
+	if resp, _ := r.do("POST", "/api/chats", map[string]string{}); resp.StatusCode != 400 {
+		t.Fatalf("say which: %d", resp.StatusCode)
+	}
+	r.do("POST", "/api/chats", map[string]string{"open": list.Chats[1].ID})
+	until(t, ch, "being told to start again", func(e Event) bool { return e.Type == "reset" })
+	msgs, _, _ := r.state()
+	var back bool
+	for _, m := range msgs {
+		if m.Role == "user" && m.Text == "question one" {
+			back = true
+		}
+	}
+	if !back {
+		t.Fatalf("the old conversation is not showing: %+v", msgs)
+	}
+	var kept bool
+	for _, m := range r.srv.Engine.History(ChatID) {
+		if m.Role == "user" && strings.Contains(m.Content, "question one") {
+			kept = true
+		}
+	}
+	if !kept {
+		t.Fatal("the agent does not carry the old conversation's history")
+	}
+}
+
 func TestACommandIsOnlyRunWhenAllowedInWords(t *testing.T) {
 	r := newRig(t)
 	r.login()

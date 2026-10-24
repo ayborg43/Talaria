@@ -131,6 +131,51 @@ func TestANewChatForgetsTheConversationAndTellsEveryPage(t *testing.T) {
 	}
 }
 
+func TestReplaceShowsAnotherConversationAndTellsEveryPage(t *testing.T) {
+	h := &Hub{}
+	ctx := context.Background()
+	h.AddUser("hello")
+	h.Send(ctx, ChatID, "hi there")
+	_, seq, epoch, _ := h.Snapshot()
+	ch, cancel := h.Subscribe(epoch, seq)
+	defer cancel()
+	drain(ch, 2, time.Second) // the run state and who is working
+	h.Replace([]*Message{{ID: 7, Role: "user", Text: "an old question"}, {ID: 9, Role: "tool", Tool: "shell", State: "running"}})
+	msgs, _, epoch2, running := h.Snapshot()
+	if len(msgs) != 2 || msgs[0].Text != "an old question" {
+		t.Fatalf("the other conversation is showing: %+v", msgs)
+	}
+	if msgs[1].State != "error" {
+		t.Fatalf("a tool left running stops with its conversation: %+v", msgs[1])
+	}
+	if epoch2 == epoch || running {
+		t.Fatal("pages must fetch again, and nothing runs on")
+	}
+	if ev := drain(ch, 1, time.Second); len(ev) != 1 || ev[0].Type != "reset" {
+		t.Fatalf("an open page was told %+v", ev)
+	}
+	// What is said afterwards continues the shown conversation with fresh ids.
+	h.AddUser("and then")
+	if msgs, _, _, _ := h.Snapshot(); len(msgs) != 3 || msgs[2].ID != 10 || msgs[2].Text != "and then" {
+		t.Fatalf("ids carry on in the shown conversation: %+v", msgs)
+	}
+}
+
+func TestWritingTheConversationDownTellsWhoKeepsConversations(t *testing.T) {
+	old := saveDelay
+	saveDelay = 20 * time.Millisecond
+	defer func() { saveDelay = old }()
+	h := &Hub{Path: filepath.Join(t.TempDir(), "log.json")}
+	called := make(chan struct{}, 1)
+	h.OnChange = func() { called <- struct{}{} }
+	h.AddUser("hello")
+	select {
+	case <-called:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the keeper was not told")
+	}
+}
+
 func TestAPageThatCannotKeepUpIsDroppedNotWaitedFor(t *testing.T) {
 	h := &Hub{}
 	_, _, epoch, _ := h.Snapshot()

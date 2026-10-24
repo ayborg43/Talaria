@@ -10,6 +10,7 @@ import (
 
 	"talaria/internal/agent"
 	"talaria/internal/guard"
+	"talaria/internal/provider"
 )
 
 // fakeService is a chat service that records what the engine does to it.
@@ -183,6 +184,29 @@ func sentText(f *fakeService) string {
 		b.WriteString(ev.Text + "\n")
 	}
 	return b.String()
+}
+
+func TestHistoryIsKeptAndPutBack(t *testing.T) {
+	e := &Engine{T: newFakeService(20000, false), root: context.Background()}
+	e.chats = map[int64]*chat{} // Start does this; the test stays synchronous
+	if got := e.History(1); len(got) != 0 {
+		t.Fatalf("a chat that never spoke has no history: %+v", got)
+	}
+	// No agent yet: the transcript waits for the next one.
+	e.SetHistory(1, []provider.Message{{Role: provider.RoleUser, Content: "hi"}})
+	if got := e.History(1); len(got) != 1 || got[0].Content != "hi" {
+		t.Fatalf("a stored conversation waits for its agent: %+v", got)
+	}
+	// A live agent: the transcript replaces what it held.
+	c := e.chatFor(1)
+	c.mu.Lock()
+	c.agent = &agent.Agent{}
+	c.agent.Restore([]provider.Message{{Role: provider.RoleUser, Content: "old"}})
+	c.mu.Unlock()
+	e.SetHistory(1, []provider.Message{{Role: provider.RoleUser, Content: "new"}})
+	if got := e.History(1); len(got) != 1 || got[0].Content != "new" {
+		t.Fatalf("the agent takes up the stored conversation: %+v", got)
+	}
 }
 
 func TestTheApprovalBodyIsNeverCutOffSilently(t *testing.T) {

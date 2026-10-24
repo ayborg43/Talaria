@@ -99,6 +99,10 @@ type Hub struct {
 	// Held, if set, says whether a question's token names a request still waiting, kept across restarts: such
 	// a question stays on the page as it was, rather than turning into one that expired.
 	Held func(token string) bool
+	// OnChange, if set, runs when the conversation is written down, without
+	// the hub's lock held: a front end that keeps conversations of its own
+	// saves the open one there.
+	OnChange func()
 	// QuietAfter is how long a reply must stay unchanged before a notification is sent about it.
 	QuietAfter time.Duration
 
@@ -253,15 +257,22 @@ func (h *Hub) Close() {
 	}
 }
 
+// saveDelay is how long a change waits before it is written down; tests shorten it.
+var saveDelay = 2 * time.Second
+
 func (h *Hub) scheduleSave() {
 	if h.Path == "" || h.saveT != nil || h.closed {
 		return
 	}
-	h.saveT = time.AfterFunc(2*time.Second, func() {
+	h.saveT = time.AfterFunc(saveDelay, func() {
 		h.mu.Lock()
-		defer h.mu.Unlock()
 		h.saveT = nil
 		h.save()
+		onChange := h.OnChange
+		h.mu.Unlock()
+		if onChange != nil {
+			onChange() // without the lock: it reads the hub and the engine back
+		}
 	})
 }
 
@@ -386,6 +397,44 @@ func (h *Hub) Reset() {
 	}
 	h.msgs = nil
 	h.byID = map[int64]*Message{}
+	h.changes = nil
+	h.running = false
+	h.epoch = time.Now().UnixNano()
+	h.seq++
+	h.fan(Event{Seq: h.seq, Type: "reset"})
+	h.scheduleSave()
+}
+
+// Replace shows another conversation: the page's thread becomes a copy of
+// the messages given, open pages are told to fetch it again, and what is
+// running or waiting in the old one stops with it.
+func (h *Hub) Replace(msgs []*Message) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.init()
+	for id, t := range h.timers {
+		t.Stop()
+		delete(h.timers, id)
+	}
+	h.msgs = nil
+	h.byID = map[int64]*Message{}
+	h.nextID = 1
+	for _, m := range msgs {
+		c := copyMsg(m)
+		switch {
+		case c.Role == "tool" && c.State == "running":
+			c.State = "error"
+		case c.Role == "approval" && c.State == "pending":
+			if h.Held == nil || c.Token == "" || !h.Held(c.Token) {
+				c.State, c.Token = "expired", ""
+			}
+		}
+		if c.ID >= h.nextID {
+			h.nextID = c.ID + 1
+		}
+		h.msgs = append(h.msgs, c)
+		h.byID[c.ID] = c
+	}
 	h.changes = nil
 	h.running = false
 	h.epoch = time.Now().UnixNano()

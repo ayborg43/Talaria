@@ -13,6 +13,7 @@ import (
 
 	"talaria/internal/agent"
 	"talaria/internal/metrics"
+	"talaria/internal/provider"
 	"talaria/internal/tool"
 )
 
@@ -104,7 +105,8 @@ type chat struct {
 	task   string         // what the user last asked for, kept with a request that has to wait
 
 	mu      sync.Mutex
-	agent   *agent.Agent // nil: build a fresh one on the next message
+	agent   *agent.Agent       // nil: build a fresh one on the next message
+	pending []provider.Message // a stored conversation to take up when the next agent is built
 	cancel  context.CancelFunc
 	runCtx  context.Context
 	profile string     // model profile chosen with /model; "" is the default
@@ -392,6 +394,34 @@ func (e *Engine) chatFor(id int64) *chat {
 	return c
 }
 
+// History is what the chat's agent has been told so far, without the system
+// prompt: what a stored conversation keeps so it can be taken up again.
+// Nil when the chat has no agent yet, or it has said nothing.
+func (e *Engine) History(chatID int64) []provider.Message {
+	c := e.chatFor(chatID)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.agent == nil {
+		return append([]provider.Message(nil), c.pending...)
+	}
+	return c.agent.Transcript()
+}
+
+// SetHistory puts a stored conversation back into the chat: the running task
+// stops, and the next message carries on from the stored one. Nil starts
+// blank, forgetting what was there (the caller keeps it if it matters).
+func (e *Engine) SetHistory(chatID int64, transcript []provider.Message) {
+	c := e.chatFor(chatID)
+	c.stop()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.agent == nil {
+		c.pending = append([]provider.Message(nil), transcript...)
+		return
+	}
+	c.agent.Restore(transcript)
+}
+
 // stop cancels the running task, reporting whether there was one.
 func (c *chat) stop() bool {
 	c.mu.Lock()
@@ -445,6 +475,10 @@ func (e *Engine) runOneWith(c *chat, text string, job *resumeJob) {
 		c.applied, c.turns = e.defaultEnv(), 0 // a new agent starts in the default environment
 		if e.Held != nil {
 			c.agent.Defer = e.deferRequest(c)
+		}
+		if len(c.pending) > 0 {
+			c.agent.Restore(c.pending) // an old conversation, taken up again
+			c.pending = nil
 		}
 	}
 	a := c.agent

@@ -367,9 +367,16 @@ func runGateway(c *cli) error {
 			Cfg:        c.cfg,
 			Mailbox:    c.rt.Mail(), Calendars: c.rt.Calendars(), X: c.rt.X(), Getenv: c.getenv,
 		}
+		if convos, err := web.OpenConvos(filepath.Join(c.home, "web_chats.json")); err != nil {
+			logf("web: kept conversations did not open: %v", err)
+		} else {
+			srv.Convos = convos
+			webHub.OnChange = srv.SaveActive
+		}
 		s.run = func(ctx context.Context) error {
 			eng.Start(ctx)
 			defer eng.Wait(5 * time.Second)
+			srv.AdoptActiveConversation()
 			return srv.Serve(ctx, webSet.Listen)
 		}
 		s.send = eng.Send

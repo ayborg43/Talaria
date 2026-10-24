@@ -35,6 +35,36 @@ func newAgent(p provider.Provider) *Agent {
 // A tool that ignores cancellation cannot be killed, but the chat must not
 // wedge behind it: when the time is up the call is abandoned and the model is
 // told it timed out.
+func TestATranscriptSurvivesARestore(t *testing.T) {
+	p := &scripted{replies: []provider.Message{
+		{Role: provider.RoleAssistant, Content: "first answer"},
+		{Role: provider.RoleAssistant, Content: "second answer"},
+	}}
+	a := newAgent(p)
+	a.System = "be brief"
+	if _, err := a.Run(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	taken := a.Transcript()
+	if len(taken) != 2 || taken[0].Content != "one" || taken[1].Content != "first answer" {
+		t.Fatalf("the transcript is the conversation without the system prompt: %+v", taken)
+	}
+	b := newAgent(p)
+	b.System = "be brief"
+	b.Restore(taken)
+	if _, err := b.Run(context.Background(), "two"); err != nil {
+		t.Fatal(err)
+	}
+	seen := p.seen[len(p.seen)-1]
+	if len(seen) != 4 || seen[0].Role != provider.RoleSystem || seen[0].Content != "be brief" ||
+		seen[1].Content != "one" || seen[2].Content != "first answer" || seen[3].Content != "two" {
+		t.Fatalf("the restored conversation carries on with its history: %+v", seen)
+	}
+	if b.ReadOutside() {
+		t.Fatal("nothing from outside was read, so nothing is tainted")
+	}
+}
+
 func TestAToolThatIgnoresCancellationIsAbandonedOnTimeout(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Register(tool.Tool{Name: "hang", Run: func(context.Context, json.RawMessage) (string, error) {

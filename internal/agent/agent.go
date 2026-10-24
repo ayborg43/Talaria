@@ -156,6 +156,44 @@ func (a *Agent) add(m provider.Message) {
 	}
 }
 
+// Transcript is the conversation so far, without the system prompt: what a
+// stored conversation keeps so it can be taken up again later, with the
+// current notes and skills read fresh when it is.
+func (a *Agent) Transcript() []provider.Message {
+	out := make([]provider.Message, 0, len(a.messages))
+	for _, m := range a.messages {
+		if m.Role == provider.RoleSystem {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// Restore takes up a stored transcript again, in place of whatever this
+// conversation held. The agent's own system prompt is read fresh, so what is
+// stored never carries a stale one.
+func (a *Agent) Restore(transcript []provider.Message) {
+	msgs := make([]provider.Message, 0, len(transcript)+1)
+	if a.System != "" {
+		msgs = append(msgs, provider.Message{Role: provider.RoleSystem, Content: a.System})
+	}
+	tainted := false
+	for _, m := range transcript {
+		if m.Role == provider.RoleSystem {
+			continue // never a stored one: the system prompt is read fresh above
+		}
+		if m.Role == provider.RoleTool {
+			tainted = true // the conversation has taken in outside content before
+		}
+		msgs = append(msgs, m)
+	}
+	a.messages = msgs
+	if tainted {
+		atomic.StoreInt32(&a.tainted, 1)
+	}
+}
+
 // Run appends the user's input, loops until the model answers without tool
 // calls, and returns that final answer. History is kept across calls.
 func (a *Agent) Run(ctx context.Context, input string) (string, error) {

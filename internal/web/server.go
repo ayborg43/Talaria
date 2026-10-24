@@ -115,6 +115,9 @@ type Server struct {
 	Calendars *calendar.Service
 	X         *x.Service
 	Getenv    func(string) string
+	// Convos keeps every conversation of this chat: the page shows the
+	// active one and can go back to any of them. Nil keeps one thread only.
+	Convos *Convos
 
 	cacheMu   sync.Mutex
 	todayAt   time.Time
@@ -148,6 +151,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/events", s.authed(s.events))
 	mux.HandleFunc("POST /api/send", s.authed(s.send))
 	mux.HandleFunc("POST /api/approve", s.authed(s.approve))
+	mux.HandleFunc("GET /api/chats", s.authed(s.chats))
+	mux.HandleFunc("POST /api/chats", s.authed(s.switchChat))
 	mux.HandleFunc("POST /api/presence", s.authed(s.presence))
 	mux.HandleFunc("GET /api/today", s.authed(s.today))
 	mux.HandleFunc("GET /api/agents", s.authed(s.agents))
@@ -1039,8 +1044,8 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	if name == "" || !s.Engine.HasCommand(name) { // a command is not part of the conversation
 		s.Hub.AddUser(text)
 	}
-	if name == "new" { // the old conversation is gone before the engine confirms it in the new one
-		s.Hub.Reset()
+	if name == "new" { // the open conversation is kept, and a blank one starts
+		s.newConversation()
 	}
 	toAgent := text
 	if in.Telegram && s.Telegram && name == "" {

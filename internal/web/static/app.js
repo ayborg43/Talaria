@@ -592,7 +592,43 @@ function renderTg() {
 }
 tg.addEventListener('click', () => { S.tgOn = !S.tgOn; renderTg(); input.focus(); });
 $('#stop').addEventListener('click', () => sendText('/stop'));
-$('#new-chat').addEventListener('click', () => { if (confirm('Start a new conversation? Talaria forgets this one (your notes and history stay).')) sendText('/new'); });
+async function openSheet() {
+  const body = $('#sheet-body');
+  $('#sheet').hidden = false;
+  body.replaceChildren(h('div', { class: 'card empty', text: 'Loading…' }));
+  try {
+    const d = await api('/api/chats');
+    const rows = h('div', { class: 'rows' });
+    rows.append(h('button', { class: 'row new', type: 'button', onclick: newConversation },
+      h('span', { class: 'grow' }, h('span', { class: 't', text: '+ New chat' }), h('span', { class: 's', text: 'What is open is kept first' }))));
+    for (const c of d.chats || []) {
+      rows.append(h('button', { class: 'row', type: 'button', 'aria-current': c.active ? 'true' : null, onclick: () => openConversation(c.id) },
+        h('span', { class: 'grow' }, h('span', { class: 't', text: c.title || 'New chat' }),
+          h('span', { class: 's', text: (c.messages || 0) + (c.messages === 1 ? ' message' : ' messages') })),
+        h('span', { class: 'when', text: c.updated ? fmtWhen(new Date(c.updated)) : '' })));
+    }
+    body.replaceChildren(h('div', { class: 'card' }, h('h2', null, 'Conversations'), rows));
+  } catch (e) { if (!(e instanceof AuthError)) body.replaceChildren(h('div', { class: 'card empty', text: e.message })); }
+}
+function closeSheet() { $('#sheet').hidden = true; }
+// A new chat never loses anything: what was open is kept first, and the new one starts blank.
+async function newConversation() {
+  closeSheet();
+  try { await api('/api/chats', { method: 'POST', body: { new: true } }); }
+  catch (e) { if (!(e instanceof AuthError)) toast(e.message); return; }
+  await loadState();
+  S.pinned = true; toBottom(); // the blank page starts at its bottom
+}
+async function openConversation(id) {
+  closeSheet();
+  try { await api('/api/chats', { method: 'POST', body: { open: id } }); }
+  catch (e) { if (!(e instanceof AuthError)) toast(e.message); return; }
+  await loadState();
+  S.pinned = true; toBottom(); // an old conversation opens where it left off: with its latest
+}
+$('#chats').addEventListener('click', openSheet);
+$('#new-chat').addEventListener('click', newConversation);
+$('#sheet').addEventListener('click', (e) => { if (e.target.closest('.scrim')) closeSheet(); });
 for (const q of ["What's on today?", 'Summarise my inbox', 'What are you watching for me?']) {
   $('#quick').append(h('button', { type: 'button', text: q, onclick: () => sendText(q) }));
 }

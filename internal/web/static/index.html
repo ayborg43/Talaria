@@ -51,12 +51,14 @@
         <div class="display name">Talaria</div>
         <div class="status"><span id="dot" class="dot"></span><span id="status-text">Connecting…</span></div>
       </div>
+      <button id="chats" class="icon-btn" type="button" aria-label="Past conversations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg></button>
       <button id="new-chat" class="icon-btn" type="button" aria-label="Start a new conversation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></button>
     </header>
     <div id="agents" class="agents" hidden aria-label="Who is working"></div>
     <div id="thread" class="thread" role="log" aria-live="polite"></div>
     <button id="jump" class="jump" type="button" hidden aria-label="Jump to the latest message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
     <div id="quick" class="quick"></div>
+    <div id="sheet" class="sheet" hidden role="dialog" aria-label="Conversations"><div class="scrim"></div><div class="pane"><div class="grab"></div><div id="sheet-body" class="stack"></div></div></div>
     <form id="composer" class="composer">
       <label class="sr" for="input">Message Talaria</label>
       <button id="tg" class="round ghost tg" type="button" aria-label="Also send the result to Telegram" aria-pressed="false" title="Also send the result to my Telegram" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 4L3 11l6 2.2L11 20l3-4.5 4.5 3.5z"/><path d="M9 13.2L21 4"/></svg></button>
