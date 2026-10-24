@@ -736,6 +736,8 @@ function renderToday() {
     out.push(card);
   }
 
+  if (d.jobs && d.jobs.length) out.push(jobsCard(d.jobs));
+
   const todayBody = $('#today-body');
   keepScroll(todayBody, () => todayBody.replaceChildren(...out));
 }
