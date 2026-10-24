@@ -33,12 +33,14 @@ import (
 
 	"talaria/internal/agent"
 	"talaria/internal/app"
+	"talaria/internal/choice"
 	"talaria/internal/config"
 	"talaria/internal/cron"
 	"talaria/internal/execenv"
 	"talaria/internal/gateway/chat"
 	"talaria/internal/goal"
 	"talaria/internal/guard"
+	"talaria/internal/idea"
 	"talaria/internal/mcp"
 	"talaria/internal/provider"
 	"talaria/internal/vault"
@@ -245,7 +247,9 @@ func (c *cli) setupModel(gateway bool) (err error) {
 	xSvc := buildX(c.cfg, c.getenv)
 	appCfg := app.Config{Home: c.home, Provider: p, Model: res.Model, MCP: c.servers, Subagents: c.cfg.Subagents, Env: env, Guard: guarded, Fence: buildFence(c.cfg, c.cfgPath, c.home), Calendars: calSvc, Mail: mailSvc, X: xSvc, Ask: askMode(c.cfg, c.getenv), SocialSites: c.cfg.Policy.SocialSites, TrustOutsideContent: !c.cfg.Policy.GuardUntrusted(), ModelCallsPerHour: c.cfg.Limits.ModelCalls(), Log: c.log,
 		Browser: browserConfig(c.cfg), Goals: &goal.Store{Path: filepath.Join(c.home, "goals.json")},
-		Watches: &watch.Store{Path: filepath.Join(c.home, "watches.json")}}
+		Watches: &watch.Store{Path: filepath.Join(c.home, "watches.json")},
+		Ideas:   &idea.Store{Path: filepath.Join(c.home, "ideas.json")},
+		Choices: &choice.Store{Path: filepath.Join(c.home, "choices.json")}}
 	if vlt != nil {
 		appCfg.Vault = vlt
 	}

@@ -112,6 +112,9 @@ b,strong{font-weight:600}
 .quick::-webkit-scrollbar{display:none}
 .quick button{flex:none;padding:8px 13px;border-radius:99px;border:1px solid var(--bubble-line);background:var(--card);color:var(--ink2);font-size:13.5px;white-space:nowrap}
 .composer{flex:none;display:flex;align-items:flex-end;gap:8px;padding:0 12px 10px;max-width:640px;width:100%;margin:0 auto}
+.queuebar{flex:none;display:flex;align-items:center;gap:10px;max-width:640px;width:calc(100% - 24px);margin:0 auto 8px;padding:9px 14px;border-radius:14px;background:var(--brass-tint);color:var(--brass-text);font-size:13px}
+.queuebar .grow{flex:1;min-width:0}
+.queuebar button{flex:none;padding:6px 12px;border-radius:99px;border:1px solid var(--brass-line);background:transparent;color:var(--brass-text);font-size:13px}
 .composer textarea{flex:1;min-width:0;resize:none;max-height:140px;min-height:46px;border-radius:23px;border:1px solid var(--bubble-line);background:var(--field);padding:11px 16px;line-height:1.35;outline:none}
 .composer textarea:focus{border-color:var(--brass-line)}
 .round{width:46px;height:46px;border-radius:99px;border:0;display:flex;align-items:center;justify-content:center;flex:none}
@@ -318,7 +321,7 @@ b,strong{font-weight:600}
 .pane-title{display:block!important;margin:0 4px 2px!important}
 .bar{padding:18px 32px 16px}
 .thread{max-width:860px;padding:24px 32px 12px}
-.agents,.quick,.composer{max-width:860px}
+.agents,.quick,.composer,.queuebar{max-width:860px}
 .agents{padding:10px 32px}
 .quick{padding:2px 32px 12px}
 .composer{padding:0 32px 22px}

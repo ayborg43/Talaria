@@ -372,8 +372,10 @@ function renderChrome() {
   const dot = $('#dot');
   dot.className = 'dot ' + (!S.connected ? 'off' : busy ? 'work' : 'on');
   const count = S.agents.length;
+  // The status names the current work, not just that something is working.
+  const current = count === 1 ? 'Working · ' + doingText(S.agents[0]) : count > 1 ? `${count} agents working` : busy ? 'Working…' : null;
   $('#status-text').textContent = !S.connected ? 'Reconnecting…' : S.paused ? 'Paused · chat still works'
-    : count > 1 ? `${count} agents working` : busy ? 'Working…' : 'Online' + (S.model ? ' · ' + S.model : '');
+    : current || 'Online' + (S.model ? ' · ' + S.model : '');
   const n = pendingAsks().length;
   const ab = $('#agent-badge');
   ab.hidden = n === 0 && S.agents.length === 0; ab.textContent = String(n || S.agents.length); ab.classList.toggle('work', n === 0);
@@ -390,8 +392,15 @@ function renderChrome() {
 const KINDS = { main: 'MAIN', sub: 'HELPER', task: 'TASK', goal: 'GOAL', watch: 'WATCH', job: 'JOB' };
 function setAgents(list) {
   const before = S.agents.length;
+  const was = S._prevAgents || [];
   S.agents = Array.isArray(list) ? list : [];
   if (S.agents.length < before && S.tab === 'agents') loadAgentsPage(); // something ended: it is now in the finished list
+  // Background completions surface where the reader is: finished helpers,
+  // tasks, goals, watches and jobs toast once, and the Agents badge links to
+  // the saved result. The main reply never toasts; it is already on screen.
+  const ended = was.filter((w) => w.kind !== 'main' && !S.agents.some((n) => n.id === w.id));
+  S._prevAgents = S.agents.slice();
+  if (ended.length && S.tab !== 'agents') toast(ended.length === 1 ? 'Finished — see Agents for the result.' : `${ended.length} finished — see Agents for the results.`);
   S.agentsAt = Date.now();
   renderAgents(); renderChrome(); updateNow();
 }
@@ -533,6 +542,10 @@ $('#pause-btn').addEventListener('click', async () => {
 // ---------- composer ----------
 const input = $('#input');
 function autosize() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 140) + 'px'; }
+// The draft lives in the page, never on the phone: switching conversations or
+// reconnecting never clears what was typed (this is a single page, and nothing
+// here resets the box), and stopping the agent leaves it alone too. It clears
+// only once the message is sent.
 input.addEventListener('input', () => { autosize(); renderChrome(); });
 input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !matchMedia('(pointer: coarse)').matches) { e.preventDefault(); $('#composer').requestSubmit(); }
@@ -541,9 +554,21 @@ input.addEventListener('keydown', (e) => {
 // keeps nothing on the phone — and go out in order once the server answers.
 let outbox = []; // {text, telegram}
 let flushing = false, flushAgain = false;
+// The follow-up queue is visible: while messages wait, a bar above the
+// composer names the count and offers to send now. Stopping the agent never
+// drops the queue; it stays until the server answers.
+function renderQueue() {
+  const bar = $('#queuebar');
+  if (!bar) return;
+  if (!outbox.length) { bar.hidden = true; bar.replaceChildren(); return; }
+  bar.hidden = false;
+  bar.replaceChildren(
+    h('span', { class: 'grow', text: outbox.length === 1 ? '1 message waiting — sends when you are back online.' : `${outbox.length} messages waiting — send in order when you are back online.` }),
+    h('button', { type: 'button', text: 'Send now', onclick: () => flushOutbox() }));
+}
 async function flushOutbox() {
   if (flushing) { flushAgain = true; return; } // a trigger mid-flush buys one more pass, so nothing waits on a lost wakeup
-  if (!outbox.length || !navigator.onLine) return;
+  if (!outbox.length || !navigator.onLine) { renderQueue(); return; }
   flushing = true;
   do {
     flushAgain = false;
@@ -553,6 +578,7 @@ async function flushOutbox() {
       catch { break; } // still unreachable (a 401 also shows the sign-in); the rest waits
       outbox.shift(); sent++;
     }
+    renderQueue();
     if (sent) toast(sent === 1 ? 'Sent 1 queued message.' : `Sent ${sent} queued messages.`);
   } while (flushAgain && outbox.length && navigator.onLine);
   flushing = false;
@@ -566,6 +592,7 @@ async function sendText(text, telegram = false) {
     if (e instanceof AuthError) return false;
     if (!navigator.onLine || e.message === 'You appear to be offline.') {
       outbox.push({ text, telegram: telegram || undefined });
+      renderQueue();
       toast(outbox.length === 1 ? 'It will send when you are back online.' : `${outbox.length} messages will send when you are back online.`);
       return true; // queued, so the composer does not put it back
     }
@@ -658,7 +685,7 @@ async function loadState() {
   S.zone = d.zone || S.zone;
   if (!S.order.length) S.pinned = true; // a conversation that starts again starts at its bottom
   // Nothing is torn down: messages that are unchanged keep their elements, so the reader's place survives a reconnect.
-  renderChat();
+  renderChat(); renderQueue();
 }
 function connect() {
   if (S.es) S.es.close();

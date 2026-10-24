@@ -41,6 +41,7 @@ func RegisterTools(r *tool.Registry, b Binding) {
 			Name: "watch_create",
 			Description: "Keep an eye on a connected service for the user: poll one of its read-only tools every so often, without using the model, and look at the answer only when it changes. " +
 				"Pick a tool whose answer changes only when something happens (for example one that searches for unread or new items), not one that includes a clock. " +
+				"Relative-time wording ticking on its own (\"2 hours ago\" becoming \"3 hours ago\") is ignored; a changed number or line is reported as an update. " +
 				"Say in the instructions what would matter to the user. Each time the answer changes you are asked whether it is worth telling them; if it is, they get a message. " +
 				"Only tools that run without asking can be watched. It polls every 15 minutes by default (5 minutes to 24 hours).",
 			Schema: json.RawMessage(`{"type":"object","properties":{

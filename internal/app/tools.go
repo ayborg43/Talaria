@@ -9,12 +9,16 @@ import (
 	"talaria/internal/agent"
 	"talaria/internal/browser"
 	"talaria/internal/calendar"
+	"talaria/internal/choice"
 	"talaria/internal/cron"
 	"talaria/internal/execenv"
+	"talaria/internal/finance"
 	"talaria/internal/goal"
+	"talaria/internal/idea"
 	"talaria/internal/mailbox"
 	"talaria/internal/memory"
 	"talaria/internal/notify"
+	"talaria/internal/provider"
 	"talaria/internal/skill"
 	"talaria/internal/tool"
 	"talaria/internal/x"
@@ -29,6 +33,12 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 	tools := tool.NewRegistry()
 	tool.RegisterBuiltinsIn(tools, rt.env)
 	skill.RegisterTools(tools, rt.skills)
+	finance.RegisterTools(tools)
+	if o.ChatID != 0 && rt.cfg.Choices != nil {
+		choice.RegisterTools(tools, choice.Binding{
+			Store: rt.cfg.Choices, Gateway: o.gatewayOrDefault(), ChatID: o.ChatID,
+		})
+	}
 	memory.RegisterTools(tools, rt.notes, sessions, sessionID, o.owner())
 	if o.ChatID != 0 && !o.NoCron {
 		cron.RegisterTools(tools, rt.Cron, o.Gateway, o.ChatID, o.Jobs)
@@ -39,6 +49,39 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 	if o.ChatID != 0 && rt.cfg.Goals != nil {
 		goal.RegisterTools(tools, goal.Binding{
 			Store: rt.cfg.Goals, Sched: rt.Cron, Gateway: o.gatewayOrDefault(), ChatID: o.ChatID, Targets: o.Jobs,
+			Create: !o.NoCron,
+		})
+	}
+	if o.ChatID != 0 && rt.cfg.Ideas != nil {
+		gw, chat := o.gatewayOrDefault(), o.ChatID
+		idea.RegisterTools(tools, idea.Binding{
+			Store: rt.cfg.Ideas, Gateway: gw, ChatID: chat,
+			Sent: func() []string {
+				if sessions == nil || sessionID == "" {
+					return nil
+				}
+				recent, err := sessions.Recent(sessionID, string(provider.RoleAssistant), 10)
+				if err != nil {
+					return nil
+				}
+				return recent
+			},
+			Done: func() []string {
+				if rt.cfg.Goals == nil {
+					return nil
+				}
+				goals, err := rt.cfg.Goals.List(gw, chat)
+				if err != nil {
+					return nil
+				}
+				var done []string
+				for _, g := range goals {
+					if g.Status == goal.Done || g.Status == goal.Dropped {
+						done = append(done, g.Title)
+					}
+				}
+				return done
+			},
 			Create: !o.NoCron,
 		})
 	}

@@ -15,10 +15,12 @@ import (
 	"talaria/internal/agent"
 	"talaria/internal/browser"
 	"talaria/internal/calendar"
+	"talaria/internal/choice"
 	"talaria/internal/cron"
 	"talaria/internal/execenv"
 	"talaria/internal/goal"
 	"talaria/internal/guard"
+	"talaria/internal/idea"
 	"talaria/internal/mailbox"
 	"talaria/internal/mcp"
 	"talaria/internal/memory"
@@ -80,6 +82,11 @@ type Config struct {
 	// Watches keeps what chats have asked to be told about in connected services.
 	// Nil turns watches off.
 	Watches *watch.Store
+	// Choices keeps structured questions the user answers by picking an
+	// option. Nil turns the choice tools off.
+	Choices *choice.Store
+	// Ideas keeps suggestions with source evidence. Nil turns the idea tools off.
+	Ideas *idea.Store
 	// Log is where warnings go. Nil discards them.
 	Log *slog.Logger
 }

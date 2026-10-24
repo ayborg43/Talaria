@@ -105,6 +105,31 @@ func (s *Sessions) Search(query string, limit int, exclude string) ([]Hit, error
 	return s.SearchFor("", query, limit, exclude)
 }
 
+// Recent returns the latest contents of one session and role, newest first,
+// so a tool can leave out what was already said. A non-positive limit reads
+// a small, bounded number.
+func (s *Sessions) Recent(sessionID, role string, limit int) ([]string, error) {
+	if limit <= 0 || limit > 20 {
+		limit = 10
+	}
+	rows, err := s.db.Query(
+		`SELECT content FROM messages WHERE session_id = ? AND role = ? ORDER BY id DESC LIMIT ?`,
+		sessionID, role, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // SearchFor searches what an owner may see: their own sessions. For no owner (the command line, which
 // is the person who runs Talaria) it is all of them.
 func (s *Sessions) SearchFor(owner, query string, limit int, exclude string) ([]Hit, error) {

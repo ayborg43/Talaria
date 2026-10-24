@@ -37,6 +37,7 @@ type rule struct {
 // keeps this list in step with the registrations.
 var knownTools = map[string]bool{
 	"browser_back": true, "browser_click": true, "browser_close": true,
+	"choice_present": true, "choice_select": true,
 	"browser_fill": true, "browser_open": true, "browser_press": true,
 	"browser_screenshot": true, "browser_scroll": true, "browser_select": true,
 	"browser_snapshot": true, "browser_type": true, "browser_wait": true,
@@ -44,7 +45,9 @@ var knownTools = map[string]bool{
 	"cron_add":        true, "cron_list": true, "cron_remove": true,
 	"current_time": true, "delegate": true,
 	"email_folders": true, "email_list": true, "email_read": true,
-	"goal_create": true, "goal_get": true, "goal_list": true, "goal_update": true,
+	"finance_import": true,
+	"goal_create":    true, "goal_get": true, "goal_list": true, "goal_update": true,
+	"idea_accept": true, "idea_add": true, "idea_dismiss": true, "idea_edit": true, "idea_list": true,
 	"list_dir": true, "memory": true, "read_file": true, "session_search": true,
 	"shell":        true,
 	"skill_delete": true, "skill_list": true, "skill_save": true, "skill_view": true,

@@ -54,6 +54,7 @@ type Watch struct {
 
 	LastHash    string    `json:"last_hash,omitempty"`
 	LastResult  string    `json:"last_result,omitempty"` // an excerpt, to show the model what changed
+	LastDiff    string    `json:"last_diff,omitempty"`   // one-line count of what changed, such as "3 lines changed (2 new, 1 updated)"
 	LastRun     time.Time `json:"last_run,omitzero"`
 	LastChange  time.Time `json:"last_change,omitzero"`
 	Polls       int       `json:"polls"`
@@ -113,9 +114,19 @@ func (w *Watch) Observe(now time.Time, result string, err error) (out Outcome, p
 	switch {
 	case w.LastHash == "": // the first look: what to compare with from now on
 		w.LastHash, w.LastResult = h, clip(result, maxResultKept)
+		w.LastDiff = ""
 		return Quiet, ""
 	case h == w.LastHash:
 		return Quiet, ""
+	}
+	// The bytes differ, but relative-time wording ticking on its own
+	// ("posted 1 day ago" -> "posted 2 days ago") is not a change worth a
+	// model run: move the baseline forward quietly instead.
+	if d := DiffPage(PageLines(w.LastResult), PageLines(result)); d.Empty() {
+		w.LastHash, w.LastResult, w.LastDiff = h, clip(result, maxResultKept), ""
+		return Quiet, ""
+	} else {
+		w.LastDiff = CountPageDiff(d)
 	}
 	previous = w.LastResult
 	w.LastHash, w.LastResult, w.LastChange = h, clip(result, maxResultKept), now
