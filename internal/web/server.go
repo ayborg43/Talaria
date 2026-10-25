@@ -1315,6 +1315,14 @@ func (s *Server) today(w http.ResponseWriter, r *http.Request) {
 	if s.Sources.Jobs != nil {
 		out["jobs"] = s.Sources.Jobs()
 	}
+	s.purgeFiles()
+	out["files"] = []files.File{}
+	out["files_retention_hours"] = int(s.fileRetention() / time.Hour)
+	if st := s.fileStore(); st != nil {
+		if list, err := st.List(); err == nil {
+			out["files"] = list
+		}
+	}
 	out["pending"] = len(s.Hub.Pending())
 	raw, _ := json.Marshal(out)
 	s.cacheMu.Lock()

@@ -465,6 +465,7 @@ function ago(iso) {
   return s < 60 ? 'just now' : s < 3600 ? Math.floor(s / 60) + ' min ago' : s < 86400 ? Math.floor(s / 3600) + ' h ago' : fmtDay(new Date(iso));
 }
 function duration(sec) { return sec < 60 ? sec + 's' : Math.floor(sec / 60) + 'm ' + (sec % 60) + 's'; }
+function fmtSize(n) { n = Number(n) || 0; if (n < 1024) return n + ' B'; if (n < 1048576) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB'; return (n / 1048576).toFixed(1) + ' MB'; }
 const ASK_POLICY = {
   deletes_and_posts: 'Talaria asks before deleting anything or posting on social media. Everything else it just does.',
   strict: 'Talaria asks before running commands, changing files or sending anything out.',
@@ -818,10 +819,31 @@ function renderToday() {
     out.push(card);
   }
 
+  out.push(filesCard(d.files || [], d.files_retention_hours || 12));
+
   if (d.jobs && d.jobs.length) out.push(jobsCard(d.jobs));
 
   const todayBody = $('#today-body');
   keepScroll(todayBody, () => todayBody.replaceChildren(...out));
+}
+
+// Downloads live where the user looks: every kept file with its link, and
+// the hours left before the server deletes it.
+function filesCard(list, hours) {
+  const card = h('div', { class: 'card' }, h('h2', null, 'Downloads', h('small', { text: 'auto-deletes after ' + hours + 'h' })));
+  if (!list.length) {
+    card.append(h('div', { class: 'empty', text: 'Nothing kept right now. Attach a PDF or image in chat, or ask for one.' }));
+    return card;
+  }
+  const rows = h('div', { class: 'rows' });
+  list.slice(0, 8).forEach((f) => {
+    rows.append(h('div', { class: 'row' },
+      h('span', { class: 'grow' }, h('span', { class: 't', text: f.name }), h('span', { class: 's', text: (f.mime || 'file') + ' · ' + fmtSize(f.size) })),
+      h('a', { class: 'btn', href: '/api/files/' + f.id, text: 'Get', download: '' })));
+  });
+  card.append(rows);
+  if (list.length > 8) card.append(h('div', { class: 'field-note', text: '+' + (list.length - 8) + ' more — ask in chat for the full list.' }));
+  return card;
 }
 
 function hero(timed, now) {
@@ -1262,7 +1284,7 @@ function downloadsCard(s) {
     await saveFilesRetention(v);
   };
   return h('div', { class: 'card' }, h('h2', null, 'Downloads on this server'),
-    h('div', { class: 'field-note', text: 'Uploaded PDFs and images, and PDFs the agent makes, are deleted automatically after this long.' }),
+    h('div', { class: 'field-note', text: 'Uploaded PDFs and images, and PDFs the agent makes, are deleted automatically after this long. They are listed under Today.' }),
     h('div', { class: 'field' }, h('label', { class: 'field-label', for: 'files-retention', text: 'Hours downloads are kept' }), input),
     h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: save })));
 }
