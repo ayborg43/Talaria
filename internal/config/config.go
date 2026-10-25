@@ -294,6 +294,13 @@ type Policy struct {
 	SocialSites []string `json:"social_sites,omitempty"`
 }
 
+// Files holds the upload and download settings.
+type Files struct {
+	// RetentionHours is how long uploads and generated files live on the
+	// server before they are deleted. Default 12, from 1 to 168 hours.
+	RetentionHours int `json:"retention_hours,omitempty"`
+}
+
 // Permission modes, as written in the config.
 const (
 	PermissionsDeletesAndPosts = "deletes_and_posts"
@@ -416,6 +423,9 @@ type Config struct {
 	Timezone string `json:"timezone,omitempty"`
 	// Ops serves the gateway's health and metrics for a monitor to poll.
 	Ops Ops `json:"ops,omitzero"`
+	// Files holds the upload and download settings: what the web app keeps
+	// and how long it lives before it is deleted from the server.
+	Files Files `json:"files,omitzero"`
 	// ProtectedPaths are places the agent's file tools may not read, list or write,
 	// besides Talaria's own state and the usual credential directories (~/.ssh, ~/.aws, ...).
 	// "~/" means your home directory. Everything below a path is protected too.

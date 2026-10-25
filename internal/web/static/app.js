@@ -59,8 +59,8 @@ async function api(path, opts = {}) {
   const init = { method: opts.method || 'GET', headers: {}, credentials: 'same-origin' };
   if (init.method !== 'GET') {
     init.headers['X-Talaria'] = '1';
-    init.headers['Content-Type'] = 'application/json';
-    init.body = JSON.stringify(opts.body || {});
+    if (opts.raw) init.body = opts.body; // FormData goes through untouched
+    else { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(opts.body || {}); }
   }
   let r;
   try { r = await fetch(path, init); } catch { throw new Error('You appear to be offline.'); }
@@ -116,7 +116,7 @@ start();
 });
 
 // ---------- markdown (small, and safe: it only ever builds elements and text) ----------
-const INLINE = /(`[^`\n]+`|\*\*[^*\n]+\*\*|https?:\/\/[^\s<>]+[^\s<>.,;:!?'")\]])/g;
+const INLINE = /(`[^`\n]+`|\*\*[^*\n]+\*\*|https?:\/\/[^\s<>]+[^\s<>.,;:!?')\]]|\/api\/files\/[0-9a-fA-F]+)/g;
 function inline(text) {
   const out = []; let last = 0, m;
   INLINE.lastIndex = 0;
@@ -125,6 +125,7 @@ function inline(text) {
     const t = m[0];
     if (t.startsWith('`')) out.push(h('code', { text: t.slice(1, -1) }));
     else if (t.startsWith('**')) out.push(h('b', { text: t.slice(2, -2) }));
+    else if (t.startsWith('/api/files/')) out.push(h('a', { href: t, text: 'Download', download: '', rel: 'noopener' })); // a kept file, served by this server
     else out.push(h('a', { href: t, target: '_blank', rel: 'noopener noreferrer', text: t })); // shows the address it goes to
     last = m.index + t.length;
   }
@@ -219,8 +220,12 @@ function askCard(m, opts = {}) {
   return card;
 }
 
+function fileLinks(text) {
+  const parts = String(text || '').split(/(\/api\/files\/[0-9a-fA-F]+)/g);
+  return parts.map((p, i) => (i % 2 === 1 ? h('a', { href: p, text: 'Download', download: '', rel: 'noopener' }) : p));
+}
 function buildBlock(b, isLast) {
-  if (b.kind === 'user') return h('div', { class: 'msg-user', text: b.m.text });
+  if (b.kind === 'user') return h('div', { class: 'msg-user' }, fileLinks(b.m.text));
   if (b.kind === 'tools') {
     return h('div', { class: 'chips' }, b.items.map((t) => h('span', { class: 'chip ' + t.state },
       icon(t.state === 'ok' ? 'check' : t.state === 'error' ? 'x' : 'spin'), t.tool,
@@ -619,6 +624,20 @@ function renderTg() {
 }
 tg.addEventListener('click', () => { S.tgOn = !S.tgOn; renderTg(); input.focus(); });
 $('#stop').addEventListener('click', () => sendText('/stop'));
+// Attach a PDF or image: the server keeps it, purges it with the rest, and
+// tells the conversation, so the agent sees it like anything else sent.
+const fileInput = $('#file');
+$('#attach').addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', async () => {
+  const f = fileInput.files[0]; fileInput.value = '';
+  if (!f) return;
+  const fd = new FormData(); fd.append('file', f);
+  toast('Uploading ' + f.name + '…');
+  try {
+    const d = await api('/api/files', { method: 'POST', raw: true, body: fd });
+    toast('Kept ' + d.name + '. Expires with the rest.');
+  } catch (e) { if (!(e instanceof AuthError)) toast(e.message); }
+});
 async function openSheet() {
   const body = $('#sheet-body');
   $('#sheet').hidden = false;
@@ -1222,7 +1241,30 @@ function panePermissions(s) {
     h('div', { class: 'field-note', text: 'A command that deletes is recognised by what it says, so an unusual one can slip past. Turn on the stricter choice if you want a second pair of eyes on every command.' })));
   out.push(h('div', { class: 'card' }, h('h2', null, 'While it waits'),
     h('div', { class: 'field-note', text: 'The question is saved, the agent carries on with anything else, and you will find it under Agents and in your notifications. Answer whenever you like, even after a restart: the saved step is then done and the work picks up where it stopped. Unanswered questions lapse after a week.' })));
+  out.push(downloadsCard(s));
   return out;
+}
+
+// Downloads live on the server until the retention runs out; the admin sets
+// how long, from 1 to 168 hours (12 when unset).
+async function saveFilesRetention(hours) {
+  try {
+    await api('/api/settings', { method: 'POST', body: { files_retention_hours: hours } });
+    toast('Saved. Applies to new and kept files within the hour.');
+  } catch (e) { if (!(e instanceof AuthError)) toast(e.message); }
+  loadSettings();
+}
+function downloadsCard(s) {
+  const input = h('input', { id: 'files-retention', type: 'number', min: 1, max: 168, value: s.files_retention_hours || 12 });
+  const save = async () => {
+    const v = Math.floor(Number(input.value));
+    if (!v || v < 1 || v > 168) { toast('Keep it between 1 and 168 hours.'); return; }
+    await saveFilesRetention(v);
+  };
+  return h('div', { class: 'card' }, h('h2', null, 'Downloads on this server'),
+    h('div', { class: 'field-note', text: 'Uploaded PDFs and images, and PDFs the agent makes, are deleted automatically after this long.' }),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', for: 'files-retention', text: 'Hours downloads are kept' }), input),
+    h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: save })));
 }
 
 function paneConnections(s) {

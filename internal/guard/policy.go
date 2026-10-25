@@ -45,6 +45,7 @@ var knownTools = map[string]bool{
 	"cron_add":        true, "cron_list": true, "cron_remove": true,
 	"current_time": true, "delegate": true,
 	"email_folders": true, "email_list": true, "email_read": true,
+	"files_delete": true, "files_list": true, "files_make_pdf": true,
 	"finance_import": true,
 	"goal_create":    true, "goal_get": true, "goal_list": true, "goal_update": true,
 	"idea_accept": true, "idea_add": true, "idea_dismiss": true, "idea_edit": true, "idea_list": true,

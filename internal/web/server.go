@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"net/mail"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +24,7 @@ import (
 	"slices"
 	"talaria/internal/calendar"
 	"talaria/internal/config"
+	"talaria/internal/files"
 
 	"talaria/internal/gateway/chat"
 	"talaria/internal/mailbox"
@@ -118,6 +121,9 @@ type Server struct {
 	// Convos keeps every conversation of this chat: the page shows the
 	// active one and can go back to any of them. Nil keeps one thread only.
 	Convos *Convos
+	// Files keeps uploads from the page and PDFs the agent makes, served back
+	// as downloads. Nil uses a store next to the config file.
+	Files *files.Store
 
 	cacheMu   sync.Mutex
 	todayAt   time.Time
@@ -154,6 +160,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/chats", s.authed(s.chats))
 	mux.HandleFunc("POST /api/chats", s.authed(s.switchChat))
 	mux.HandleFunc("POST /api/presence", s.authed(s.presence))
+	mux.HandleFunc("POST /api/files", s.authed(s.upload))
+	mux.HandleFunc("GET /api/files", s.authed(s.filesList))
+	mux.HandleFunc("GET /api/files/{id}", s.authed(s.download))
 	mux.HandleFunc("GET /api/today", s.authed(s.today))
 	mux.HandleFunc("GET /api/agents", s.authed(s.agents))
 	mux.HandleFunc("GET /api/control", s.authed(s.control))
@@ -184,6 +193,8 @@ func (s *Server) Serve(ctx context.Context, addr string) error {
 		defer cancel()
 		srv.Shutdown(sh)
 	}()
+	s.purgeFiles()
+	go s.sweepFiles(ctx)
 	s.logf("web: serving the app on %s", ln.Addr())
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -365,6 +376,7 @@ type settingsView struct {
 	PermissionsEnv      bool   `json:"permissions_env,omitempty"`
 	SubagentMaxSteps    int    `json:"subagent_max_steps"`
 	SubagentMaxParallel int    `json:"subagent_max_parallel"`
+	FilesRetentionHours int    `json:"files_retention_hours"`
 }
 
 // settingsEmail is the mailbox as Settings shows it: everything but the password.
@@ -559,6 +571,7 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 		PermissionsRunning:  permissionsName(s.Permissions),
 		PermissionsEnv:      s.Getenv != nil && s.Getenv("TALARIA_PERMISSIONS") != "",
 		SubagentMaxParallel: s.Cfg.Subagents.MaxParallel,
+		FilesRetentionHours: int(s.fileRetention() / time.Hour),
 		KeyEnvs:             config.DefaultKeyEnvs(),
 		Presets:             config.Presets(),
 		Strengths:           config.ProfileStrengths,
@@ -608,23 +621,24 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 
 // settingsUpdateRequest is the payload for POST /api/settings.
 type settingsUpdateRequest struct {
-	Name         string           `json:"name"`
-	Type         string           `json:"type,omitempty"`
-	BaseURL      string           `json:"base_url,omitempty"`
-	Model        string           `json:"model,omitempty"`
-	APIKey       string           `json:"api_key,omitempty"`
-	APIKeyEnv    string           `json:"api_key_env,omitempty"`
-	Delete       bool             `json:"_delete,omitempty"`
-	UseProfile   string           `json:"use_profile,omitempty"`   // switch this chat to a profile, saving nothing
-	TestProfile  string           `json:"test_profile,omitempty"`  // send one tiny prompt through a profile, saving nothing
-	BestFor      []string         `json:"best_for,omitempty"`      // what the profile is good at, for the router
-	Email        *emailUpdate     `json:"email,omitempty"`         // replace the mailbox settings
-	Calendar     *calendarUpdate  `json:"calendar,omitempty"`      // add, edit or delete a feed
-	ChatToken    *chatTokenUpdate `json:"chat_token,omitempty"`    // replace a bot token
-	TestEmail    bool             `json:"test_email,omitempty"`    // list the mailbox's folders, saving nothing
-	TestCalendar string           `json:"test_calendar,omitempty"` // read one feed for a day, saving nothing
-	TestX        bool             `json:"test_x,omitempty"`        // check the X sign-in, saving nothing
-	Permissions  string           `json:"permissions,omitempty"`   // which calls ask first: deletes_and_posts or strict
+	Name                string           `json:"name"`
+	Type                string           `json:"type,omitempty"`
+	BaseURL             string           `json:"base_url,omitempty"`
+	Model               string           `json:"model,omitempty"`
+	APIKey              string           `json:"api_key,omitempty"`
+	APIKeyEnv           string           `json:"api_key_env,omitempty"`
+	Delete              bool             `json:"_delete,omitempty"`
+	UseProfile          string           `json:"use_profile,omitempty"`           // switch this chat to a profile, saving nothing
+	TestProfile         string           `json:"test_profile,omitempty"`          // send one tiny prompt through a profile, saving nothing
+	BestFor             []string         `json:"best_for,omitempty"`              // what the profile is good at, for the router
+	Email               *emailUpdate     `json:"email,omitempty"`                 // replace the mailbox settings
+	Calendar            *calendarUpdate  `json:"calendar,omitempty"`              // add, edit or delete a feed
+	ChatToken           *chatTokenUpdate `json:"chat_token,omitempty"`            // replace a bot token
+	TestEmail           bool             `json:"test_email,omitempty"`            // list the mailbox's folders, saving nothing
+	TestCalendar        string           `json:"test_calendar,omitempty"`         // read one feed for a day, saving nothing
+	TestX               bool             `json:"test_x,omitempty"`                // check the X sign-in, saving nothing
+	Permissions         string           `json:"permissions,omitempty"`           // which calls ask first: deletes_and_posts or strict
+	FilesRetentionHours *int             `json:"files_retention_hours,omitempty"` // how long downloads live, 1 to 168 hours
 }
 
 func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
@@ -722,6 +736,10 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		s.savePermissions(w, in.Permissions)
 		return
 	}
+	if in.FilesRetentionHours != nil {
+		s.saveFilesRetention(w, *in.FilesRetentionHours)
+		return
+	}
 	if in.Email != nil {
 		s.saveEmail(w, in.Email)
 		return
@@ -816,6 +834,20 @@ func okRestart(w http.ResponseWriter, restart bool) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// saveFilesRetention sets how long downloads live on the server. The
+// sweeper picks it up within the hour; nothing restarts.
+func (s *Server) saveFilesRetention(w http.ResponseWriter, hours int) {
+	if hours < files.MinRetentionHours || hours > files.MaxRetentionHours {
+		fail(w, http.StatusBadRequest, fmt.Sprintf("files_retention_hours must be %d to %d", files.MinRetentionHours, files.MaxRetentionHours))
+		return
+	}
+	s.Cfg.Files.RetentionHours = hours
+	if !s.writeConfig(w) {
+		return
+	}
+	okRestart(w, false)
 }
 
 // permissionsName is a permission mode as the page shows it: the empty one means the default.
@@ -1091,6 +1123,127 @@ func (s *Server) presence(w http.ResponseWriter, r *http.Request) {
 		s.Hub.Seen()
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---- files ----
+
+// fileStore is where uploads and generated PDFs live. An explicit store wins
+// (tests set one); otherwise it is a files directory next to the config file,
+// shared with the agent's file tools.
+func (s *Server) fileStore() *files.Store {
+	if s.Files != nil {
+		return s.Files
+	}
+	if s.ConfigPath == "" {
+		return nil
+	}
+	return &files.Store{Dir: filepath.Join(filepath.Dir(s.ConfigPath), "files")}
+}
+
+// fileRetention is the download lifetime the admin sets, 12 hours by default.
+func (s *Server) fileRetention() time.Duration {
+	hours := files.DefaultRetentionHours
+	if s.Cfg != nil {
+		hours = files.ClampRetention(s.Cfg.Files.RetentionHours)
+	}
+	return time.Duration(hours) * time.Hour
+}
+
+func (s *Server) purgeFiles() {
+	st := s.fileStore()
+	if st == nil {
+		return
+	}
+	if n, err := st.Purge(s.fileRetention()); err != nil {
+		s.logf("web: files purge: %v", err)
+	} else if n > 0 {
+		s.logf("web: files purge: deleted %d expired", n)
+	}
+}
+
+// sweepFiles deletes expired downloads every hour until the server stops.
+func (s *Server) sweepFiles(ctx context.Context) {
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.purgeFiles()
+		}
+	}
+}
+
+// upload keeps one PDF or image from the page and tells the conversation, so
+// the agent sees it the same way it sees anything the user sends.
+func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
+	st := s.fileStore()
+	if st == nil {
+		fail(w, http.StatusInternalServerError, "files are not set up here")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, files.MaxBytes+1<<20)
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		fail(w, http.StatusBadRequest, "that upload did not arrive whole; try a smaller file")
+		return
+	}
+	fh, hdr, err := r.FormFile("file")
+	if err != nil {
+		fail(w, http.StatusBadRequest, "attach a PDF or an image")
+		return
+	}
+	defer fh.Close()
+	raw, err := io.ReadAll(io.LimitReader(fh, files.MaxBytes+1))
+	if err != nil {
+		fail(w, http.StatusBadRequest, "that upload could not be read")
+		return
+	}
+	f, err := st.Save(hdr.Filename, raw, files.OriginUpload)
+	if err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.purgeFiles()
+	s.Hub.AddUser("Uploaded " + f.Name + " — /api/files/" + f.ID)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": f.ID, "name": f.Name, "mime": f.MIME, "size": f.Size,
+	})
+}
+
+// filesList names every kept file, newest first.
+func (s *Server) filesList(w http.ResponseWriter, r *http.Request) {
+	st := s.fileStore()
+	if st == nil {
+		fail(w, http.StatusInternalServerError, "files are not set up here")
+		return
+	}
+	s.purgeFiles()
+	list, err := st.List()
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "could not list files")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": list, "retention_hours": int(s.fileRetention() / time.Hour)})
+}
+
+// download serves one kept file. Expired files are already gone: purging on
+// every download means a stale link stops working within the hour.
+func (s *Server) download(w http.ResponseWriter, r *http.Request) {
+	st := s.fileStore()
+	if st == nil {
+		fail(w, http.StatusInternalServerError, "files are not set up here")
+		return
+	}
+	s.purgeFiles()
+	f, raw, err := st.Open(r.PathValue("id"))
+	if err != nil {
+		fail(w, http.StatusNotFound, "no such file: it may have expired")
+		return
+	}
+	w.Header().Set("Content-Type", f.MIME)
+	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(f.Name))
+	http.ServeContent(w, r, f.Name, f.Created, bytes.NewReader(raw))
 }
 
 // ---- today ----
