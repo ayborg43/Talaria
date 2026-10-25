@@ -210,6 +210,19 @@ func (c *cli) setupModel(gateway bool) (err error) {
 	if err != nil {
 		return err
 	}
+	if name := strings.TrimSpace(c.cfg.FallbackProfile); name != "" && name != res.Name {
+		if fb, ferr := c.cfg.Resolve(config.Overrides{Profile: name}, c.getenv); ferr != nil {
+			c.log.Warn("fallback profile " + name + " ignored: " + ferr.Error())
+		} else if ferr := fb.CheckKey(); ferr != nil {
+			c.log.Warn("fallback profile " + name + " ignored: " + ferr.Error())
+		} else if fp, ferr := provider.New(fb.Spec()); ferr != nil {
+			c.log.Warn("fallback profile " + name + " ignored: " + ferr.Error())
+		} else {
+			p = provider.Failover{Primary: p, Secondary: fp, OnFallback: func(err error) {
+				c.log.Warn("primary model down (" + err.Error() + "): trying " + fb.Model)
+			}}
+		}
+	}
 	// Where the shell and file tools run. A container or connection that cannot
 	// be set up stops us here: falling back to this machine would run things
 	// somewhere the user chose not to.
@@ -247,10 +260,10 @@ func (c *cli) setupModel(gateway bool) (err error) {
 	}
 	xSvc := buildX(c.cfg, c.getenv)
 	appCfg := app.Config{Home: c.home, Provider: p, Model: res.Model, MCP: c.servers, Subagents: c.cfg.Subagents, Env: env, Guard: guarded, Fence: buildFence(c.cfg, c.cfgPath, c.home), Calendars: calSvc, Mail: mailSvc, X: xSvc, Ask: askMode(c.cfg, c.getenv), SocialSites: c.cfg.Policy.SocialSites, TrustOutsideContent: !c.cfg.Policy.GuardUntrusted(), ModelCallsPerHour: c.cfg.Limits.ModelCalls(), Log: c.log,
-		Browser: browserConfig(c.cfg), Goals: &goal.Store{Path: filepath.Join(c.home, "goals.json")},
-		Watches: &watch.Store{Path: filepath.Join(c.home, "watches.json")},
-		Ideas:   &idea.Store{Path: filepath.Join(c.home, "ideas.json")},
-		Choices: &choice.Store{Path: filepath.Join(c.home, "choices.json")},
+		Browser: browserConfig(c.cfg), Goals: &goal.Store{Path: filepath.Join(c.home, "sessions.db")},
+		Watches: &watch.Store{Path: filepath.Join(c.home, "sessions.db")},
+		Ideas:   &idea.Store{Path: filepath.Join(c.home, "sessions.db")},
+		Choices: &choice.Store{Path: filepath.Join(c.home, "sessions.db")},
 		Files: &files.Store{Dir: filepath.Join(c.home, "files"),
 			MaxTotalBytes: files.QuotaBytes(c.cfg.Files.MaxTotalMB),
 			Retention:     time.Duration(files.ClampRetention(c.cfg.Files.RetentionHours)) * time.Hour}}

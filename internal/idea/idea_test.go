@@ -2,6 +2,7 @@ package idea
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,7 +13,7 @@ import (
 
 func testStore(t *testing.T) *Store {
 	t.Helper()
-	return &Store{Path: filepath.Join(t.TempDir(), "ideas.json")}
+	return &Store{Path: filepath.Join(t.TempDir(), "sessions.db")}
 }
 
 func TestAddNeedsSourceEvidence(t *testing.T) {
@@ -96,5 +97,28 @@ func TestAcceptEditDismiss(t *testing.T) {
 	}
 	if err := s.Dismiss("telegram", 1, id); err == nil {
 		t.Fatal("another service cannot dismiss this chat's idea")
+	}
+}
+
+func TestLegacyJSONIsImportedOnce(t *testing.T) {
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, "ideas.json")
+	raw := `{"ideas":[{"id":"ab12","gateway":"discord","chat_id":1,"title":"Watch the price page","body":"body","sources":[{"title":"p","url":"https://p.example/"}],"status":"open","created":"2026-10-20T10:00:00Z","updated":"2026-10-20T10:00:00Z"}]}`
+	if err := os.WriteFile(legacy, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Store{Path: filepath.Join(dir, "sessions.db")}
+	got := s.Suggest("discord", 1, nil, nil)
+	if len(got) != 1 || got[0].ID != "ab12" || got[0].Title != "Watch the price page" {
+		t.Fatalf("%+v", got)
+	}
+	if _, err := os.Stat(legacy + ".migrated"); err != nil {
+		t.Fatalf("legacy renamed after import: %v", err)
+	}
+	if _, err := s.Add("discord", 1, "Plan the trip", "body", []Source{{Title: "p", URL: "https://p.example/"}}); err != nil {
+		t.Fatal(err)
+	}
+	if again := (&Store{Path: s.Path}).Suggest("discord", 1, nil, nil); len(again) != 2 {
+		t.Fatalf("imported ideas persist beside new ones: %+v", again)
 	}
 }

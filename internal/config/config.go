@@ -396,15 +396,19 @@ type Workspace struct {
 }
 
 type Config struct {
-	DefaultProfile string             `json:"default_profile,omitempty"`
-	Profiles       map[string]Profile `json:"profiles,omitempty"`
-	Telegram       Telegram           `json:"telegram,omitzero"`
-	Discord        Discord            `json:"discord,omitzero"`
-	X              X                  `json:"x,omitzero"`
-	Policy         Policy             `json:"policy,omitzero"`
-	Browser        Browser            `json:"browser,omitzero"`
-	Workspace      Workspace          `json:"workspace,omitzero"`
-	Vault          Vault              `json:"vault,omitzero"`
+	DefaultProfile string `json:"default_profile,omitempty"`
+	// FallbackProfile names a second profile tried when the first is down
+	// (rate limited, overloaded, unreachable). Refused keys and billing
+	// errors never fall back: another model would refuse them too.
+	FallbackProfile string             `json:"fallback_profile,omitempty"`
+	Profiles        map[string]Profile `json:"profiles,omitempty"`
+	Telegram        Telegram           `json:"telegram,omitzero"`
+	Discord         Discord            `json:"discord,omitzero"`
+	X               X                  `json:"x,omitzero"`
+	Policy          Policy             `json:"policy,omitzero"`
+	Browser         Browser            `json:"browser,omitzero"`
+	Workspace       Workspace          `json:"workspace,omitzero"`
+	Vault           Vault              `json:"vault,omitzero"`
 	// MCPServers are external tool servers, keyed by a short name.
 	MCPServers map[string]mcp.Server `json:"mcp_servers,omitempty"`
 	// Environments are places the shell and file tools can run instead of this

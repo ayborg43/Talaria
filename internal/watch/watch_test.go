@@ -16,7 +16,7 @@ import (
 
 func store(t *testing.T) *Store {
 	t.Helper()
-	return &Store{Path: filepath.Join(t.TempDir(), "w", "watches.json")}
+	return &Store{Path: filepath.Join(t.TempDir(), "sessions.db")}
 }
 
 func newWatch(chat int64) Watch {
@@ -434,6 +434,29 @@ func TestPromptShowsWhatCameFromOutsideAsData(t *testing.T) {
 	}
 	if !strings.Contains(Prompt(w, "", ""), "(nothing)") {
 		t.Fatal("an empty answer is said to be empty")
+	}
+}
+
+func TestLegacyJSONIsImportedOnce(t *testing.T) {
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, "watches.json")
+	raw := `{"watches":[{"id":"ab12","gateway":"discord","chat_id":1,"title":"Mail from Sam","tool":"mcp_mail_search","args":{},"every":900000000000,"status":"active","max_triggers":30,"created":"2026-10-20T10:00:00Z","updated":"2026-10-20T10:00:00Z"}]}`
+	if err := os.WriteFile(legacy, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Store{Path: filepath.Join(dir, "sessions.db")}
+	ws, err := s.List("discord", 1)
+	if err != nil || len(ws) != 1 || ws[0].ID != "ab12" || ws[0].Title != "Mail from Sam" {
+		t.Fatalf("%+v %v", ws, err)
+	}
+	if _, err := os.Stat(legacy + ".migrated"); err != nil {
+		t.Fatalf("legacy renamed after import: %v", err)
+	}
+	if _, err := s.Add(newWatch(1)); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := (&Store{Path: s.Path}).List("discord", 1); err != nil || len(again) != 2 {
+		t.Fatalf("imported watches persist beside new ones: %+v %v", again, err)
 	}
 }
 

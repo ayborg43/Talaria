@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -22,6 +23,7 @@ import (
 	"talaria/internal/agent"
 	"talaria/internal/calendar"
 	"talaria/internal/config"
+	"talaria/internal/files"
 	"talaria/internal/gateway/chat"
 	"talaria/internal/mailbox"
 	"talaria/internal/provider"
@@ -227,11 +229,96 @@ func until(t *testing.T, ch <-chan Event, what string, ok func(Event) bool) Even
 	}
 }
 
+func TestFilesRoundTrip(t *testing.T) {
+	r := newRig(t)
+	r.login()
+	png := append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, make([]byte, 100)...)
+	r.srv.Files = &files.Store{Dir: filepath.Join(t.TempDir(), "files")}
+
+	upload := func(name string, data []byte) (*http.Response, []byte) {
+		t.Helper()
+		var body bytes.Buffer
+		w := multipart.NewWriter(&body)
+		part, err := w.CreateFormFile("file", name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		part.Write(data)
+		w.Close()
+		req, _ := http.NewRequest("POST", r.ts.URL+"/api/files", &body)
+		req.Header.Set("X-Talaria", "1")
+		req.Header.Set("Content-Type", w.FormDataContentType())
+		resp, err := r.c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp, raw
+	}
+
+	resp, raw := upload("shot.png", png)
+	if resp.StatusCode != 200 {
+		t.Fatalf("upload: %d %s", resp.StatusCode, raw)
+	}
+	var kept struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+		MIME string `json:"mime"`
+	}
+	if err := json.Unmarshal(raw, &kept); err != nil || kept.ID == "" {
+		t.Fatalf("upload answer: %s %v", raw, err)
+	}
+
+	resp, raw = upload("evil.html", []byte("<html>........................................................................"))
+	if resp.StatusCode != 400 {
+		t.Fatalf("an HTML upload should be refused: %d %s", resp.StatusCode, raw)
+	}
+
+	download := func(path string) (*http.Response, []byte) {
+		t.Helper()
+		resp, body := r.do("GET", path, nil)
+		return resp, body
+	}
+	resp, raw = download("/api/files/" + kept.ID)
+	if resp.StatusCode != 200 || !bytes.Equal(raw, png) {
+		t.Fatalf("download: %d bytes %d", resp.StatusCode, len(raw))
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "image/png" {
+		t.Fatalf("content type: %q", ct)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); !strings.HasPrefix(cd, "attachment;") {
+		t.Fatalf("disposition: %q", cd)
+	}
+
+	resp, _ = download("/api/files/nope")
+	if resp.StatusCode != 404 {
+		t.Fatalf("a missing file should 404: %d", resp.StatusCode)
+	}
+}
+
+func TestFilesExpiredAreGone(t *testing.T) {
+	r := newRig(t)
+	r.login()
+	then := time.Now()
+	old := &files.Store{Dir: filepath.Join(t.TempDir(), "files"), Now: func() time.Time { return then.Add(-13 * time.Hour) }}
+	f, err := old.Save("old.pdf", append([]byte("%PDF-1.4 test body for the detector...................."), make([]byte, 64)...), files.OriginUpload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.srv.Files = &files.Store{Dir: old.Dir}
+	resp, _ := r.do("GET", "/api/files/"+f.ID, nil)
+	if resp.StatusCode != 404 {
+		t.Fatalf("an expired file should be gone: %d", resp.StatusCode)
+	}
+}
+
 func TestEveryRouteNeedsASignIn(t *testing.T) {
 	r := newRig(t)
 	for _, rt := range []struct{ m, p string }{
 		{"GET", "/api/state"}, {"GET", "/api/settings"}, {"POST", "/api/settings"}, {"GET", "/api/events"}, {"POST", "/api/send"}, {"POST", "/api/approve"}, {"POST", "/api/presence"}, {"GET", "/api/today"},
 		{"GET", "/api/control"}, {"GET", "/api/agents"}, {"POST", "/api/pause"}, {"GET", "/api/push/key"}, {"POST", "/api/push/subscribe"}, {"POST", "/api/push/unsubscribe"}, {"POST", "/api/logout"},
+		{"POST", "/api/files"}, {"GET", "/api/files"}, {"GET", "/api/files/nope"},
 	} {
 		resp, body := r.do(rt.m, rt.p, map[string]string{})
 		if resp.StatusCode != 401 {

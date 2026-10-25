@@ -1,6 +1,7 @@
 package choice
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -8,7 +9,7 @@ import (
 
 func testStore(t *testing.T) *Store {
 	t.Helper()
-	return &Store{Path: filepath.Join(t.TempDir(), "choices.json")}
+	return &Store{Path: filepath.Join(t.TempDir(), "sessions.db")}
 }
 
 func src() []Source { return []Source{{Title: "aquarium", URL: "https://example.org/visits"}} }
@@ -93,5 +94,30 @@ func TestRenderNamesOptions(t *testing.T) {
 	out := Render(p)
 	if !strings.Contains(out, "Morning") || !strings.Contains(out, "opens at 9") {
 		t.Fatalf("the user cannot pick from this:\n%s", out)
+	}
+}
+
+func TestLegacyJSONIsImportedOnce(t *testing.T) {
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, "choices.json")
+	raw := `{"panels":[{"id":"ab12","gateway":"discord","chat_id":1,"thread":"main","type":"clarification","title":"When?","options":[{"id":"a","label":"Morning"}],"status":"open","version":1,"created":"2026-10-20T10:00:00Z","updated":"2026-10-20T10:00:00Z"}]}`
+	if err := os.WriteFile(legacy, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Store{Path: filepath.Join(dir, "sessions.db")}
+	got, err := s.Get("discord", 1, "ab12")
+	if err != nil || got.Title != "When?" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if _, err := os.Stat(legacy + ".migrated"); err != nil {
+		t.Fatalf("legacy renamed after import: %v", err)
+	}
+	if _, err := s.Present("discord", 1, "trip", Clarification, "Where?",
+		[]Option{{ID: "a", Label: "Morning"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	again, err := (&Store{Path: s.Path}).Get("discord", 1, "ab12")
+	if err != nil || again.Title != "When?" {
+		t.Fatalf("imported panels persist beside new ones: %+v %v", again, err)
 	}
 }

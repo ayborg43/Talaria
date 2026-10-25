@@ -140,9 +140,9 @@ func apiError(resp *http.Response) error {
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode/100 == 3 {
-		return fmt.Errorf("provider answered %s and sent the request elsewhere. Talaria does not follow redirects, as they would carry your key along: set base_url to the address the provider means", resp.Status)
+		return &StatusError{Status: resp.StatusCode, Err: fmt.Errorf("provider answered %s and sent the request elsewhere. Talaria does not follow redirects, as they would carry your key along: set base_url to the address the provider means", resp.Status)}
 	}
-	return fmt.Errorf("provider returned %s: %s", resp.Status, errorMessage(raw))
+	return &StatusError{Status: resp.StatusCode, Err: fmt.Errorf("provider returned %s: %s", resp.Status, errorMessage(raw))}
 }
 
 // errorMessage pulls the human message out of {"error":{"message":...}} or

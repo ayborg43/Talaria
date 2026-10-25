@@ -92,6 +92,21 @@ func TestBackupKeepsStateAndLeavesOutKeysAndBrowserProfile(t *testing.T) {
 	}
 }
 
+func TestBackupLeavesOutDownloads(t *testing.T) {
+	home := sampleHome(t)
+	put(t, home, "files/abc123.pdf", "%PDF-kept", 0o600)
+	put(t, home, "files/index.json", "{}", 0o600)
+	var buf bytes.Buffer
+	if _, err := Create(home, &buf, Options{Exclude: []string{filepath.Join(home, "vault.key")}}); err != nil {
+		t.Fatal(err)
+	}
+	for name := range entries(t, buf.Bytes()) {
+		if name == "files" || strings.HasPrefix(name, "files/") {
+			t.Errorf("expiring downloads do not belong in a backup: %s", name)
+		}
+	}
+}
+
 func TestRestoreRoundTripsAndKeepsEverythingPrivate(t *testing.T) {
 	home := sampleHome(t)
 	var buf bytes.Buffer

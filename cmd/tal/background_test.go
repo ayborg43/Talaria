@@ -50,7 +50,7 @@ func newGoalRig(t *testing.T) *goalRig {
 	t.Helper()
 	home := t.TempDir()
 	model := &spy{reply: "did the work"}
-	goals := &goal.Store{Path: filepath.Join(home, "goals.json")}
+	goals := &goal.Store{Path: filepath.Join(home, "sessions.db")}
 	rt := app.Open(app.Config{Home: home, Provider: model, Model: "m", Env: execenv.Local{}, Goals: goals})
 	t.Cleanup(rt.Close)
 	return &goalRig{model: model, goals: goals, rt: rt,

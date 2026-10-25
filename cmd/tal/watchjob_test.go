@@ -95,7 +95,7 @@ func newWatchRig(t *testing.T, model provider.Provider) *watchRig {
 	if model == nil {
 		model = &spy{reply: "Sam wrote."}
 	}
-	watches := &watch.Store{Path: filepath.Join(home, "watches.json")}
+	watches := &watch.Store{Path: filepath.Join(home, "sessions.db")}
 	rt := app.Open(app.Config{Home: home, Provider: model, Model: "m", Env: execenv.Local{}, MCP: m, Watches: watches})
 	t.Cleanup(rt.Close)
 	r := &watchRig{watches: watches, rt: rt, mail: mail, chat: 5,
@@ -342,7 +342,7 @@ func TestTheModelGetsWatchToolsOnlyWhereThereIsAServiceToWatch(t *testing.T) {
 		t.Error("no chat, no watches")
 	}
 	home := t.TempDir()
-	bare := app.Open(app.Config{Home: home, Provider: &spy{}, Model: "m", Env: execenv.Local{}, Watches: &watch.Store{Path: filepath.Join(home, "w.json")}})
+	bare := app.Open(app.Config{Home: home, Provider: &spy{}, Model: "m", Env: execenv.Local{}, Watches: &watch.Store{Path: filepath.Join(home, "sessions.db")}})
 	defer bare.Close()
 	if _, ok := bare.NewAgent(app.AgentOptions{ChatID: 5}).Tools.Get("watch_list"); ok {
 		t.Error("with no connected service there is nothing to watch")

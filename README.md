@@ -53,6 +53,8 @@ setups and switch between them, create a config file:
 - **Precedence**, highest first: flags, environment, the selected profile, built-in defaults.
   Flags and variables: `-profile` / `TALARIA_PROFILE`, `-model` / `TALARIA_MODEL`, `-base-url` / `TALARIA_BASE_URL`, `TALARIA_API_KEY`, and `TALARIA_PROVIDER` (`openai`, `anthropic` or `deepseek`: with it and the provider's usual key variable, no config file is needed).
 - **Profile choice:** `-profile`, else `default_profile`, else the only profile if there is just one.
+- **Fallback:** `fallback_profile` names a second profile, tried when the first is down (rate-limited, overloaded,
+  unreachable). Refused keys and billing errors never fall back: another model would refuse them too.
 - **Telegram and Discord:** `allowed_users`, `token_env` and `stream` can live in the `telegram` and `discord` sections;
   `TALARIA_TELEGRAM_TOKEN` / `TALARIA_TELEGRAM_ALLOWED_USERS` and `TALARIA_DISCORD_TOKEN` / `TALARIA_DISCORD_ALLOWED_USERS`
   override the first two. Discord user IDs may be written as strings (as Discord shows them, and safest) or numbers.
@@ -108,7 +110,7 @@ State lives in `~/.talaria` (override with `TALARIA_HOME`):
 | `skills/<name>/SKILL.md` | Reusable procedures. Only names and descriptions go in the prompt; the agent loads a body with `skill_view`. |
 | `memories/MEMORY.md` | The agent's own notes, capped at 2,200 characters. |
 | `memories/USER.md` | What it knows about you, capped at 1,375 characters. |
-| `sessions.db` | SQLite with FTS5: every user and assistant message, searched with `session_search`. |
+| `sessions.db` | SQLite with FTS5: every user and assistant message (searched with `session_search`), plus goals, watches, ideas and choice panels. |
 
 Notes and the skill index are read once at session start, so the prompt stays stable.
 Changes the agent makes show up from the next session.
@@ -581,8 +583,8 @@ until something changes.
 
 ## Web app (installable on your phone)
 
-Talaria has its own page, with four places: **Chat** (replies stream in as they are written, with a chip for each tool it uses),
-**Today** (your calendar and mail at a glance, with a countdown to your next event), **Agents** (what is **waiting for your OK**, who is
+Talaria has its own page, with four places: **Chat** (replies stream in as they are written, with a chip for each tool it uses; the paperclip attaches a PDF or image, which the agent sees like anything else sent),
+**Today** (your calendar and mail at a glance, with a countdown to your next event, plus the kept downloads with how long each has left), **Agents** (what is **waiting for your OK**, who is
 working and on which model, what runs on its own, what finished, and a switch that holds everything) and **Settings** (AI models,
 permissions, connections, notifications, and the account). It works alongside Telegram, not instead of it: it is the same agent,
 with the same safety rules, and the same conversation history, goals, watches and reminders.
@@ -610,6 +612,9 @@ Without `TALARIA_WEB_PUBLIC_URL` it works in a browser on that machine but canno
   was sent). You get one when something **needs your OK**, and when a reply or a reminder arrives while the app is closed; none while you
   are looking at it. Tapping one opens the app at the right screen. They never carry buttons that answer: a question that could run a
   command is answered inside the app, where all of it can be read.
+- **Files and downloads.** Uploads from the chat and PDFs the agent makes live on the server under **Today** with their
+  remaining time, then are deleted automatically: after 12 hours unless the admin sets otherwise (Settings), and past
+  100 MB total the oldest go first (also settable). Nothing is kept on the phone.
 - **Who is working.** While anything is working, a strip under the chat header names each worker, what it is doing right now, and for
   how long: the main agent ("using email_list"), each subagent it has handed a task to (by the name it gave the task, with a note when
   it is waiting for a free place), and the background tasks, goal check-ins, watches and scheduled jobs that are running. The header
@@ -621,8 +626,7 @@ Without `TALARIA_WEB_PUBLIC_URL` it works in a browser on that machine but canno
   switch is kept in a file, so a restart does not quietly undo it. Chat still works while paused.
 - **Light and dark** follow your phone. **Offline,** the app opens and says so; nothing from your conversation, mail or calendar is stored
   on the phone, only the app itself.
-- **What it is not.** One person, one password: there are no accounts, and no passkeys yet. It does not stream voice or open files from
-  your phone, and the dictation button appears only where the browser offers speech recognition.
+- **What it is not.** One person, one password: there are no accounts, and no passkeys yet. It does not stream voice, and the dictation button appears only where the browser offers speech recognition.
 
 ## Subagents
 
@@ -917,7 +921,7 @@ like), a short plan, and how often to check in (default every 6 hours; from 15 m
 - **You stay in charge.** `/goals` lists them, `/goals show ID` shows one in full, `/goals pause|resume|done|drop ID` changes
   one. Creating a goal asks first, and the prompt says how often it will check in, how many times, and whether it may use risky
   tools while you are not looking. A check-in can update goals but cannot start new goals, tasks or schedules.
-- Check-ins are scheduled jobs of their own kind (`tal cron list` shows them), kept in `~/.talaria/goals.json` (mode 0600).
+- Check-ins are scheduled jobs of their own kind (`tal cron list` shows them), kept in `~/.talaria/sessions.db` (mode 0600); an old `goals.json` is imported once, then renamed aside.
 
 Check-ins are unattended, so a goal that works in a browser needs its browser tools allowed: either allow them in the
 config (`"policy": {"rules": {"browser_*": "allow", "browser_fill": "allow"}}`; see below for why `browser_fill` is safe to
@@ -964,15 +968,17 @@ sites and usernames are encrypted too, and tampering with the file is detected).
 
 ### Watches
 
-"Tell me when Sam emails" or "keep an eye on my calendar for changes" sets up a **watch** on a connected service
-(see Connecting to a service). The agent chooses one of the service's read-only tools with `watch_create`, you approve it
+"Tell me when Sam emails", "keep an eye on my calendar for changes" or "tell me when this page changes" sets up a
+**watch** on a connected service (see Connecting to a service) or a public web page (`web_fetch`). The agent chooses one of
+the service's read-only tools with `watch_create`, you approve it
 (the prompt says which tool, with what arguments, how often), and it is polled every 15 minutes by default (5 minutes to 24 hours).
 
-- **Waiting costs a tool call, not a model run.** The answer is hashed and compared with the last one. Only when it is different
-  is the model asked, once, with the answer before and the answer now, whether the change matters given what you asked to hear
-  about; it replies with a message or with `[SILENT]`. The first look, taken when the watch is created, only sets what later
-  answers are compared with. Pick a tool whose answer changes only when something happens: one that includes the time changes
-  every poll.
+- **Waiting costs a tool call, not a model run.** The answer is compared with the last one line by line. Only when it is
+  really different is the model asked, once, with the answer before and the answer now, whether the change matters given what
+  you asked to hear about; it replies with a message or with `[SILENT]`. Relative-time wording ticking on its own
+  ("2 hours ago" becoming "3 hours ago") is ignored, and a changed number or line is reported as an update.
+  The first look, taken when the watch is created, only sets what later answers are compared with. Pick a tool whose answer
+  changes only when something happens: one that includes the time changes every poll.
 - **Reading only.** A poll goes through the same permission rules and activity log as any call and never asks anyone, so only a tool
   that runs without asking can be watched (with `permissions` set to `reads`, searches and lists qualify). When the model looks at a
   change it has your reading tools, but anything that would ask is refused: nobody is there to approve it, and the gateway's yolo
@@ -982,8 +988,24 @@ sites and usernames are encrypted too, and tampering with the file is detected).
   so (writing to the bot gives the allowance back), and after 5 failed polls in a row it pauses and says why.
   Polls are quiet while they fail, so an outage is one message, not one every 15 minutes.
 - **You stay in charge.** `/watches` lists them; `/watches pause|resume|delete ID` changes one. They are scheduled jobs of their
-  own kind (`tal cron list` shows them), kept in `~/.talaria/watches.json` (mode 0600, as the last answer is an excerpt of
+  own kind (`tal cron list` shows them), kept in `~/.talaria/sessions.db` (mode 0600, as the last answer is an excerpt of
   your mail), and a watch's runs are not kept in the searchable history.
+
+### Ideas, choices, documents and spending
+
+Four tools the agent uses inside the conversation, each asked about and bounded:
+
+- **Ideas** (`idea_add`, `idea_list`): suggestions with their source evidence. Ones you already heard or that match
+  finished work are left out, so you are never asked about the same thing twice. At most 20 open ideas per chat.
+- **Choices** (`choice_present`, `choice_select`): a question you answer by picking an option — a clarification
+  (which one) or a comparison of up to three sourced candidates. A new question on the same thread replaces the old one,
+  so a late answer can never land on a stale question. In the web app and on Telegram and Discord they arrive as
+  tappable buttons; anywhere else, reply with the number or the name.
+- **Documents** (`files_make_pdf`, `files_view`, `files_read`, `files_send`): the agent can make a PDF from a title
+  and text and share its download link, show you an uploaded picture, read the words of an uploaded PDF, and send a kept
+  file to Telegram or Discord as a real document.
+- **Spending** (`finance_import`): paste a transaction CSV (`date,description,amount,category`) and get a summary with
+  categories and a savings figure. Positive amounts are expenses, negative are income; no currency conversion is inferred.
 
 ## Scheduled jobs
 

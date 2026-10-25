@@ -6,6 +6,7 @@ package idea
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	_ "modernc.org/sqlite" // pure-Go driver, shared with the sessions history
 )
 
 // Status of an idea.
@@ -55,13 +58,29 @@ type Idea struct {
 	Updated time.Time `json:"updated"`
 }
 
-// Store keeps ideas in one JSON file, reread on every call.
+// Store keeps ideas in a SQLite table, reread on every call. Path names the
+// shared SQLite file; the ideas table is created on first use. If the table
+// is empty and a legacy ideas.json sits beside the database, it is imported
+// once and renamed to ideas.json.migrated.
 type Store struct {
 	Path string
 	Now  func() time.Time
 
 	mu sync.Mutex
 }
+
+const ideaSchema = `
+CREATE TABLE IF NOT EXISTS ideas(
+	id TEXT PRIMARY KEY,
+	gateway TEXT NOT NULL,
+	chat_id INTEGER NOT NULL,
+	status TEXT NOT NULL,
+	created INTEGER NOT NULL,
+	updated INTEGER NOT NULL,
+	data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ideas_chat ON ideas(gateway, chat_id);
+`
 
 func (s *Store) now() time.Time {
 	if s.Now != nil {
@@ -133,50 +152,133 @@ func validSource(src Source) error {
 	return nil
 }
 
-func (s *Store) load() ([]Idea, error) {
-	raw, err := os.ReadFile(s.Path)
-	if os.IsNotExist(err) {
-		return nil, nil
+func (s *Store) db() (*sql.DB, error) {
+	dir := filepath.Dir(s.Path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
 	}
+	// Created owner-only before SQLite does it with the default mode.
+	if f, err := os.OpenFile(s.Path, os.O_CREATE|os.O_RDWR, 0o600); err == nil {
+		f.Close()
+	}
+	os.Chmod(s.Path, 0o600)
+	db, err := sql.Open("sqlite", s.Path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
+	}
+	if _, err := db.Exec(ideaSchema); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := s.importLegacy(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
+func (s *Store) legacyPath() string {
+	return filepath.Join(filepath.Dir(s.Path), "ideas.json")
+}
+
+func (s *Store) importLegacy(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM ideas`).Scan(&n); err != nil {
+		return err
+	}
+	if n != 0 {
+		return nil
+	}
+	leg := s.legacyPath()
+	if leg == s.Path {
+		return nil
+	}
+	raw, err := os.ReadFile(leg)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	var f struct {
 		Ideas []Idea `json:"ideas"`
 	}
 	if err := json.Unmarshal(raw, &f); err != nil {
-		return nil, fmt.Errorf("%s is corrupt (fix or delete it): %w", s.Path, err)
+		return fmt.Errorf("%s is corrupt (fix or delete it): %w", leg, err)
 	}
-	return f.Ideas, nil
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	for _, it := range f.Ideas {
+		if err := insertIdea(tx.Exec, it); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return os.Rename(leg, leg+".migrated")
+}
+
+func insertIdea(exec func(query string, args ...any) (sql.Result, error), it Idea) error {
+	raw, err := json.Marshal(it)
+	if err != nil {
+		return err
+	}
+	_, err = exec(`INSERT OR REPLACE INTO ideas(id, gateway, chat_id, status, created, updated, data) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		it.ID, it.Gateway, it.ChatID, it.Status, it.Created.UnixNano(), it.Updated.UnixNano(), string(raw))
+	return err
+}
+
+func (s *Store) load() ([]Idea, error) {
+	db, err := s.db()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT data FROM ideas`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Idea
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var it Idea
+		if err := json.Unmarshal([]byte(raw), &it); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) save(ideas []Idea) error {
-	raw, err := json.MarshalIndent(struct {
-		Ideas []Idea `json:"ideas"`
-	}{ideas}, "", "  ")
+	db, err := s.db()
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(s.Path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, "ideas-*.tmp")
+	defer db.Close()
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(raw); err != nil {
-		tmp.Close()
+	if _, err := tx.Exec(`DELETE FROM ideas`); err != nil {
+		tx.Rollback()
 		return err
 	}
-	if err := tmp.Close(); err != nil {
-		return err
+	for _, it := range ideas {
+		if err := insertIdea(tx.Exec, it); err != nil {
+			tx.Rollback()
+			return err
+		}
 	}
-	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), s.Path)
+	return tx.Commit()
 }
 
 // Add keeps a new suggestion with its evidence. It refuses ideas without a

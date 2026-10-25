@@ -33,7 +33,7 @@ func newEnv(t *testing.T, create bool) *env {
 	e := &env{now: utc("2026-10-20 10:00")}
 	dir := t.TempDir()
 	clock := func() time.Time { return e.now }
-	e.goals = &Store{Path: filepath.Join(dir, "goals.json"), Now: clock}
+	e.goals = &Store{Path: filepath.Join(dir, "sessions.db"), Now: clock}
 	e.jobs = &cron.Store{Path: filepath.Join(dir, "jobs.json"), Now: clock}
 	e.reg = tool.NewRegistry()
 	RegisterTools(e.reg, Binding{Store: e.goals, Sched: e.jobs, Gateway: "discord", ChatID: 5, Create: create})
@@ -324,6 +324,29 @@ func TestGoalFileIsPrivateAndAtomic(t *testing.T) {
 	e.ok(t, "goal_create", `{"title":"t","objective":"o"}`)
 	if fi, err := statMode(e.goals.Path); err != nil || fi != 0o600 {
 		t.Fatalf("%v %v", fi, err)
+	}
+}
+
+func TestLegacyJSONIsImportedOnce(t *testing.T) {
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, "goals.json")
+	raw := `{"goals":[{"id":"ab12","gateway":"discord","chat_id":5,"title":"t","objective":"o","status":"open","every":21600000000000,"max_checkins":20,"created":"2026-10-20T10:00:00Z","updated":"2026-10-20T10:00:00Z"}]}`
+	if err := os.WriteFile(legacy, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Store{Path: filepath.Join(dir, "sessions.db")}
+	gs, err := s.List("discord", 5)
+	if err != nil || len(gs) != 1 || gs[0].ID != "ab12" || gs[0].Title != "t" {
+		t.Fatalf("%+v %v", gs, err)
+	}
+	if _, err := os.Stat(legacy + ".migrated"); err != nil {
+		t.Fatalf("legacy renamed after import: %v", err)
+	}
+	if _, err := s.Add(Goal{Gateway: "discord", ChatID: 5, Title: "new", Objective: "o"}); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := (&Store{Path: s.Path}).List("discord", 5); err != nil || len(again) != 2 {
+		t.Fatalf("imported goals persist beside new ones: %+v %v", again, err)
 	}
 }
 

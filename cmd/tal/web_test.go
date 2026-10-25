@@ -126,8 +126,8 @@ func TestDoctorSaysWhatItFindsAboutTheWebApp(t *testing.T) {
 
 func TestTheControlScreenListsGoalsWatchesAndRemindersOfTheWebChatOnly(t *testing.T) {
 	home := t.TempDir()
-	gs := &goal.Store{Path: filepath.Join(home, "goals.json")}
-	ws := &watch.Store{Path: filepath.Join(home, "watches.json")}
+	gs := &goal.Store{Path: filepath.Join(home, "sessions.db")}
+	ws := &watch.Store{Path: filepath.Join(home, "sessions.db")}
 	rt := app.Open(app.Config{Home: home, Goals: gs, Watches: ws})
 	defer rt.Close()
 

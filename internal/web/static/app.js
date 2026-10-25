@@ -590,7 +590,7 @@ input.addEventListener('keydown', (e) => {
 });
 // Messages written while unreachable wait here, in memory only — the page
 // keeps nothing on the phone — and go out in order once the server answers.
-let outbox = []; // {text, telegram}
+let outbox = []; // {text, telegram} or {file: {name, blob}}: files wait the same way words do
 let flushing = false, flushAgain = false;
 // The follow-up queue is visible: while messages wait, a bar above the
 // composer names the count and offers to send now. Stopping the agent never
@@ -601,7 +601,7 @@ function renderQueue() {
   if (!outbox.length) { bar.hidden = true; bar.replaceChildren(); return; }
   bar.hidden = false;
   bar.replaceChildren(
-    h('span', { class: 'grow', text: outbox.length === 1 ? '1 message waiting — sends when you are back online.' : `${outbox.length} messages waiting — send in order when you are back online.` }),
+    h('span', { class: 'grow', text: outbox.length === 1 ? '1 thing waiting — sends when you are back online.' : `${outbox.length} things waiting — send in order when you are back online.` }),
     h('button', { type: 'button', text: 'Send now', onclick: () => flushOutbox() }));
 }
 async function flushOutbox() {
@@ -612,7 +612,15 @@ async function flushOutbox() {
     flushAgain = false;
     let sent = 0;
     while (outbox.length) {
-      try { await api('/api/send', { method: 'POST', body: outbox[0] }); }
+      try {
+        const first = outbox[0];
+        if (first.file) {
+          const fd = new FormData(); fd.append('file', first.file.blob, first.file.name);
+          await api('/api/files', { method: 'POST', raw: true, body: fd });
+        } else {
+          await api('/api/send', { method: 'POST', body: first });
+        }
+      }
       catch { break; } // still unreachable (a 401 also shows the sign-in); the rest waits
       outbox.shift(); sent++;
     }
@@ -631,7 +639,7 @@ async function sendText(text, telegram = false) {
     if (!navigator.onLine || e.message === 'You appear to be offline.') {
       outbox.push({ text, telegram: telegram || undefined });
       renderQueue();
-      toast(outbox.length === 1 ? 'It will send when you are back online.' : `${outbox.length} messages will send when you are back online.`);
+      toast(outbox.length === 1 ? 'It will send when you are back online.' : `${outbox.length} things will send when you are back online.`);
       return true; // queued, so the composer does not put it back
     }
     toast(e.message); return false;
@@ -664,12 +672,26 @@ $('#attach').addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', async () => {
   const f = fileInput.files[0]; fileInput.value = '';
   if (!f) return;
+  if (!navigator.onLine) {
+    outbox.push({ file: { name: f.name, blob: f } });
+    renderQueue();
+    toast('No connection — the file waits with the rest.');
+    return;
+  }
   const fd = new FormData(); fd.append('file', f);
   toast('Uploading ' + f.name + '…');
   try {
     const d = await api('/api/files', { method: 'POST', raw: true, body: fd });
     toast('Kept ' + d.name + '. Expires with the rest.');
-  } catch (e) { if (!(e instanceof AuthError)) toast(e.message); }
+    flushOutbox();
+  } catch (e) {
+    if (e instanceof AuthError) return;
+    if (!navigator.onLine || e.message === 'You appear to be offline.') {
+      outbox.push({ file: { name: f.name, blob: f } });
+      renderQueue();
+      toast('No connection — the file waits with the rest.');
+    } else toast(e.message);
+  }
 });
 async function openSheet() {
   const body = $('#sheet-body');
@@ -851,7 +873,7 @@ function renderToday() {
     out.push(card);
   }
 
-  out.push(filesCard(d.files || [], d.files_retention_hours || 12));
+  out.push(filesCard(d.files || [], d.files_retention_hours || 12, d.files_quota_mb || 100));
 
   if (d.jobs && d.jobs.length) out.push(jobsCard(d.jobs));
 
@@ -861,7 +883,8 @@ function renderToday() {
 
 // Downloads live where the user looks: every kept file with its link, and
 // the hours left before the server deletes it.
-function filesCard(list, hours) {
+function filesCard(list, hours, quotaMB) {
+  const used = list.reduce((n, f) => n + (Number(f.size) || 0), 0);
   const left = (at) => {
     const ms = new Date(at).getTime() + hours * 3600000 - Date.now();
     if (!(ms > 0)) return 'expired';
@@ -870,7 +893,7 @@ function filesCard(list, hours) {
     if (m < 2880) return 'expires in ' + Math.floor(m / 60) + 'h';
     return 'expires in ' + Math.floor(m / 1440) + 'd';
   };
-  const card = h('div', { class: 'card' }, h('h2', null, 'Downloads', h('small', { text: 'auto-deletes after ' + hours + 'h' })));
+  const card = h('div', { class: 'card' }, h('h2', null, 'Downloads', h('small', { text: fmtSize(used) + ' of ' + quotaMB + ' MB · auto-deletes after ' + hours + 'h' })));
   if (!list.length) {
     card.append(h('div', { class: 'empty', text: 'Nothing kept right now. Attach a PDF or image in chat, or ask for one.' }));
     return card;

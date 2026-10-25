@@ -4,6 +4,8 @@
 // goals, watches, grants and the activity log. What is not: the browser's
 // profile (large, and full of cookies), temporary files, and the vault's key
 // file, which belongs somewhere other than next to the vault it unlocks.
+// Kept downloads are left out too: they expire on their own, so archiving
+// them would only bloat the backup with files about to be deleted.
 package backup
 
 import (
@@ -55,6 +57,8 @@ func skipped(rel string) bool {
 	switch {
 	case rel == "browser" || strings.HasPrefix(rel, "browser/"):
 		return true
+	case rel == "files" || strings.HasPrefix(rel, "files/"):
+		return true // expiring downloads are cache, not state
 	case strings.HasSuffix(rel, ".tmp"), strings.HasSuffix(rel, ".lock"), strings.HasSuffix(rel, "-wal"), strings.HasSuffix(rel, "-shm"), strings.HasSuffix(rel, "-journal"):
 		return true // the history is saved as a snapshot instead
 	}

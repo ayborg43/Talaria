@@ -1352,6 +1352,7 @@ func (s *Server) today(w http.ResponseWriter, r *http.Request) {
 	s.purgeFiles()
 	out["files"] = []files.File{}
 	out["files_retention_hours"] = int(s.fileRetention() / time.Hour)
+	out["files_quota_mb"] = s.fileQuotaMB()
 	if st := s.fileStore(); st != nil {
 		if list, err := st.List(); err == nil {
 			out["files"] = list

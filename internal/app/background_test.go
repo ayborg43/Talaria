@@ -29,7 +29,7 @@ func toolSet(rt *Runtime, o AgentOptions) map[string]bool {
 }
 
 func TestBackgroundAndGoalToolsAreOfferedWhereTheyBelong(t *testing.T) {
-	goals := &goal.Store{Path: filepath.Join(t.TempDir(), "goals.json")}
+	goals := &goal.Store{Path: filepath.Join(t.TempDir(), "sessions.db")}
 	rt := openWith(t, Config{Env: execenv.Local{}, Goals: goals})
 	chat := AgentOptions{ChatID: 5, Gateway: "discord", Tasks: noControl{}}
 
@@ -76,7 +76,7 @@ func TestBackgroundAndGoalToolsAreOfferedWhereTheyBelong(t *testing.T) {
 }
 
 func TestGoalsAreScopedToTheChatTheAgentIsIn(t *testing.T) {
-	goals := &goal.Store{Path: filepath.Join(t.TempDir(), "goals.json")}
+	goals := &goal.Store{Path: filepath.Join(t.TempDir(), "sessions.db")}
 	rt := openWith(t, Config{Env: execenv.Local{}, Goals: goals})
 	a := rt.NewAgent(AgentOptions{ChatID: 5, Gateway: "discord", Tasks: noControl{}})
 	tl, _ := a.Tools.Get("goal_create")
