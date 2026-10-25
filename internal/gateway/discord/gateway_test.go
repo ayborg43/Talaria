@@ -489,6 +489,36 @@ func TestApprovalButtons(t *testing.T) {
 	}
 }
 
+func TestChoiceButtons(t *testing.T) {
+	f := newFakeDiscord(t)
+	panel := "question bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:\nWhen? (pick one, 2 options \u2014 reply with the number or name):\n1. Morning\n2. Afternoon"
+	p := &scripted{replies: []provider.Message{
+		{Role: provider.RoleAssistant, Content: panel},
+		{Role: provider.RoleAssistant, Content: "got it"},
+	}}
+	var calls atomic.Int32
+	start(t, f, []int64{1}, echoAgent(p, &calls))
+
+	f.dm(1, "when should we go?")
+	prompt := f.promptWithButtons()
+	if len(prompt.Buttons) != 2 {
+		t.Fatalf("two options make two buttons: %+v", prompt.Buttons)
+	}
+	for _, d := range prompt.Buttons {
+		if _, _, ok := chat.ParseChoice(d); !ok {
+			t.Fatalf("button id is not a choice: %q", d)
+		}
+	}
+
+	f.press(1, prompt.Channel, prompt.Buttons[1], prompt.Text)
+	f.waitFor("the recorded reply", func() bool { return f.sawText("got it") })
+	f.waitFor("the prompt to be updated", func() bool { return len(f.callbackLog()) >= 1 })
+	cb := f.callbackLog()[len(f.callbackLog())-1]
+	if cb.Type != 7 || cb.Content != prompt.Text+"\n\nPicked option 2." {
+		t.Fatalf("the prompt should show the pick: %+v", cb)
+	}
+}
+
 func TestApprovalTimeoutDeniesAndRemovesTheButtons(t *testing.T) {
 	f := newFakeDiscord(t)
 	target := filepath.Join(t.TempDir(), "out.txt")

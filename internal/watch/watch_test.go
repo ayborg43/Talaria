@@ -446,3 +446,19 @@ func TestArgumentsAreKeptCompact(t *testing.T) {
 		t.Fatalf("%s %v", got.Args, err)
 	}
 }
+
+func TestCreateWatchesAPublicPage(t *testing.T) {
+	r := newRig(t, true)
+	r.reg.Register(tool.Tool{Name: "web_fetch"})
+	out, err := r.run(t, "watch_create", `{"title":"Prices","tool":"web_fetch","arguments":{"url":"https://example.com/x"},"instructions":"tell me when the price moves"}`)
+	if err != nil || !strings.Contains(out, "watching: Prices") {
+		t.Fatalf("%q %v", out, err)
+	}
+	if len(r.calls) != 1 || !strings.HasPrefix(r.calls[0], "web_fetch ") {
+		t.Fatalf("one look at creation: %v", r.calls)
+	}
+	ws, _ := r.b.Store.List("discord", 7)
+	if len(ws) != 1 || ws[0].Tool != "web_fetch" {
+		t.Fatalf("%+v", ws)
+	}
+}

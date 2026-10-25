@@ -108,3 +108,32 @@ func TestClampRetention(t *testing.T) {
 		}
 	}
 }
+
+func TestQuotaEvictsOldestFirst(t *testing.T) {
+	now := time.Now()
+	dir := t.TempDir()
+	at := now
+	s := &Store{Dir: dir, MaxTotalBytes: 200, Now: func() time.Time { return at }}
+	ids := []string{}
+	for _, name := range []string{"a.pdf", "b.pdf", "c.pdf"} {
+		f, err := s.Save(name, append(pdfProbe, make([]byte, 40)...), OriginUpload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, f.ID)
+		at = at.Add(time.Minute)
+	}
+	list, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].Name != "c.pdf" || list[1].Name != "b.pdf" {
+		t.Fatalf("oldest should go first: %+v", list)
+	}
+	if _, _, err := s.Open(ids[0]); err == nil {
+		t.Fatal("the evicted file still opens")
+	}
+	if got := QuotaBytes(0); got != DefaultMaxTotalBytes {
+		t.Fatalf("default quota: %d", got)
+	}
+}

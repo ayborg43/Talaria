@@ -224,6 +224,34 @@ function fileLinks(text) {
   const parts = String(text || '').split(/(\/api\/files\/[0-9a-fA-F]+)/g);
   return parts.map((p, i) => (i % 2 === 1 ? h('a', { href: p, text: 'Download', download: '', rel: 'noopener' }) : p));
 }
+// A presented question becomes tappable buttons: tapping sends the option's
+// label as the reply, and the agent records the pick. Anything that does not
+// parse stays plain text.
+function choiceCard(text) {
+  const head = /^question ([0-9a-f]{32}):\n(.+) \((pick one|compare), \d+ options[^\n]*\n/.exec(text || '');
+  if (!head) return null;
+  const lines = text.slice(head[0].length).split('\n');
+  const options = [];
+  let cur = null;
+  for (const line of lines) {
+    let m;
+    if ((m = /^(\d+)\.\s+(.+)$/.exec(line))) {
+      cur = { label: m[2].replace(/\s+★$/, ''), details: [], sources: [] };
+      options.push(cur);
+    } else if (cur && (m = /^\s+-\s+(.+)$/.exec(line))) {
+      if (/^https?:\/\//.test(m[1]) || /^.+?:\s*https?:\/\//.test(m[1])) cur.sources.push(m[1]);
+      else cur.details.push(m[1]);
+    }
+  }
+  if (!options.length || options.length > 12) return null;
+  const card = h('div', { class: 'choice' }, h('div', { class: 'choice-title', text: head[2] }));
+  for (const o of options) {
+    const btn = h('button', { type: 'button', class: 'choice-opt', text: o.label, onclick: () => sendText(o.label) });
+    card.append(btn);
+    for (const d of o.details.slice(0, 2)) card.append(h('div', { class: 'choice-sub', text: d }));
+  }
+  return card;
+}
 function buildBlock(b, isLast) {
   if (b.kind === 'user') return h('div', { class: 'msg-user' }, fileLinks(b.m.text));
   if (b.kind === 'tools') {
@@ -234,6 +262,10 @@ function buildBlock(b, isLast) {
   if (b.kind === 'approval') return askCard(b.m);
   const streaming = isLast && working();
   const body = h('div', { class: 'msg-bot' + (streaming ? ' cursor' : '') });
+  if (!streaming) {
+    const card = choiceCard(b.m.text || '');
+    if (card) { body.append(card); return body; }
+  }
   body.append(markdown(b.m.text || ''));
   return body;
 }
@@ -830,6 +862,14 @@ function renderToday() {
 // Downloads live where the user looks: every kept file with its link, and
 // the hours left before the server deletes it.
 function filesCard(list, hours) {
+  const left = (at) => {
+    const ms = new Date(at).getTime() + hours * 3600000 - Date.now();
+    if (!(ms > 0)) return 'expired';
+    const m = Math.floor(ms / 60000);
+    if (m < 60) return 'expires in ' + Math.max(m, 1) + 'm';
+    if (m < 2880) return 'expires in ' + Math.floor(m / 60) + 'h';
+    return 'expires in ' + Math.floor(m / 1440) + 'd';
+  };
   const card = h('div', { class: 'card' }, h('h2', null, 'Downloads', h('small', { text: 'auto-deletes after ' + hours + 'h' })));
   if (!list.length) {
     card.append(h('div', { class: 'empty', text: 'Nothing kept right now. Attach a PDF or image in chat, or ask for one.' }));
@@ -838,7 +878,7 @@ function filesCard(list, hours) {
   const rows = h('div', { class: 'rows' });
   list.slice(0, 8).forEach((f) => {
     rows.append(h('div', { class: 'row' },
-      h('span', { class: 'grow' }, h('span', { class: 't', text: f.name }), h('span', { class: 's', text: (f.mime || 'file') + ' · ' + fmtSize(f.size) })),
+      h('span', { class: 'grow' }, h('span', { class: 't', text: f.name }), h('span', { class: 's', text: (f.mime || 'file') + ' · ' + fmtSize(f.size) + ' · ' + left(f.created) })),
       h('a', { class: 'btn', href: '/api/files/' + f.id, text: 'Get', download: '' })));
   });
   card.append(rows);
@@ -1283,10 +1323,22 @@ function downloadsCard(s) {
     if (!v || v < 1 || v > 168) { toast('Keep it between 1 and 168 hours.'); return; }
     await saveFilesRetention(v);
   };
+  const quota = h('input', { id: 'files-quota', type: 'number', min: 10, max: 1024, value: s.files_max_total_mb || 100 });
+  const saveQuota = async () => {
+    const v = Math.floor(Number(quota.value));
+    if (!v || v < 10 || v > 1024) { toast('Keep it between 10 and 1024 MB.'); return; }
+    try {
+      await api('/api/settings', { method: 'POST', body: { files_max_total_mb: v } });
+      toast('Saved. Applies to the next file saved.');
+    } catch (e) { if (!(e instanceof AuthError)) toast(e.message); }
+    loadSettings();
+  };
   return h('div', { class: 'card' }, h('h2', null, 'Downloads on this server'),
     h('div', { class: 'field-note', text: 'Uploaded PDFs and images, and PDFs the agent makes, are deleted automatically after this long. They are listed under Today.' }),
     h('div', { class: 'field' }, h('label', { class: 'field-label', for: 'files-retention', text: 'Hours downloads are kept' }), input),
-    h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: save })));
+    h('div', { class: 'field' }, h('label', { class: 'field-label', for: 'files-quota', text: 'MB kept in total (oldest evicted first)' }), quota),
+    h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: save }),
+      h('button', { class: 'btn', type: 'button', text: 'Save quota', onclick: saveQuota })));
 }
 
 function paneConnections(s) {

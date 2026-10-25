@@ -19,8 +19,10 @@ import (
 	"talaria/internal/mailbox"
 	"talaria/internal/memory"
 	"talaria/internal/notify"
+	"talaria/internal/provider"
 	"talaria/internal/skill"
 	"talaria/internal/tool"
+	"talaria/internal/webfetch"
 	"talaria/internal/x"
 )
 
@@ -34,10 +36,10 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 	tool.RegisterBuiltinsIn(tools, rt.env)
 	skill.RegisterTools(tools, rt.skills)
 	finance.RegisterTools(tools)
-	if o.ChatID != 0 {
-		// The store is relative to home so the agent and the web app share
-		// it with no extra configuration; the web app owns expiry.
-		files.RegisterTools(tools, files.Binding{Store: &files.Store{Dir: filepath.Join(rt.cfg.Home, "files")}})
+	webfetch.RegisterTools(tools)
+	if o.ChatID != 0 && rt.cfg.Files != nil {
+		files.RegisterTools(tools, files.Binding{Store: rt.cfg.Files, Retention: rt.cfg.Files.RetentionHours,
+			Send: rt.fileSender(o.gatewayOrDefault()), ChatID: o.ChatID})
 	}
 	if o.ChatID != 0 && rt.cfg.Choices != nil {
 		choice.RegisterTools(tools, choice.Binding{
@@ -61,6 +63,16 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 		gw, chat := o.gatewayOrDefault(), o.ChatID
 		idea.RegisterTools(tools, idea.Binding{
 			Store: rt.cfg.Ideas, Gateway: gw, ChatID: chat,
+			Sent: func() []string {
+				if sessions == nil || sessionID == "" {
+					return nil
+				}
+				recent, err := sessions.Recent(sessionID, string(provider.RoleAssistant), 10)
+				if err != nil {
+					return nil
+				}
+				return recent
+			},
 			Done: func() []string {
 				if rt.cfg.Goals == nil {
 					return nil

@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -154,6 +155,10 @@ func (g *Gateway) handle(ctx context.Context, eng *chat.Engine, u Update) {
 }
 
 func (g *Gateway) handleCallback(ctx context.Context, eng *chat.Engine, q *CallbackQuery) {
+	if panelID, idx, ok := chat.ParseChoice(q.Data); ok {
+		g.handlePick(ctx, eng, q, panelID, idx)
+		return
+	}
 	token, choice, ok := chat.ParseApproval(q.Data)
 	if !ok {
 		return
@@ -180,10 +185,28 @@ func (g *Gateway) handleCallback(ctx context.Context, eng *chat.Engine, q *Callb
 	}
 }
 
+// handlePick turns a tapped choice into the words the agent records: the
+// panel and the option number, exactly what choice_select needs. Taps from a
+// chat with no message carry no conversation and are only acknowledged.
+func (g *Gateway) handlePick(ctx context.Context, eng *chat.Engine, q *CallbackQuery, panelID string, idx int) {
+	verdict := fmt.Sprintf("Picked option %d.", idx+1)
+	g.API.AnswerCallback(ctx, q.ID, verdict)
+	if q.Message == nil {
+		return
+	}
+	eng.Incoming(q.Message.Chat.ID, q.From.ID, chat.PickText(panelID, idx))
+	g.API.EditMessageText(ctx, q.Message.Chat.ID, q.Message.MessageID, q.Message.Text+"\n\n"+verdict)
+}
+
 // Send delivers text to a chat, split to fit Telegram's size limit. It is safe
 // to call from other goroutines (for example the cron scheduler).
 func (g *Gateway) Send(ctx context.Context, chatID int64, text string) {
 	g.engine().Send(ctx, chatID, text)
+}
+
+// SendFile delivers a kept file to a chat as a native document.
+func (g *Gateway) SendFile(ctx context.Context, chatID int64, name string, data []byte) error {
+	return g.API.SendDocument(ctx, chatID, name, data)
 }
 
 // Selection reports the model profile and the environment a chat has chosen
@@ -203,8 +226,24 @@ func (transport) Markdown() bool              { return false }
 func (transport) CommandPrefix() string       { return "/" }
 
 func (t transport) Send(ctx context.Context, chatID int64, text string) (int64, error) {
+	if id, labels, ok := chat.ParseChoicePanel(text); ok {
+		rows := make([][]InlineButton, 0, len(labels))
+		for i, l := range labels {
+			rows = append(rows, []InlineButton{{Text: clipButton(l), CallbackData: chat.ChoiceData(id, i)}})
+		}
+		sent, err := t.api.SendMessage(ctx, chatID, text, &InlineKeyboard{InlineKeyboard: rows})
+		return int64(sent), err
+	}
 	id, err := t.api.SendMessage(ctx, chatID, text, nil)
 	return int64(id), err
+}
+
+// clipButton keeps a button label readable: Telegram truncates long ones.
+func clipButton(s string) string {
+	if r := []rune(s); len(r) > 32 {
+		return string(r[:31]) + "\u2026"
+	}
+	return s
 }
 
 func (t transport) Edit(ctx context.Context, chatID, msg int64, text string) error {

@@ -299,6 +299,9 @@ type Files struct {
 	// RetentionHours is how long uploads and generated files live on the
 	// server before they are deleted. Default 12, from 1 to 168 hours.
 	RetentionHours int `json:"retention_hours,omitempty"`
+	// MaxTotalMB caps everything kept, oldest evicted first. Default 100,
+	// from 10 to 1024 MB.
+	MaxTotalMB int `json:"max_total_mb,omitempty"`
 }
 
 // Permission modes, as written in the config.

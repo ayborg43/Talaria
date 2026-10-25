@@ -27,6 +27,11 @@ const (
 	// MinRetentionHours and MaxRetentionHours bound the admin's setting.
 	MinRetentionHours = 1
 	MaxRetentionHours = 168
+	// DefaultMaxTotalBytes caps everything kept, before the admin sets more.
+	DefaultMaxTotalBytes = 100 << 20
+	// MinQuotaMB and MaxQuotaMB bound the admin's quota in megabytes.
+	MinQuotaMB = 10
+	MaxQuotaMB = 1024
 )
 
 // Origins say where a file came from.
@@ -68,11 +73,32 @@ type File struct {
 	Created time.Time `json:"created"`
 }
 
+// QuotaBytes resolves the admin's megabyte cap, defaulting to 100 MB.
+func QuotaBytes(mb int) int64 {
+	if mb <= 0 {
+		return DefaultMaxTotalBytes
+	}
+	if mb < MinQuotaMB {
+		mb = MinQuotaMB
+	}
+	if mb > MaxQuotaMB {
+		mb = MaxQuotaMB
+	}
+	return int64(mb) << 20
+}
+
 // Store keeps files in one directory with an index, reread on every call.
 // Everything is safe for use from many goroutines.
 type Store struct {
 	Dir string
 	Now func() time.Time
+	// MaxTotalBytes caps everything kept: saving past it deletes the oldest
+	// files first. Zero means the default.
+	MaxTotalBytes int64
+	// Retention is how long files live before Purge deletes them. Zero
+	// means the default; whoever builds the store sets this from the
+	// admin's setting so every message can name the real lifetime.
+	Retention time.Duration
 
 	mu sync.Mutex
 }
@@ -204,11 +230,64 @@ func (s *Store) Save(name string, data []byte, origin string) (File, error) {
 		return File{}, err
 	}
 	files = append(files, f)
+	files = s.enforceQuota(files)
 	if err := s.save(files); err != nil {
 		os.Remove(path)
 		return File{}, err
 	}
 	return f, nil
+}
+
+// RetentionHours is the lifetime in hours, defaulting to 12.
+func (s *Store) RetentionHours() int {
+	if s == nil || s.Retention <= 0 {
+		return DefaultRetentionHours
+	}
+	return int(s.Retention / time.Hour)
+}
+
+// ExpiresIn names the time left from created at now under retention:
+// "30m", "2h", "3d", or "expired".
+func ExpiresIn(created, now time.Time, retention time.Duration) string {
+	left := created.Add(retention).Sub(now)
+	if left <= 0 {
+		return "expired"
+	}
+	if left < time.Hour {
+		m := int(left / time.Minute)
+		if m < 1 {
+			m = 1
+		}
+		return fmt.Sprintf("%dm", m)
+	}
+	if left < 48*time.Hour {
+		return fmt.Sprintf("%dh", int(left/time.Hour))
+	}
+	return fmt.Sprintf("%dd", int(left/(24*time.Hour)))
+}
+
+func (s *Store) quota() int64 {
+	if s.MaxTotalBytes > 0 {
+		return s.MaxTotalBytes
+	}
+	return DefaultMaxTotalBytes
+}
+
+// enforceQuota drops the oldest files until the rest fit the cap, removing
+// their bytes at once. The arrival is the newest entry, so it always
+// survives; only strictly older files are evicted.
+func (s *Store) enforceQuota(files []File) []File {
+	total := int64(0)
+	for _, f := range files {
+		total += f.Size
+	}
+	kept := files
+	for total > s.quota() && len(kept) > 1 {
+		os.Remove(filepath.Join(s.Dir, kept[0].ID+kinds[kept[0].MIME]))
+		total -= kept[0].Size
+		kept = kept[1:]
+	}
+	return kept
 }
 
 // MakePDF builds a PDF document from a title and text and stores it,

@@ -39,7 +39,8 @@ func RegisterTools(r *tool.Registry, b Binding) {
 	if b.Create {
 		r.Register(tool.Tool{
 			Name: "watch_create",
-			Description: "Keep an eye on a connected service for the user: poll one of its read-only tools every so often, without using the model, and look at the answer only when it changes. " +
+			Description: "Keep an eye on a connected service or a public web page for the user: poll one of its read-only tools every so often, without using the model, and look at the answer only when it changes. " +
+				"Use web_fetch with a page address to be told when the page changes; relative-time wording and unchanged lines are ignored. " +
 				"Pick a tool whose answer changes only when something happens (for example one that searches for unread or new items), not one that includes a clock. " +
 				"Relative-time wording ticking on its own (\"2 hours ago\" becoming \"3 hours ago\") is ignored; a changed number or line is reported as an update. " +
 				"Say in the instructions what would matter to the user. Each time the answer changes you are asked whether it is worth telling them; if it is, they get a message. " +
@@ -131,8 +132,8 @@ func (b Binding) create(ctx context.Context, raw json.RawMessage) (string, error
 		return "", fmt.Errorf("there is no tool named %q to watch with", a.Tool)
 	case t.NeedsApproval:
 		return "", fmt.Errorf("%s asks for approval each time it runs, so it cannot run on its own: only a read-only tool that is allowed to run without asking can be watched (the server's \"permissions\" setting controls that)", a.Tool)
-	case !strings.HasPrefix(a.Tool, "mcp_"):
-		return "", errors.New("only the tools of connected services can be watched")
+	case !strings.HasPrefix(a.Tool, "mcp_") && a.Tool != "web_fetch":
+		return "", errors.New("only the tools of connected services and web_fetch can be watched")
 	}
 	w := Watch{Gateway: b.Gateway, ChatID: b.ChatID, Title: a.Title, Tool: a.Tool, Args: a.Arguments, Instructions: a.Instructions, MaxTriggers: a.Max}
 	if a.Every > 0 {

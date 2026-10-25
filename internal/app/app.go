@@ -18,6 +18,7 @@ import (
 	"talaria/internal/choice"
 	"talaria/internal/cron"
 	"talaria/internal/execenv"
+	"talaria/internal/files"
 	"talaria/internal/goal"
 	"talaria/internal/guard"
 	"talaria/internal/idea"
@@ -87,6 +88,9 @@ type Config struct {
 	Choices *choice.Store
 	// Ideas keeps suggestions with source evidence. Nil turns the idea tools off.
 	Ideas *idea.Store
+	// Files keeps uploads from the web app and PDFs the agent makes, served
+	// back as downloads. Nil turns the file tools off.
+	Files *files.Store
 	// Log is where warnings go. Nil discards them.
 	Log *slog.Logger
 }
@@ -130,6 +134,8 @@ type Runtime struct {
 
 	notifyMu    sync.Mutex
 	notifySend  notify.Sender
+	fileMu      sync.Mutex
+	fileSend    map[string]files.FileSender
 	notifyLimit notify.Limit
 
 	budget *budget
@@ -304,6 +310,24 @@ func (rt *Runtime) notifier() notify.Sender {
 	rt.notifyMu.Lock()
 	defer rt.notifyMu.Unlock()
 	return rt.notifySend
+}
+
+// SetFileSender lets agents send a kept file to a chat as a native document,
+// per service ("telegram", "discord"). Chats on other services share the
+// download link instead.
+func (rt *Runtime) SetFileSender(gateway string, send files.FileSender) {
+	rt.fileMu.Lock()
+	defer rt.fileMu.Unlock()
+	if rt.fileSend == nil {
+		rt.fileSend = map[string]files.FileSender{}
+	}
+	rt.fileSend[gateway] = send
+}
+
+func (rt *Runtime) fileSender(gateway string) files.FileSender {
+	rt.fileMu.Lock()
+	defer rt.fileMu.Unlock()
+	return rt.fileSend[gateway]
 }
 
 // SetHelpers lets the main agent give subagents other models than its own, for tasks one suits better.

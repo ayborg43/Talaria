@@ -45,7 +45,8 @@ var knownTools = map[string]bool{
 	"cron_add":        true, "cron_list": true, "cron_remove": true,
 	"current_time": true, "delegate": true,
 	"email_folders": true, "email_list": true, "email_read": true,
-	"files_delete": true, "files_list": true, "files_make_pdf": true,
+	"files_delete": true, "files_list": true, "files_make_pdf": true, "files_read": true, "files_view": true,
+	"files_send":     true,
 	"finance_import": true,
 	"goal_create":    true, "goal_get": true, "goal_list": true, "goal_update": true,
 	"idea_accept": true, "idea_add": true, "idea_dismiss": true, "idea_edit": true, "idea_list": true,
@@ -56,6 +57,7 @@ var knownTools = map[string]bool{
 	"task_cancel":     true, "task_list": true, "task_start": true,
 	"vault_list":   true,
 	"watch_create": true, "watch_list": true, "watch_update": true,
+	"web_fetch":  true,
 	"write_file": true,
 	"x_mentions": true, "x_post": true,
 }

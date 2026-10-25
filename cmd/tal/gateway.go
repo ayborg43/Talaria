@@ -284,6 +284,10 @@ func runGateway(c *cli) error {
 				}
 				return nil
 			})
+
+			c.rt.SetFileSender(s.name, func(ctx context.Context, chatID int64, name string, data []byte) error {
+				return g.SendFile(ctx, chatID, name, data)
+			})
 		}
 		g.NewAgent = newAgent(s, telegramNote, g.Selection)
 		s.run, s.send, s.selection = g.Run, g.Send, g.Selection
@@ -326,6 +330,12 @@ func runGateway(c *cli) error {
 		}
 		if gd := c.rt.Guard(); gd != nil {
 			g.Permissions = guard.ChatPermissions{G: gd, Gateway: s.name}
+		}
+		if len(allowed) > 0 {
+			// The agent can send kept files to these chats as real documents.
+			c.rt.SetFileSender(s.name, func(ctx context.Context, chatID int64, name string, data []byte) error {
+				return g.SendFile(ctx, chatID, name, data)
+			})
 		}
 		g.NewAgent = newAgent(s, discordNote, g.Selection)
 		s.run, s.send, s.selection = g.Run, g.Send, g.Selection

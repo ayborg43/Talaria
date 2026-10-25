@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"talaria/internal/agent"
+	"talaria/internal/gateway/chat"
 	"talaria/internal/provider"
 	"talaria/internal/tool"
 )
@@ -326,6 +327,51 @@ func TestApprovalButtons(t *testing.T) {
 				t.Fatalf("prompt message should be edited to show %q: %q", tc.verdict, f.edit)
 			}
 		})
+	}
+}
+
+func TestChoiceButtons(t *testing.T) {
+	f := newFake(t)
+	panel := "question aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:\nWhen? (pick one, 2 options \u2014 reply with the number or name):\n1. Morning\n2. Afternoon"
+	p := &scripted{replies: []provider.Message{
+		{Role: provider.RoleAssistant, Content: panel},
+		{Role: provider.RoleAssistant, Content: "got it"},
+	}}
+	var calls atomic.Int32
+	start(t, f, []int64{1}, echoAgent(p, &calls))
+
+	f.updates <- []Update{userMsg(1, 1, 1, "private", "when should we go?")}
+	var prompt sentMsg
+	f.waitFor("choice prompt", func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		for _, m := range f.sent {
+			if m.HasKB {
+				prompt = m
+				return true
+			}
+		}
+		return false
+	})
+	if len(prompt.Callback) != 2 {
+		t.Fatalf("two options make two buttons: %+v", prompt)
+	}
+	for _, d := range prompt.Callback {
+		if _, _, ok := chat.ParseChoice(d); !ok {
+			t.Fatalf("button data is not a choice: %q", d)
+		}
+	}
+
+	// Tapping the second button records the pick where the agent sees it.
+	f.updates <- []Update{{UpdateID: 2, CallbackQuery: &CallbackQuery{
+		ID: "c", From: User{ID: 1}, Data: prompt.Callback[1],
+		Message: &Message{MessageID: 1, Chat: Chat{ID: 1, Type: "private"}, Text: prompt.Text},
+	}}}
+	f.waitFor("recorded reply", func() bool { return f.sawText("got it") })
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.edit) == 0 || !strings.HasSuffix(f.edit[len(f.edit)-1], "Picked option 2.") {
+		t.Fatalf("prompt message should show the pick: %q", f.edit)
 	}
 }
 

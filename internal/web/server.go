@@ -377,6 +377,7 @@ type settingsView struct {
 	SubagentMaxSteps    int    `json:"subagent_max_steps"`
 	SubagentMaxParallel int    `json:"subagent_max_parallel"`
 	FilesRetentionHours int    `json:"files_retention_hours"`
+	FilesMaxTotalMB     int    `json:"files_max_total_mb"`
 }
 
 // settingsEmail is the mailbox as Settings shows it: everything but the password.
@@ -572,6 +573,7 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 		PermissionsEnv:      s.Getenv != nil && s.Getenv("TALARIA_PERMISSIONS") != "",
 		SubagentMaxParallel: s.Cfg.Subagents.MaxParallel,
 		FilesRetentionHours: int(s.fileRetention() / time.Hour),
+		FilesMaxTotalMB:     s.fileQuotaMB(),
 		KeyEnvs:             config.DefaultKeyEnvs(),
 		Presets:             config.Presets(),
 		Strengths:           config.ProfileStrengths,
@@ -639,6 +641,7 @@ type settingsUpdateRequest struct {
 	TestX               bool             `json:"test_x,omitempty"`                // check the X sign-in, saving nothing
 	Permissions         string           `json:"permissions,omitempty"`           // which calls ask first: deletes_and_posts or strict
 	FilesRetentionHours *int             `json:"files_retention_hours,omitempty"` // how long downloads live, 1 to 168 hours
+	FilesMaxTotalMB     *int             `json:"files_max_total_mb,omitempty"`    // cap on everything kept, 10 to 1024 MB
 }
 
 func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
@@ -738,6 +741,10 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.FilesRetentionHours != nil {
 		s.saveFilesRetention(w, *in.FilesRetentionHours)
+		return
+	}
+	if in.FilesMaxTotalMB != nil {
+		s.saveFilesQuota(w, *in.FilesMaxTotalMB)
 		return
 	}
 	if in.Email != nil {
@@ -844,6 +851,20 @@ func (s *Server) saveFilesRetention(w http.ResponseWriter, hours int) {
 		return
 	}
 	s.Cfg.Files.RetentionHours = hours
+	if !s.writeConfig(w) {
+		return
+	}
+	okRestart(w, false)
+}
+
+// saveFilesQuota caps everything kept on the server, oldest evicted first.
+// It applies to the next file saved; nothing restarts.
+func (s *Server) saveFilesQuota(w http.ResponseWriter, mb int) {
+	if mb < files.MinQuotaMB || mb > files.MaxQuotaMB {
+		fail(w, http.StatusBadRequest, fmt.Sprintf("files_max_total_mb must be %d to %d", files.MinQuotaMB, files.MaxQuotaMB))
+		return
+	}
+	s.Cfg.Files.MaxTotalMB = mb
 	if !s.writeConfig(w) {
 		return
 	}
@@ -1137,7 +1158,20 @@ func (s *Server) fileStore() *files.Store {
 	if s.ConfigPath == "" {
 		return nil
 	}
-	return &files.Store{Dir: filepath.Join(filepath.Dir(s.ConfigPath), "files")}
+	mb := 0
+	if s.Cfg != nil {
+		mb = s.Cfg.Files.MaxTotalMB
+	}
+	return &files.Store{Dir: filepath.Join(filepath.Dir(s.ConfigPath), "files"), MaxTotalBytes: files.QuotaBytes(mb),
+		Retention: s.fileRetention()}
+}
+
+// fileQuotaMB is the cap on everything kept, in megabytes.
+func (s *Server) fileQuotaMB() int {
+	if s.Cfg != nil && s.Cfg.Files.MaxTotalMB > 0 {
+		return s.Cfg.Files.MaxTotalMB
+	}
+	return int(files.DefaultMaxTotalBytes >> 20)
 }
 
 // fileRetention is the download lifetime the admin sets, 12 hours by default.

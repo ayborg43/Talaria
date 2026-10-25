@@ -148,6 +148,16 @@ func (g *Gateway) Send(ctx context.Context, userID int64, text string) {
 	g.eng.Send(ctx, userID, text)
 }
 
+// SendFile delivers a kept file to a user's DMs as a native attachment.
+func (g *Gateway) SendFile(ctx context.Context, userID int64, name string, data []byte) error {
+	g.setup()
+	ch, err := g.tr.channel(ctx, userID)
+	if err != nil {
+		return err
+	}
+	return g.API.CreateAttachment(ctx, ch, name, data)
+}
+
 // Selection reports the model profile and the environment a chat has chosen
 // with !model and !env, as names; "" means the default.
 func (g *Gateway) Selection(userID int64) (profile, environment string) {
@@ -194,6 +204,9 @@ func (g *Gateway) onInteraction(ctx context.Context, data json.RawMessage) {
 	}
 	token, choice, ok := chat.ParseApproval(in.Data.CustomID)
 	if !ok {
+		if panelID, idx, ok := chat.ParseChoice(in.Data.CustomID); ok {
+			g.handlePick(ctx, in, panelID, idx)
+		}
 		return
 	}
 	var user User
@@ -227,6 +240,31 @@ func (g *Gateway) onInteraction(ctx context.Context, data json.RawMessage) {
 	}
 	if err != nil {
 		g.logf("discord: answering a button press failed: %v", err)
+	}
+}
+
+// handlePick turns a tapped choice into the words the agent records, and
+// rewrites the prompt with the pick, removing the buttons.
+func (g *Gateway) handlePick(ctx context.Context, in Interaction, panelID string, idx int) {
+	var user User
+	switch {
+	case in.User != nil:
+		user = *in.User
+	case in.Member != nil:
+		user = in.Member.User
+	}
+	uid, perr := strconv.ParseInt(user.ID, 10, 64)
+	if perr != nil || uid <= 0 {
+		return
+	}
+	verdict := "Picked option " + strconv.Itoa(idx+1) + "."
+	g.eng.Incoming(uid, uid, chat.PickText(panelID, idx))
+	prompt := ""
+	if in.Message != nil {
+		prompt = in.Message.Content
+	}
+	if err := g.API.Respond(ctx, in, respUpdateMessage, prompt+"\n\n"+verdict, false); err != nil {
+		g.logf("discord: answering a choice press failed: %v", err)
 	}
 }
 
@@ -285,11 +323,33 @@ func (t *transport) Send(ctx context.Context, chatID int64, text string) (int64,
 	if err != nil {
 		return 0, err
 	}
-	m, err := t.api.CreateMessage(ctx, ch, text, nil)
+	var comps []Component
+	if id, labels, ok := chat.ParseChoicePanel(text); ok && len(labels) <= 10 {
+		var row []Component
+		for i, l := range labels {
+			row = append(row, Component{Type: componentButton, Style: stylePrimary, Label: clipButton(l), CustomID: chat.ChoiceData(id, i)})
+			if len(row) == 2 {
+				comps = append(comps, Component{Type: componentRow, Components: row})
+				row = nil
+			}
+		}
+		if len(row) > 0 {
+			comps = append(comps, Component{Type: componentRow, Components: row})
+		}
+	}
+	m, err := t.api.CreateMessage(ctx, ch, text, comps)
 	if err != nil {
 		return 0, err
 	}
 	return strconv.ParseInt(m.ID, 10, 64)
+}
+
+// clipButton keeps a button label readable: Discord truncates long ones.
+func clipButton(s string) string {
+	if r := []rune(s); len(r) > 40 {
+		return string(r[:39]) + "\u2026"
+	}
+	return s
 }
 
 func (t *transport) Edit(ctx context.Context, chatID, msg int64, text string) error {

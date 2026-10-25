@@ -338,3 +338,8 @@ b,strong{font-weight:600}
 .quick button:hover{border-color:var(--brass-line)}
 .btn:hover{filter:brightness(.985)}
 }
+
+.choice{display:flex;flex-direction:column;gap:8px}
+.choice-title{font-weight:600}
+.choice-opt{padding:10px 14px;border-radius:14px;border:1px solid var(--bubble-line);background:var(--card);color:var(--ink);font-size:15px;text-align:left}
+.choice-sub{font-size:13px;color:var(--ink2);padding:0 14px}

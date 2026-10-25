@@ -37,6 +37,7 @@ import (
 	"talaria/internal/config"
 	"talaria/internal/cron"
 	"talaria/internal/execenv"
+	"talaria/internal/files"
 	"talaria/internal/gateway/chat"
 	"talaria/internal/goal"
 	"talaria/internal/guard"
@@ -249,7 +250,10 @@ func (c *cli) setupModel(gateway bool) (err error) {
 		Browser: browserConfig(c.cfg), Goals: &goal.Store{Path: filepath.Join(c.home, "goals.json")},
 		Watches: &watch.Store{Path: filepath.Join(c.home, "watches.json")},
 		Ideas:   &idea.Store{Path: filepath.Join(c.home, "ideas.json")},
-		Choices: &choice.Store{Path: filepath.Join(c.home, "choices.json")}}
+		Choices: &choice.Store{Path: filepath.Join(c.home, "choices.json")},
+		Files: &files.Store{Dir: filepath.Join(c.home, "files"),
+			MaxTotalBytes: files.QuotaBytes(c.cfg.Files.MaxTotalMB),
+			Retention:     time.Duration(files.ClampRetention(c.cfg.Files.RetentionHours)) * time.Hour}}
 	if vlt != nil {
 		appCfg.Vault = vlt
 	}
