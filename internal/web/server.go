@@ -25,6 +25,7 @@ import (
 	"talaria/internal/calendar"
 	"talaria/internal/config"
 	"talaria/internal/files"
+	"talaria/internal/vault"
 
 	"talaria/internal/gateway/chat"
 	"talaria/internal/mailbox"
@@ -378,6 +379,11 @@ type settingsView struct {
 	SubagentMaxParallel int    `json:"subagent_max_parallel"`
 	FilesRetentionHours int    `json:"files_retention_hours"`
 	FilesMaxTotalMB     int    `json:"files_max_total_mb"`
+	// Vault is the saved logins as Settings shows them: names, kinds, sites
+	// and usernames, never secrets. VaultStatus says why there is nothing to
+	// show: no vault yet, or a locked one and how to unlock it.
+	Vault       []settingsVault `json:"vault"`
+	VaultStatus string          `json:"vault_status,omitempty"`
 }
 
 // settingsEmail is the mailbox as Settings shows it: everything but the password.
@@ -432,6 +438,26 @@ type chatTokenUpdate struct {
 	Service  string `json:"service"` // telegram, discord or x
 	Token    string `json:"token,omitempty"`
 	TokenEnv string `json:"token_env,omitempty"`
+}
+
+// settingsVault is one saved login as Settings shows it: never the secret.
+// The secret is only ever typed by the agent into a page field on one of the
+// credential's sites, and only with approval.
+type settingsVault struct {
+	Name     string   `json:"name"`
+	Kind     string   `json:"kind"` // login or secret
+	Username string   `json:"username,omitempty"`
+	Sites    []string `json:"sites"`
+}
+
+// vaultCredentialUpdate adds or deletes one saved login. It takes effect at
+// once: the vault file is reread whenever it changes, with no restart.
+type vaultCredentialUpdate struct {
+	Op       string `json:"op"` // add or delete
+	Name     string `json:"name"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"` // the password, or the value for a secret
+	Sites    string `json:"sites,omitempty"`    // comma-separated: where it may be used
 }
 
 type settingsProfile struct {
@@ -581,6 +607,7 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 		Calendars:           s.calendarsView(),
 		Chats:               s.chatsView(),
 	}
+	view.Vault, view.VaultStatus = s.vaultView()
 	var backends *chat.Backends
 	if s.Engine != nil {
 		backends = s.Engine.Backends
@@ -623,25 +650,26 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 
 // settingsUpdateRequest is the payload for POST /api/settings.
 type settingsUpdateRequest struct {
-	Name                string           `json:"name"`
-	Type                string           `json:"type,omitempty"`
-	BaseURL             string           `json:"base_url,omitempty"`
-	Model               string           `json:"model,omitempty"`
-	APIKey              string           `json:"api_key,omitempty"`
-	APIKeyEnv           string           `json:"api_key_env,omitempty"`
-	Delete              bool             `json:"_delete,omitempty"`
-	UseProfile          string           `json:"use_profile,omitempty"`           // switch this chat to a profile, saving nothing
-	TestProfile         string           `json:"test_profile,omitempty"`          // send one tiny prompt through a profile, saving nothing
-	BestFor             []string         `json:"best_for,omitempty"`              // what the profile is good at, for the router
-	Email               *emailUpdate     `json:"email,omitempty"`                 // replace the mailbox settings
-	Calendar            *calendarUpdate  `json:"calendar,omitempty"`              // add, edit or delete a feed
-	ChatToken           *chatTokenUpdate `json:"chat_token,omitempty"`            // replace a bot token
-	TestEmail           bool             `json:"test_email,omitempty"`            // list the mailbox's folders, saving nothing
-	TestCalendar        string           `json:"test_calendar,omitempty"`         // read one feed for a day, saving nothing
-	TestX               bool             `json:"test_x,omitempty"`                // check the X sign-in, saving nothing
-	Permissions         string           `json:"permissions,omitempty"`           // which calls ask first: deletes_and_posts or strict
-	FilesRetentionHours *int             `json:"files_retention_hours,omitempty"` // how long downloads live, 1 to 168 hours
-	FilesMaxTotalMB     *int             `json:"files_max_total_mb,omitempty"`    // cap on everything kept, 10 to 1024 MB
+	Name                string                 `json:"name"`
+	Type                string                 `json:"type,omitempty"`
+	BaseURL             string                 `json:"base_url,omitempty"`
+	Model               string                 `json:"model,omitempty"`
+	APIKey              string                 `json:"api_key,omitempty"`
+	APIKeyEnv           string                 `json:"api_key_env,omitempty"`
+	Delete              bool                   `json:"_delete,omitempty"`
+	UseProfile          string                 `json:"use_profile,omitempty"`           // switch this chat to a profile, saving nothing
+	TestProfile         string                 `json:"test_profile,omitempty"`          // send one tiny prompt through a profile, saving nothing
+	BestFor             []string               `json:"best_for,omitempty"`              // what the profile is good at, for the router
+	Email               *emailUpdate           `json:"email,omitempty"`                 // replace the mailbox settings
+	Calendar            *calendarUpdate        `json:"calendar,omitempty"`              // add, edit or delete a feed
+	ChatToken           *chatTokenUpdate       `json:"chat_token,omitempty"`            // replace a bot token
+	VaultCredential     *vaultCredentialUpdate `json:"vault_credential,omitempty"`      // add or delete a saved login
+	TestEmail           bool                   `json:"test_email,omitempty"`            // list the mailbox's folders, saving nothing
+	TestCalendar        string                 `json:"test_calendar,omitempty"`         // read one feed for a day, saving nothing
+	TestX               bool                   `json:"test_x,omitempty"`                // check the X sign-in, saving nothing
+	Permissions         string                 `json:"permissions,omitempty"`           // which calls ask first: deletes_and_posts or strict
+	FilesRetentionHours *int                   `json:"files_retention_hours,omitempty"` // how long downloads live, 1 to 168 hours
+	FilesMaxTotalMB     *int                   `json:"files_max_total_mb,omitempty"`    // cap on everything kept, 10 to 1024 MB
 }
 
 func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
@@ -757,6 +785,10 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.ChatToken != nil {
 		s.saveChatToken(w, in.ChatToken)
+		return
+	}
+	if in.VaultCredential != nil {
+		s.saveVaultCredential(w, in.VaultCredential)
 		return
 	}
 	if in.Name == "" {
@@ -1033,6 +1065,88 @@ func (s *Server) saveChatToken(w http.ResponseWriter, in *chatTokenUpdate) {
 		return
 	}
 	okRestart(w, true) // the gateway signs in when it starts
+}
+
+// openVault unlocks the vault the browser fills saved logins from. The error
+// says how to fix it: make a vault, or unlock it with its passphrase. The web
+// password already gates this endpoint; the vault passphrase is still needed
+// because it is what encrypts the file.
+func (s *Server) openVault() (*vault.Vault, error) {
+	if s.Cfg == nil || s.ConfigPath == "" {
+		return nil, errors.New("settings cannot be saved here")
+	}
+	pw, err := vault.Passphrase(s.Getenv, s.Cfg.Vault.KeyFile)
+	if err != nil {
+		return nil, err
+	}
+	return vault.Open(filepath.Join(filepath.Dir(s.ConfigPath), "vault.enc"), pw, nil)
+}
+
+// vaultView lists the saved logins for Settings: names, kinds, sites and
+// usernames, never secrets. The status says why there is nothing to show.
+func (s *Server) vaultView() ([]settingsVault, string) {
+	v, err := s.openVault()
+	if err != nil {
+		if errors.Is(err, vault.ErrNoVault) {
+			return nil, "no vault yet: make one with `tal vault init` where Talaria runs, then add logins here"
+		}
+		return nil, err.Error()
+	}
+	names := v.Usernames()
+	var out []settingsVault
+	for _, info := range v.List() {
+		if info.Kind == vault.KindOAuth {
+			continue // a sign-in to a connected service, not something to type into a page
+		}
+		out = append(out, settingsVault{Name: info.Name, Kind: info.Kind, Username: names[info.Name], Sites: info.Sites})
+	}
+	return out, ""
+}
+
+// saveVaultCredential adds or deletes one saved login. It takes effect at
+// once: the vault file is reread whenever it changes, with no restart. What is
+// added is validated like at the command line: a name, a password or value,
+// and the sites it may be used on, so a saved credential can never work
+// anywhere, including on a page made to steal it.
+func (s *Server) saveVaultCredential(w http.ResponseWriter, in *vaultCredentialUpdate) {
+	v, err := s.openVault()
+	if err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	name := strings.TrimSpace(in.Name)
+	switch in.Op {
+	case "delete":
+		if name == "" {
+			fail(w, http.StatusBadRequest, "name the login to delete")
+			return
+		}
+		if err := v.Remove(name); err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	case "add":
+		var sites []string
+		for _, part := range strings.Split(in.Sites, ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				sites = append(sites, part)
+			}
+		}
+		cred := vault.Credential{Name: name, Secret: in.Password, Sites: sites}
+		if strings.TrimSpace(in.Username) != "" {
+			cred.Kind, cred.Username = vault.KindLogin, strings.TrimSpace(in.Username)
+		} else {
+			cred.Kind = vault.KindSecret
+		}
+		if err := v.Add(cred); err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	default:
+		fail(w, http.StatusBadRequest, "op is add or delete")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {

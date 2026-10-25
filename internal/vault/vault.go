@@ -2,8 +2,9 @@
 //
 // The agent never reads them. It names a credential, and a tool puts the value
 // into a web page's field itself, but only on a site the credential was saved
-// for. Credentials are added at the command line by the user, never through a
-// chat: whatever is typed into a chat is read by the model and its provider.
+// for. Credentials are added by the user, at the command line or in the app's
+// Settings, never through a chat: whatever is typed into a chat is read by
+// the model and its provider.
 package vault
 
 import (

@@ -1254,6 +1254,59 @@ async function saveChatToken() {
   loadSettings();
 }
 
+function vaultCard() {
+  const list = S.settings.vault || [];
+  const status = S.settings.vault_status || '';
+  const card = h('div', { class: 'card' }, h('h2', null, 'Saved logins'));
+  card.append(h('div', { class: 'field-note', text: 'For sites the agent signs into with the browser, such as X. It fills them without seeing them, only on the saved sites, and each fill asks first.' }));
+  if (status && !list.length) card.append(h('div', { class: 'note', text: status }));
+  else if (status) card.append(h('div', { class: 'field-note', text: status }));
+  for (const v of list) {
+    const head = h('div', { class: 'row' });
+    head.append(h('span', { class: 'grow', text: v.name + (v.username ? ' · ' + v.username : '') }));
+    head.append(h('span', { class: 'pill info', text: v.kind || 'login' }));
+    card.append(head);
+    if ((v.sites || []).length) card.append(h('div', { class: 'field-note', text: 'For use on ' + v.sites.join(', ') }));
+    const btns = h('div', { class: 'btn-row' });
+    btns.append(h('button', { class: 'btn danger', type: 'button', text: 'Remove', onclick: () => deleteVaultCredential(v.name) }));
+    card.append(btns);
+  }
+  if (!status || list.length) {
+    card.append(
+      h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Name', for: 'vault-name' }), h('input', { id: 'vault-name', autocomplete: 'off', type: 'text', placeholder: 'x' })),
+      h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Username (leave blank for a single key value)', for: 'vault-user' }), h('input', { id: 'vault-user', autocomplete: 'username', type: 'text', placeholder: 'you@example.com' })),
+      h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Password or key value', for: 'vault-pass' }), h('input', { id: 'vault-pass', autocomplete: 'new-password', type: 'password', placeholder: 'the password or key value' })),
+      h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Sites, comma-separated', for: 'vault-sites' }), h('input', { id: 'vault-sites', autocomplete: 'off', type: 'text', placeholder: 'x.com' })),
+      h('div', { class: 'field-note', text: 'A name with a username saves a login; a name without one saves a single key value. Sites look like x.com, or one full origin for a local address. A saved login never works anywhere else.' }),
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Save login', onclick: saveVaultCredential })));
+  }
+  return card;
+}
+
+async function saveVaultCredential() {
+  const name = $('#vault-name').value.trim();
+  const username = $('#vault-user').value.trim() || undefined;
+  const password = $('#vault-pass').value || undefined;
+  const sites = $('#vault-sites').value.trim();
+  if (!name) { toast('Give the login a name.'); return; }
+  if (!password) { toast('Give the login its password or key value.'); return; }
+  if (!sites) { toast('Say where it may be used, such as x.com.'); return; }
+  try {
+    await api('/api/settings', { method: 'POST', body: { vault_credential: { op: 'add', name, username, password, sites } } });
+    toast('Login saved. It works at once, with no restart.');
+  } catch (e) { if (!(e instanceof AuthError)) toast(e.message); return; }
+  loadSettings();
+}
+
+async function deleteVaultCredential(name) {
+  if (!confirm('Remove the saved login "' + name + '"? The agent can no longer fill it.')) return;
+  try {
+    await api('/api/settings', { method: 'POST', body: { vault_credential: { op: 'delete', name } } });
+    toast('Login removed.');
+  } catch (e) { if (!(e instanceof AuthError)) toast(e.message); return; }
+  loadSettings();
+}
+
 function uptime(sec) {
   const d = Math.floor(sec / 86400), hh = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
   return d ? `${d} d ${hh} h` : hh ? `${hh} h ${m} min` : `${m} min`;
@@ -1279,6 +1332,7 @@ function settingsSummary(id) {
       if (s.email && s.email.available) on.push('Email');
       if ((s.calendars || []).some((x) => !x.builtin)) on.push('Calendars');
       for (const ch of s.chats || []) if (ch.connected) on.push(chatName(ch.service));
+      if ((s.vault || []).length) on.push(s.vault.length + (s.vault.length === 1 ? ' login' : ' logins'));
       return on.length ? on.join(', ') : 'Nothing connected yet';
     }
     case 'notifications': return { on: 'On for this device', off: 'Off', denied: 'Blocked in the browser', unsupported: 'Not supported here', 'needs-install': 'Add the app to your Home Screen first' }[S.push] || '';
@@ -1369,7 +1423,7 @@ function paneConnections(s) {
   if ((s.chats || []).some((c) => c.service === 'telegram' && c.connected)) {
     out.push(h('div', { class: 'banner' }, icon('info'), h('span', { text: 'Telegram is connected. Ask for the result to be sent there ("research this and send me the summary on Telegram"), or use the Telegram button next to the message box.' })));
   }
-  out.push(emailCard(), calendarsCard(), chatsCard());
+  out.push(emailCard(), calendarsCard(), chatsCard(), vaultCard());
   return out;
 }
 
