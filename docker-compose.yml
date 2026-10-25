@@ -56,7 +56,8 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
-    mem_limit: 1g
+    # 2g leaves the agent room for a headless Chromium tab alongside itself; drop to 1g if you never enable the browser.
+    mem_limit: 2g
     pids_limit: 256
     logging:
       driver: json-file

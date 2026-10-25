@@ -375,7 +375,8 @@ type Browser struct {
 	ProfileDir string `json:"profile_dir,omitempty"`
 	// NoSandbox turns off Chromium's own sandbox, which cannot run inside most
 	// containers. Unset, it is off in any environment but this machine, where
-	// the container is the sandbox.
+	// the container is the sandbox; it is also off inside Talaria's own
+	// container image, which cannot take those privileges.
 	NoSandbox *bool `json:"no_sandbox,omitempty"`
 }
 

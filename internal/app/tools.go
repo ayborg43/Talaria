@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -167,7 +168,7 @@ func (rt *Runtime) browserFor(env execenv.Env) *browser.Manager {
 	case !env.Remote():
 		opts.ProfileDir = filepath.Join(rt.cfg.Home, "browser")
 	}
-	opts.NoSandbox = env.Remote() // the container or the far machine is the sandbox
+	opts.NoSandbox = env.Remote() || inOwnContainer() // the container or the far machine is the sandbox
 	if n := rt.cfg.Browser.NoSandbox; n != nil {
 		opts.NoSandbox = *n
 	}
@@ -178,6 +179,11 @@ func (rt *Runtime) browserFor(env execenv.Env) *browser.Manager {
 	rt.browsers[key] = m
 	return m
 }
+
+// inOwnContainer reports whether Talaria itself runs inside its container
+// image, where Chromium's sandbox cannot work (no privileges to take): the
+// Dockerfile sets TALARIA_CONTAINER, and the no_sandbox setting still wins.
+func inOwnContainer() bool { return os.Getenv("TALARIA_CONTAINER") == "1" }
 
 // envKey identifies an environment: the value itself where it can be compared
 // (a pointer to a running container, say), else its description.

@@ -603,6 +603,14 @@ with the same safety rules, and the same conversation history, goals, watches an
 On a machine of your own: set `TALARIA_WEB_PASSWORD` and run `tal gateway`; it listens on `:8080` (change it with `TALARIA_WEB_LISTEN`).
 Without `TALARIA_WEB_PUBLIC_URL` it works in a browser on that machine but cannot be installed on a phone.
 
+**The browser works on the server too.** The image ships headless Chromium, with its own sandbox off (it cannot work
+unprivileged in a container) and logins kept in the profile in the home volume, so they survive redeploys. It is off
+by default outside the workspace: switch it on by adding `"browser": {"enabled": true}` to the JSON in
+`TALARIA_CONFIG_JSON` and redeploying. First logins happen the same way as anywhere: the agent types what you send it,
+screenshots show you what it sees, and anything needing your phone (SMS codes, authenticator taps, captchas) is yours.
+Two caveats: some sites refuse logins from datacenter addresses no matter how normal the browser looks, and the profile
+holds live login cookies, so keep Dokploy access tight and back up the data volume.
+
 - **Sign in.** One password, compared in constant time. Wrong guesses are limited (five from one address locks it for 15 minutes; a flood
   from many addresses locks everyone but a signed-in session out for a while), each wrong answer waits, and nothing about which part was
   wrong is said. A session lasts 30 days from when you last used it, can be ended with Sign out, and is a random value of which only a

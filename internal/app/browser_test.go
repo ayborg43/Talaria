@@ -135,6 +135,24 @@ func TestOneBrowserPerEnvironmentWithTheRightSettings(t *testing.T) {
 	}
 }
 
+func TestOwnContainerTurnsTheBrowserSandboxOff(t *testing.T) {
+	t.Setenv("TALARIA_CONTAINER", "1")
+	on := true
+	rt := openWith(t, Config{Env: execenv.Local{}, Browser: BrowserConfig{Enabled: &on}})
+	rt.NewAgent(AgentOptions{})
+	if m := rt.browsers[envKey(execenv.Local{})]; !m.Opts.NoSandbox {
+		t.Fatalf("in the container image the sandbox must default off: %+v", m.Opts)
+	}
+
+	// An explicit setting still wins over the container default.
+	no := false
+	rt2 := openWith(t, Config{Env: execenv.Local{}, Browser: BrowserConfig{Enabled: &on, NoSandbox: &no}})
+	rt2.NewAgent(AgentOptions{})
+	if m := rt2.browsers[envKey(execenv.Local{})]; m.Opts.NoSandbox {
+		t.Fatalf("an explicit no_sandbox=false must win: %+v", m.Opts)
+	}
+}
+
 func TestEnvKeyHandlesEnvironmentsThatCannotBeCompared(t *testing.T) {
 	type sliceEnv struct {
 		execenv.Local
