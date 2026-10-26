@@ -1098,9 +1098,9 @@ with the same variables and a volume on `/data` and `/work` works too; the image
 
 **Settings that are not a variable**: put them as JSON in `TALARIA_CONFIG_JSON` (connected services, limits, protected paths, environments).
 It is written to `/data/config.json` at every start, so what the platform says is what runs. Keep secrets out of it: name the variable that holds
-each one (`api_key_env`, `token_env`). The vault, if you use one, is created inside the container
-(`docker exec -it <container> tal vault init`) and opened afterwards with `TALARIA_VAULT_PASSPHRASE`; a connected service is signed in to the same
-way (`docker exec -it <container> tal connect NAME -no-browser`, opening the address it prints in your own browser and pasting back where it ended up).
+each one (`api_key_env`, `token_env`). The vault needs no manual step: if `TALARIA_VAULT_PASSPHRASE` is set and no vault exists yet,
+the entrypoint creates one from it at startup; a connected service is signed in with
+(`docker exec -it <container> tal connect NAME -no-browser`, opening the address it prints in your own browser and pasting back where it ended up).
 
 **Inside the container.** The agent's shell and file tools run in the container, which is the sandbox: they cannot touch your host or other
 containers, and they see only `/work` and what you mount. The model's key, the bot token and the vault passphrase are kept out of the environment

@@ -23,4 +23,15 @@ if [ -n "${TALARIA_CONFIG_JSON:-}" ]; then
 	echo "talaria: wrote $cfg from TALARIA_CONFIG_JSON" >&2
 fi
 
+# A gateway cannot ask for the vault passphrase, so when one is given but no
+# vault exists yet, make it now: the passphrase is typed twice, as init asks.
+if [ -n "${TALARIA_VAULT_PASSPHRASE:-}" ] && [ ! -e "$home/vault.enc" ]; then
+	echo "talaria: no vault yet, creating one from TALARIA_VAULT_PASSPHRASE" >&2
+	if printf '%s\n%s\n' "$TALARIA_VAULT_PASSPHRASE" "$TALARIA_VAULT_PASSPHRASE" | tal vault init >/dev/null 2>&1; then
+		echo "talaria: created $home/vault.enc" >&2
+	else
+		echo "talaria: could not create the vault (is the passphrase at least 12 characters?). Continuing without saved logins." >&2
+	fi
+fi
+
 exec tal "$@"
