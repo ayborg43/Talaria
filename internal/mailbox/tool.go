@@ -55,7 +55,7 @@ func RegisterTools(r *tool.Registry, s *Service) {
 	})
 	r.Register(tool.Tool{
 		Name: "email_read",
-		Description: "Read one message, by the id email_list gave. Shows who it is from and to, the subject, the text (cut if long) and the names of any attachments, whose contents are not opened. " +
+		Description: "Read one message, by the id email_list gave. Shows who it is from and to, the subject, the text (cut if long) and the names of any attachments; download one with email_attachment to open it. " +
 			"Read-only, and reading does not mark the message as read. " + untrustedNote,
 		Schema: json.RawMessage(`{"type":"object","properties":{
 			"id":{"type":"integer","description":"the message's id from email_list"},
@@ -248,4 +248,128 @@ func orNone(s, none string) string {
 		return none
 	}
 	return s
+}
+
+// FileResolver reads a kept file by id, for attaching it to a message, and
+// FileSaver keeps a downloaded attachment, returning how to refer to it.
+// Both are set by the caller that owns the file store; nil disables the
+// argument or tool that needs them.
+type FileResolver func(id string) (name string, data []byte, err error)
+type FileSaver func(name string, data []byte) (ref string, err error)
+
+// RegisterSendTools gives the agent email_send and email_reply. Both ask
+// first: the approval shows the recipients, subject and body in full. A copy
+// is filed in Sent after a successful send.
+func RegisterSendTools(r *tool.Registry, s *Service, resolve FileResolver) {
+	attach := func(ids []string) ([]SendAttachment, error) {
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		if resolve == nil {
+			return nil, fmt.Errorf("attaching files is not set up for this chat")
+		}
+		var out []SendAttachment
+		for _, id := range ids {
+			name, data, err := resolve(id)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, SendAttachment{Name: name, Data: data})
+		}
+		return out, nil
+	}
+	addresses := func(v string) []string {
+		var out []string
+		for _, p := range strings.Split(v, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+	r.Register(tool.Tool{
+		Name:          "email_send",
+		Description:   "Send a new mail from the user's mailbox. Asks first, showing the full recipients, subject and body: check them with the user before it goes. Give to (addresses, comma-separated), subject, body, optional cc and attachment_ids (ids of kept files, from files_list). A copy is filed in Sent.",
+		Schema:        json.RawMessage(`{"type":"object","properties":{"to":{"type":"string"},"cc":{"type":"string"},"subject":{"type":"string"},"body":{"type":"string"},"attachment_ids":{"type":"array","items":{"type":"string"}}},"required":["to","subject","body"]}`),
+		NeedsApproval: true,
+		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
+			var a struct {
+				To, Cc, Subject, Body string
+				AttachmentIDs         []string `json:"attachment_ids"`
+			}
+			if err := json.Unmarshal(raw, &a); err != nil {
+				return "", err
+			}
+			atts, err := attach(a.AttachmentIDs)
+			if err != nil {
+				return "", err
+			}
+			return s.Send(ctx, Outgoing{To: addresses(a.To), Cc: addresses(a.Cc), Subject: a.Subject, Body: a.Body, Attachments: atts})
+		},
+	})
+	r.Register(tool.Tool{
+		Name:          "email_reply",
+		Description:   "Reply to a message by the id email_list gave, in its folder. Asks first, showing the full reply. The reply is threaded (In-Reply-To and References set, Re: subject) and goes to the sender. Give body, optional attachment_ids.",
+		Schema:        json.RawMessage(`{"type":"object","properties":{"id":{"type":"integer"},"folder":{"type":"string"},"body":{"type":"string"},"attachment_ids":{"type":"array","items":{"type":"string"}}},"required":["id","body"]}`),
+		NeedsApproval: true,
+		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
+			var a struct {
+				ID            int64
+				Folder, Body  string
+				AttachmentIDs []string `json:"attachment_ids"`
+			}
+			if err := json.Unmarshal(raw, &a); err != nil {
+				return "", err
+			}
+			orig, err := s.Read(ctx, a.Folder, uint32(a.ID))
+			if err != nil {
+				return "", err
+			}
+			atts, err := attach(a.AttachmentIDs)
+			if err != nil {
+				return "", err
+			}
+			subject := orig.Subject
+			if !strings.HasPrefix(strings.ToLower(subject), "re:") {
+				subject = "Re: " + subject
+			}
+			refs := strings.TrimSpace(orig.References + " " + orig.MessageID)
+			return s.Send(ctx, Outgoing{
+				To: []string{addressOnly(orig.From)}, Subject: subject, Body: a.Body,
+				InReplyTo: orig.MessageID, References: refs, Attachments: atts,
+			})
+		},
+	})
+}
+
+// RegisterDownloadTool gives the agent email_attachment: download one
+// attachment of one message into the kept files, so files_read or the
+// download link can be used on it. Attachment bytes are fetched only here.
+func RegisterDownloadTool(r *tool.Registry, s *Service, save FileSaver) {
+	if save == nil {
+		return
+	}
+	r.Register(tool.Tool{
+		Name:        "email_attachment",
+		Description: "Download one attachment of a message (by the id email_list gave and the attachment's name, as email_read lists them) into the kept files, and return its file reference. Use files_read on a PDF afterwards to read it.",
+		Schema:      json.RawMessage(`{"type":"object","properties":{"id":{"type":"integer"},"folder":{"type":"string"},"name":{"type":"string"}},"required":["id","name"]}`),
+		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
+			var a struct {
+				ID           int64
+				Folder, Name string
+			}
+			if err := json.Unmarshal(raw, &a); err != nil {
+				return "", err
+			}
+			att, err := s.Attachment(ctx, a.Folder, uint32(a.ID), a.Name)
+			if err != nil {
+				return "", err
+			}
+			ref, err := save(att.Name, att.Data)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("Saved attachment %q (%d bytes) as %s\n", att.Name, att.Size, ref), nil
+		},
+	})
 }

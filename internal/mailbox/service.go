@@ -30,6 +30,11 @@ type Service struct {
 	Now      func() time.Time
 	// TLS replaces the connection's TLS settings, for tests.
 	TLS *tls.Config
+	// SMTPServer is the submission server (host:port, implicit TLS); empty
+	// derives it from Server with SMTPFor.
+	SMTPServer string
+	// SendMail replaces the SMTP transport, for tests.
+	SendMail func(ctx context.Context, server, user, pass, from string, to []string, msg []byte) error
 
 	mu sync.Mutex
 }
@@ -358,4 +363,45 @@ func (s *Service) Read(ctx context.Context, folder string, uid uint32) (*Message
 		return fmt.Errorf("there is no message with id %d in that folder", uid)
 	})
 	return msg, err
+}
+
+// Attachment downloads one attachment of one message, decoded. Ordinary
+// reads never fetch attachment bytes; this is the one place that does.
+func (s *Service) Attachment(ctx context.Context, folder string, uid uint32, name string) (*Attachment, error) {
+	var found *Attachment
+	err := s.session(ctx, func(c *client) error {
+		if err := s.examine(c, folder); err != nil {
+			return err
+		}
+		res, err := c.run("UID FETCH", raw(strconv.FormatUint(uint64(uid), 10)),
+			raw(fmt.Sprintf("(UID RFC822.SIZE BODY.PEEK[]<0.%d>)", maxFetchLen)))
+		if err != nil {
+			return err
+		}
+		for _, f := range res.fetches {
+			if num(f["UID"]) != uid {
+				continue
+			}
+			m, perr := parseMessageCollect([]byte(str1(f["BODY"])), int(num(f["RFC822.SIZE"])) > maxFetchLen, name)
+			if perr != nil {
+				return perr
+			}
+			for i := range m.Attachments {
+				if strings.EqualFold(m.Attachments[i].Name, name) && m.Attachments[i].Data != nil {
+					found = &m.Attachments[i]
+					return nil
+				}
+			}
+			return fmt.Errorf("message %d has no attachment called %q that could be read", uid, name)
+		}
+		return fmt.Errorf("there is no message with id %d in that folder", uid)
+	})
+	return found, err
+}
+
+// Append files a raw message in a folder: the Sent copy of a sent message.
+func (s *Service) Append(ctx context.Context, folder string, msg []byte) error {
+	return s.session(ctx, func(c *client) error {
+		return c.appendMessage(folder, msg)
+	})
 }

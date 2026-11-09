@@ -23,11 +23,13 @@ const (
 	maxBody     = 8000 // characters of a message the model is shown
 )
 
-// Attachment is a file in a message. Its content is never fetched or shown.
+// Attachment is a file in a message. Its content is fetched only when a
+// download asks for it by name; Data then holds the decoded bytes.
 type Attachment struct {
 	Name string
 	Type string
 	Size int
+	Data []byte
 }
 
 // Message is one message, read.
@@ -37,6 +39,8 @@ type Message struct {
 	Cc, Subject string
 	Date        string
 	Body        string
+	MessageID   string
+	References  string
 	Attachments []Attachment
 	Notes       []string
 }
@@ -126,6 +130,7 @@ type walker struct {
 	notes       []string
 	parts       int
 	unknown     string
+	collect     string // attachment name to keep the bytes of, if any
 }
 
 type headerGetter func(string) string
@@ -158,9 +163,23 @@ func (w *walker) walk(get headerGetter, body io.Reader, depth int) {
 	}
 	attachment := disp == "attachment" || !strings.HasPrefix(mt, "text/")
 	if attachment {
-		n, _ := io.Copy(io.Discard, io.LimitReader(body, 32<<20))
+		att := Attachment{Name: strings.TrimSpace(decodeHeader(name)), Type: mt}
+		if w.collect != "" && strings.EqualFold(att.Name, w.collect) {
+			var r io.Reader = body
+			switch strings.ToLower(strings.TrimSpace(get("Content-Transfer-Encoding"))) {
+			case "base64":
+				r = base64.NewDecoder(base64.StdEncoding, r)
+			case "quoted-printable":
+				r = quotedprintable.NewReader(r)
+			}
+			data, _ := io.ReadAll(io.LimitReader(r, 32<<20))
+			att.Data, att.Size = data, len(data)
+		} else {
+			n, _ := io.Copy(io.Discard, io.LimitReader(body, 32<<20))
+			att.Size = int(n)
+		}
 		if len(w.attach) < 30 {
-			w.attach = append(w.attach, Attachment{Name: strings.TrimSpace(decodeHeader(name)), Type: mt, Size: int(n)})
+			w.attach = append(w.attach, att)
 		}
 		return
 	}
@@ -257,19 +276,31 @@ func plainLine(s string, n int) string {
 }
 
 // parseMessage reads a whole message. truncated says the server was asked for only the start of it.
+// parseMessageCollect is parseMessage keeping the bytes of the attachment
+// named collect (empty collects none, as parseMessage does).
+func parseMessageCollect(rawMsg []byte, truncated bool, collect string) (*Message, error) {
+	return parseMessageWith(rawMsg, truncated, collect)
+}
+
 func parseMessage(rawMsg []byte, truncated bool) (*Message, error) {
+	return parseMessageWith(rawMsg, truncated, "")
+}
+
+func parseMessageWith(rawMsg []byte, truncated bool, collect string) (*Message, error) {
 	msg, err := mail.ReadMessage(bytes.NewReader(rawMsg))
 	if err != nil {
 		return nil, fmt.Errorf("the message could not be read: %w", err)
 	}
 	h := msg.Header
 	m := &Message{
-		From:    plainLine(Address(h.Get("From")), 200),
-		To:      plainLine(Address(h.Get("To")), 300),
-		Cc:      plainLine(Address(h.Get("Cc")), 300),
-		Subject: plainLine(decodeHeader(h.Get("Subject")), 200),
+		From:       plainLine(Address(h.Get("From")), 200),
+		To:         plainLine(Address(h.Get("To")), 300),
+		Cc:         plainLine(Address(h.Get("Cc")), 300),
+		Subject:    plainLine(decodeHeader(h.Get("Subject")), 200),
+		MessageID:  strings.TrimSpace(h.Get("Message-ID")),
+		References: strings.TrimSpace(h.Get("References")),
 	}
-	w := &walker{}
+	w := &walker{collect: collect}
 	w.walk(func(k string) string { return h.Get(k) }, msg.Body, 0)
 	text := w.plain.String()
 	if strings.TrimSpace(text) == "" {

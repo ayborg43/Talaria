@@ -36,6 +36,9 @@ var errTooBig = errors.New("the mail server sent more than Talaria will read")
 var allowed = map[string]bool{
 	"LOGIN": true, "CAPABILITY": true, "LIST": true, "EXAMINE": true,
 	"UID SEARCH": true, "UID FETCH": true, "LOGOUT": true,
+	// APPEND files the Sent copy of a message the user approved sending.
+	// Nothing here deletes, moves or marks mail.
+	"APPEND": true,
 }
 
 type atomV string // an unquoted word, a number or NIL
@@ -44,14 +47,28 @@ type strV string  // a quoted string or a block of data
 // arg is one argument of a command: either raw (written by this package, from a fixed alphabet) or a
 // string that came from the user or the model, which is quoted or sent as a literal.
 type arg struct {
-	s   string
-	raw bool
+	s       string
+	raw     bool
+	literal bool // write as a literal whatever it holds: a whole message being filed
 }
 
 func raw(s string) arg { return arg{s: s, raw: true} }
 func str(s string) arg { return arg{s: s} }
+func lit(s string) arg { return arg{s: s, literal: true} }
 
-var rawOK = regexp.MustCompile(`^[A-Za-z0-9 .,:*()\[\]<>_-]+$`)
+// rawSafe reports whether a raw argument holds only the fixed alphabet raw
+// arguments are written from, backslash included (a flag such as \Seen).
+func rawSafe(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case strings.ContainsRune(" .,:*()[]<>_-\\", r):
+		default:
+			return false
+		}
+	}
+	return len(s) > 0
+}
 
 type response struct {
 	cont, tagged bool
@@ -456,16 +473,16 @@ func (c *client) send(verb string, args ...arg) (string, error) {
 	for _, a := range args {
 		line.WriteByte(' ')
 		if a.raw {
-			if !rawOK.MatchString(a.s) {
+			if !rawSafe(a.s) {
 				return "", errors.New("internal error: an unsafe mail command was refused")
 			}
 			line.WriteString(a.s)
 			continue
 		}
-		if hasControl(a.s) {
+		if !a.literal && hasControl(a.s) {
 			return "", errors.New("a line break or control character cannot be used in a mail search or folder name")
 		}
-		if quotable(a.s) {
+		if !a.literal && quotable(a.s) {
 			line.WriteString(quote(a.s))
 			continue
 		}
@@ -547,4 +564,11 @@ func (e *refused) Error() string {
 		t = t[:120]
 	}
 	return fmt.Sprintf("the mail server answered %s to %s: %s", e.status, strings.ToLower(e.verb), t)
+}
+
+// appendMessage files a raw message in a folder, through the same send/run
+// path as every other command: the message goes as one literal.
+func (c *client) appendMessage(folder string, msg []byte) error {
+	_, err := c.run("APPEND", str(encodeFolder(folder)), raw("(\\Seen)"), lit(string(msg)))
+	return err
 }

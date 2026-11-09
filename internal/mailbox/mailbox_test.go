@@ -84,7 +84,7 @@ func TestReadingNeverSendsAnythingThatChangesAMailbox(t *testing.T) {
 }
 
 func TestTheClientRefusesToSendAChangingCommand(t *testing.T) {
-	for _, v := range []string{"STORE", "UID STORE", "EXPUNGE", "DELETE", "APPEND", "COPY", "UID COPY", "UID MOVE", "SELECT", "CREATE", "RENAME", "IDLE"} {
+	for _, v := range []string{"STORE", "UID STORE", "EXPUNGE", "DELETE", "COPY", "UID COPY", "UID MOVE", "SELECT", "CREATE", "RENAME", "IDLE"} {
 		c := &client{w: bufio.NewWriter(&strings.Builder{}), cnt: &counter{}}
 		if _, err := c.send(v, str("INBOX")); err == nil {
 			t.Fatalf("%s was sent", v)

@@ -552,11 +552,11 @@ exceptions and moved or cancelled single occurrences), time zones and daylight s
   Writes are guarded by the server's ETag, so a change made elsewhere since the event was read is refused rather than
   overwritten. The password stays in its environment variable, out of the config file and the agent's shell.
 
-## Email (read-only)
+## Email
 
 The agent can read your mail: "anything urgent today?", "find the invoice from Acme", "what did Amina say about the report?". It signs in
-over IMAP with an **app password**, and **it can only read**: it cannot send, reply, forward, delete, move, archive or mark a message, and
-reading does not even mark a message as read.
+over IMAP with an **app password**. Reading never changes anything: it cannot delete, move, archive or mark a message, and reading does
+not even mark a message as read. Sending is separate, always asks first, and is covered below.
 
 1. Make an app password for the mailbox (a separate password that works only for mail, which you can revoke without changing your own):
    - **Gmail:** turn on 2-step verification, then create one at myaccount.google.com/apppasswords, and make sure IMAP is on
@@ -574,14 +574,19 @@ reading does not even mark a message as read.
 3. Check it without any model: `tal email` lists the last three days, `tal email 14 unread` the unread mail of two weeks, `tal email read 123`
    reads one message, `tal email folders` lists the folders. `tal doctor` says what it found (it does not connect).
 
-The agent gets three tools: `email_list` (by days back, unread, sender, words in the message, folder; newest first, with an id for each),
-`email_read` (one message by id: who from and to, the subject, the text cut to a sensible length, and the *names* of attachments, whose
-contents are never opened) and `email_folders`. "Tell me when mail comes from Amina" works as a watch on `email_list`, with no model call
-until something changes.
+The agent gets three reading tools: `email_list` (by days back, unread, sender, words in the message, folder; newest first, with an id for each),
+`email_read` (one message by id: who from and to, the subject, the text cut to a sensible length, and the *names* of attachments) and
+`email_folders`. "Tell me when mail comes from Amina" works as a watch on `email_list`, with no model call until something changes.
+`email_attachment` downloads one named attachment into the kept files, so a PDF form from a mail can be read with `files_read`.
 
-- **Read-only is enforced, not just promised.** The mail client can send exactly seven commands (sign in, list folders, open a folder,
-  search, fetch, capability, sign out), and none of them can change a mailbox. Folders are opened with `EXAMINE`, which the server itself
+- **Reading is enforced, not just promised.** The mail client can send eight commands (sign in, list folders, open a folder,
+  search, fetch, capability, sign out, and APPEND, which files the Sent copy of an approved send), and none of them can delete,
+  move or mark a mailbox. Folders are opened with `EXAMINE`, which the server itself
   treats as read-only, and messages are fetched with `BODY.PEEK`. A test fails if any other command is ever sent.
+- **Sending asks first, in full.** `email_send` and `email_reply` show the recipients, subject and body at the approval, and
+  nothing goes if you say no. Replies are threaded (`In-Reply-To`, `References`, `Re:`). Mail goes over implicit-TLS SMTP
+  (the `smtp.` host derived from the IMAP one, port 465) with the same app password, kept files can be attached by id, and
+  a copy is filed in Sent afterwards; if filing fails you are told in the result, after the send itself succeeded.
 - **The app password is a secret.** It is removed from the environment of the agent's shell commands, scrubbed from output, errors, logs
   and history, and sent only over a TLS connection with a verified certificate (TLS 1.2 or later; there is no plain-text option). To cancel
   it, revoke it in your account.

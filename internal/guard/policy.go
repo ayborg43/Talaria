@@ -44,7 +44,7 @@ var knownTools = map[string]bool{
 	"calendar_add": true, "calendar_delete": true, "calendar_events": true, "calendar_update": true,
 	"cron_add": true, "cron_list": true, "cron_remove": true,
 	"current_time": true, "delegate": true,
-	"email_folders": true, "email_list": true, "email_read": true,
+	"email_attachment": true, "email_folders": true, "email_list": true, "email_read": true, "email_reply": true, "email_send": true,
 	"files_delete": true, "files_list": true, "files_make_pdf": true, "files_read": true, "files_view": true,
 	"files_send":     true,
 	"finance_import": true,

@@ -209,6 +209,8 @@ func (f *fakeIMAP) process(w *bufio.Writer, line string) bool {
 				}
 			}
 			fmt.Fprintf(w, "%s OK done\r\n", tag)
+		case "APPEND":
+			fmt.Fprintf(w, "%s OK append done\r\n", tag)
 		case "LOGOUT":
 			fmt.Fprintf(w, "* BYE bye\r\n%s OK logged out\r\n", tag)
 			return true

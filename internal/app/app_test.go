@@ -339,7 +339,7 @@ func TestTheCalendarToolIsOfferedOnlyWhenACalendarIsSetUp(t *testing.T) {
 	}
 }
 
-func TestTheMailToolsAreOfferedOnlyWhenAMailboxIsSetUpAndNeverAskNorSend(t *testing.T) {
+func TestTheMailToolsAreOfferedOnlyWhenAMailboxIsSetUpAndSendingAsks(t *testing.T) {
 	with := Open(Config{Home: t.TempDir(), Provider: nil, Mail: &mailbox.Service{Address: "me@example.com", Password: "pw", Server: "imap.example.com:993"}})
 	defer with.Close()
 	if !with.HasMail() {
@@ -358,9 +358,15 @@ func TestTheMailToolsAreOfferedOnlyWhenAMailboxIsSetUpAndNeverAskNorSend(t *test
 			t.Fatalf("%s: a reading tool asks nobody and sends nothing", name)
 		}
 	}
-	for _, name := range []string{"email_send", "email_delete", "email_move", "email_mark"} {
+	for _, name := range []string{"email_send", "email_reply"} {
+		tl, ok := tools.Get(name)
+		if !ok || !tl.NeedsApproval {
+			t.Fatalf("%s must exist and ask first: %+v", name, tl)
+		}
+	}
+	for _, name := range []string{"email_delete", "email_move", "email_mark"} {
 		if _, ok := tools.Get(name); ok {
-			t.Fatalf("%s exists: the mailbox is read-only", name)
+			t.Fatalf("%s exists: mail can be sent but never deleted, moved or marked", name)
 		}
 	}
 	without := Open(Config{Home: t.TempDir(), Provider: nil})

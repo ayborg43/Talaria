@@ -120,6 +120,26 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 	}
 	if rt.cfg.Mail != nil {
 		mailbox.RegisterTools(tools, rt.cfg.Mail)
+		var resolve mailbox.FileResolver
+		var save mailbox.FileSaver
+		if rt.cfg.Files != nil {
+			resolve = func(id string) (string, []byte, error) {
+				f, data, err := rt.cfg.Files.Open(id)
+				if err != nil {
+					return "", nil, err
+				}
+				return f.Name, data, nil
+			}
+			save = func(name string, data []byte) (string, error) {
+				f, err := rt.cfg.Files.Save(name, data, "email attachment")
+				if err != nil {
+					return "", err
+				}
+				return "file " + f.ID + " (" + name + ")", nil
+			}
+		}
+		mailbox.RegisterSendTools(tools, rt.cfg.Mail, resolve)
+		mailbox.RegisterDownloadTool(tools, rt.cfg.Mail, save)
 	}
 	if rt.cfg.X != nil {
 		x.RegisterTools(tools, rt.cfg.X)
