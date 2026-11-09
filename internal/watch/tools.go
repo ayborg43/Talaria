@@ -257,12 +257,17 @@ func (b Binding) Summary() string {
 // commands carry no context, and updating is local store writes, so there is
 // nothing to cancel.
 func (b Binding) Do(id, action string) string {
-	raw, _ := json.Marshal(map[string]string{"id": id, "action": action})
-	out, err := b.update(context.Background(), raw)
+	out, err := b.Act(id, action)
 	if err != nil {
 		return err.Error()
 	}
 	return out
+}
+
+// Act is Do with the error kept, for callers (the web app) that report failures themselves.
+func (b Binding) Act(id, action string) (string, error) {
+	raw, _ := json.Marshal(map[string]string{"id": id, "action": action})
+	return b.update(context.Background(), raw)
 }
 
 // Prompt is what the model is asked when a watch's answer has changed. What the

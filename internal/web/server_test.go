@@ -1335,6 +1335,36 @@ func TestControlShowsHowThingsAreAndPausingWorks(t *testing.T) {
 	}
 }
 
+func TestJobActionRoutePassesKindIDAndActionThrough(t *testing.T) {
+	r := newRig(t)
+	r.login()
+	var got [3]string
+	r.srv.Sources.JobAction = func(kind, id, action string) error {
+		got = [3]string{kind, id, action}
+		if id == "missing" {
+			return errors.New("no such job")
+		}
+		return nil
+	}
+	resp, b := r.do("POST", "/api/jobs", map[string]string{"kind": "GOAL", "id": "g1", "action": "pause"})
+	if resp.StatusCode != 200 || got != [3]string{"GOAL", "g1", "pause"} || !strings.Contains(string(b), `"ok":true`) {
+		t.Fatalf("%d %s %v", resp.StatusCode, b, got)
+	}
+	if resp, _ := r.do("POST", "/api/jobs", map[string]string{"kind": "GOAL", "id": "missing", "action": "pause"}); resp.StatusCode != 400 {
+		t.Fatalf("unknown job: %d", resp.StatusCode)
+	}
+	if resp, _ := r.do("POST", "/api/jobs", map[string]string{"kind": "GOAL", "id": "g1", "action": "explode"}); resp.StatusCode != 400 {
+		t.Fatalf("unknown action: %d", resp.StatusCode)
+	}
+	if resp, _ := r.do("POST", "/api/jobs", map[string]string{"kind": "BOGUS", "id": "g1", "action": "pause"}); resp.StatusCode != 400 {
+		t.Fatalf("unknown kind: %d", resp.StatusCode)
+	}
+	r.srv.Sources.JobAction = nil
+	if resp, _ := r.do("POST", "/api/jobs", map[string]string{"kind": "GOAL", "id": "g1", "action": "pause"}); resp.StatusCode != 501 {
+		t.Fatalf("unwired: %d", resp.StatusCode)
+	}
+}
+
 func TestNotificationRoutesRefuseWhatTheServerShouldNotSendTo(t *testing.T) {
 	r := newRig(t)
 	r.login()

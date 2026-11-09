@@ -333,10 +333,15 @@ func (b Binding) Show(id string) string {
 
 // SetStatus pauses, resumes, finishes or drops a goal.
 func (b Binding) SetStatus(id, status string) string {
-	raw, _ := json.Marshal(map[string]string{"id": id, "status": status})
-	out, err := b.update(context.Background(), raw)
+	out, err := b.ChangeStatus(id, status)
 	if err != nil {
 		return err.Error()
 	}
 	return out
+}
+
+// ChangeStatus is SetStatus with the error kept, for callers (the web app) that report failures themselves.
+func (b Binding) ChangeStatus(id, status string) (string, error) {
+	raw, _ := json.Marshal(map[string]string{"id": id, "status": status})
+	return b.update(context.Background(), raw)
 }

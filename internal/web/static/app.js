@@ -936,9 +936,29 @@ function jobsCard(jobs, title = 'Working for You') {
   const rows = h('div', { class: 'rows' });
   for (const j of jobs) {
     const kind = j.kind.toLowerCase();
+    const acts = h('span', { class: 'acts' });
+    if (j.id) {
+      const act = async (action, label, btn) => {
+        btn.disabled = true;
+        try {
+          const d = await api('/api/jobs', { method: 'POST', body: { kind: j.kind, id: j.id, action } });
+          toast(label + ': ' + j.title);
+          if (S.tab === 'agents') { standing = d.jobs || []; renderAgentsPage(); } else loadToday(true);
+        } catch (e) { if (!(e instanceof AuthError)) toast(e.message); btn.disabled = false; }
+      };
+      if (j.kind !== 'TIME') {
+        const paused = j.state === 'Paused';
+        const b = h('button', { class: 'btn small', type: 'button', text: paused ? 'Resume' : 'Pause' });
+        b.addEventListener('click', () => act(paused ? 'resume' : 'pause', paused ? 'Resumed' : 'Paused', b));
+        acts.append(b);
+      }
+      const del = h('button', { class: 'btn small danger', type: 'button', text: j.kind === 'GOAL' ? 'Drop' : 'Delete' });
+      del.addEventListener('click', () => act('delete', j.kind === 'GOAL' ? 'Dropped' : 'Deleted', del));
+      acts.append(del);
+    }
     rows.append(h('div', { class: 'row' }, h('span', { class: 'tag ' + kind, text: j.kind }),
       h('span', { class: 'grow' }, h('span', { class: 't', text: j.title }), h('span', { class: 's', text: j.sub })),
-      h('span', { class: 'state ' + (j.state === 'Paused' ? 'state-brass' : j.state === 'Active' || j.state === 'Waiting' ? 'state-ok' : 'state-quiet'), text: j.state })));
+      h('span', { class: 'state ' + (j.state === 'Paused' ? 'state-brass' : j.state === 'Active' || j.state === 'Waiting' ? 'state-ok' : 'state-quiet'), text: j.state }), acts));
   }
   card.append(rows);
   return card;
@@ -1258,26 +1278,27 @@ function vaultCard() {
   const list = S.settings.vault || [];
   const status = S.settings.vault_status || '';
   const card = h('div', { class: 'card' }, h('h2', null, 'Saved logins'));
-  card.append(h('div', { class: 'field-note', text: 'For sites the agent signs into with the browser, such as X. It fills them without seeing them, only on the saved sites, and each fill asks first.' }));
+  card.append(h('div', { class: 'field-note', text: 'Website logins the agent can sign in with, such as your X account. What you see here is the whole inventory: every label, username and site. Passwords and keys are never shown, to anyone — the agent fills them straight into the page, only on the saved sites, and each fill asks first.' }));
   if (status && !list.length) card.append(h('div', { class: 'note', text: status }));
   else if (status) card.append(h('div', { class: 'field-note', text: status }));
   for (const v of list) {
     const head = h('div', { class: 'row' });
-    head.append(h('span', { class: 'grow', text: v.name + (v.username ? ' · ' + v.username : '') }));
-    head.append(h('span', { class: 'pill info', text: v.kind || 'login' }));
+    head.append(h('span', { class: 'grow', text: v.name + (v.username ? ' · signs in as ' + v.username : '') }));
+    head.append(h('span', { class: 'pill info', text: v.kind === 'secret' ? 'key value' : 'username + password' }));
     card.append(head);
-    if ((v.sites || []).length) card.append(h('div', { class: 'field-note', text: 'For use on ' + v.sites.join(', ') }));
+    if ((v.sites || []).length) card.append(h('div', { class: 'field-note', text: 'Works only on ' + v.sites.join(', ') }));
     const btns = h('div', { class: 'btn-row' });
     btns.append(h('button', { class: 'btn danger', type: 'button', text: 'Remove', onclick: () => deleteVaultCredential(v.name) }));
     card.append(btns);
   }
   if (!status || list.length) {
     card.append(
-      h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Name', for: 'vault-name' }), h('input', { id: 'vault-name', autocomplete: 'off', type: 'text', placeholder: 'x' })),
-      h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Username (leave blank for a single key value)', for: 'vault-user' }), h('input', { id: 'vault-user', autocomplete: 'username', type: 'text', placeholder: 'you@example.com' })),
-      h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Password or key value', for: 'vault-pass' }), h('input', { id: 'vault-pass', autocomplete: 'new-password', type: 'password', placeholder: 'the password or key value' })),
-      h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Sites, comma-separated', for: 'vault-sites' }), h('input', { id: 'vault-sites', autocomplete: 'off', type: 'text', placeholder: 'x.com' })),
-      h('div', { class: 'field-note', text: 'A name with a username saves a login; a name without one saves a single key value. Sites look like x.com, or one full origin for a local address. A saved login never works anywhere else.' }),
+      h('h2', null, 'Add a new login'),
+      h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Label — a short name for this login, e.g. x', for: 'vault-name' }), h('input', { id: 'vault-name', autocomplete: 'off', type: 'text', placeholder: 'x' })),
+      h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Username you sign in with', for: 'vault-user' }), h('input', { id: 'vault-user', autocomplete: 'username', type: 'text', placeholder: 'you@example.com' })),
+      h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Password (never shown again once saved)', for: 'vault-pass' }), h('input', { id: 'vault-pass', autocomplete: 'new-password', type: 'password', placeholder: 'your password' })),
+      h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Websites it works on, comma-separated', for: 'vault-sites' }), h('input', { id: 'vault-sites', autocomplete: 'off', type: 'text', placeholder: 'x.com' })),
+      h('div', { class: 'field-note', text: 'Leave the username blank to save an API key or token instead of a login. A saved login never works on any site but the ones listed here.' }),
       h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Save login', onclick: saveVaultCredential })));
   }
   return card;

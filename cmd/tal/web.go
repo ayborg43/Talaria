@@ -156,7 +156,35 @@ func webSources(rt *app.Runtime, zone *time.Location, links func() []web.LinkInf
 		}
 	}
 	src.Jobs = func() []web.JobInfo { return webJobs(rt, zone) }
+	src.JobAction = func(kind, id, action string) error { return webJobAction(rt, kind, id, action) }
 	return src
+}
+
+// webJobAction carries out one standing job's pause, resume or removal from the web app. It works on the
+// web chat's own jobs only: each store is asked for that gateway and chat, so an id from another chat is
+// simply not found. A goal is dropped rather than deleted (its record stays, as with the goals command);
+// a watch and a reminder are removed outright. Reminders have no paused state, so they can only be removed.
+func webJobAction(rt *app.Runtime, kind, id, action string) error {
+	switch kind {
+	case "GOAL":
+		if gs := rt.Goals(); gs != nil {
+			b := goal.Binding{Store: gs, Sched: rt.Cron, Gateway: "web", ChatID: web.ChatID}
+			status := map[string]string{"pause": goal.Paused, "resume": goal.Open, "delete": goal.Dropped}[action]
+			_, err := b.ChangeStatus(id, status)
+			return err
+		}
+	case "WATCH":
+		if rt.Watches() != nil {
+			_, err := rt.WatchBinding("web", web.ChatID, nil, nil, false).Act(id, action)
+			return err
+		}
+	case "TIME":
+		if action != "delete" {
+			return errors.New("a reminder cannot be paused; delete it, or ask for a new one")
+		}
+		return rt.Cron.Remove(id, "web", web.ChatID)
+	}
+	return errors.New("that kind of job is not set up")
 }
 
 func tidy(s string, n int, none string) string {
@@ -196,7 +224,7 @@ func webJobs(rt *app.Runtime, zone *time.Location) []web.JobInfo {
 			if g.Status == goal.Paused {
 				state = "Paused"
 			}
-			out = append(out, web.JobInfo{Kind: "GOAL", Title: tidy(g.Title, 80, "(goal)"), Sub: sub, State: state})
+			out = append(out, web.JobInfo{ID: g.ID, Kind: "GOAL", Title: tidy(g.Title, 80, "(goal)"), Sub: sub, State: state})
 		}
 	}
 	if ws := rt.Watches(); ws != nil {
@@ -209,7 +237,7 @@ func webJobs(rt *app.Runtime, zone *time.Location) []web.JobInfo {
 			case !w.LastChange.IsZero() && time.Since(w.LastChange) < 24*time.Hour && w.Polls > 1:
 				state = "Fired"
 			}
-			out = append(out, web.JobInfo{Kind: "WATCH", Title: tidy(w.Title, 80, "(watch)"), Sub: "Checks every " + w.Every.String(), State: state})
+			out = append(out, web.JobInfo{ID: w.ID, Kind: "WATCH", Title: tidy(w.Title, 80, "(watch)"), Sub: "Checks every " + w.Every.String(), State: state})
 		}
 	}
 	if jobs, err := rt.Cron.List(); err == nil {
@@ -218,7 +246,7 @@ func webJobs(rt *app.Runtime, zone *time.Location) []web.JobInfo {
 			if j.Gateway != "web" || j.ChatID != web.ChatID || j.Kind != "" {
 				continue
 			}
-			out = append(out, web.JobInfo{Kind: "TIME", Title: tidy(j.Name, 80, "(reminder)"), Sub: "Next " + j.NextRun.In(zone).Format("Mon 2 Jan 15:04"), State: "Waiting"})
+			out = append(out, web.JobInfo{ID: j.ID, Kind: "TIME", Title: tidy(j.Name, 80, "(reminder)"), Sub: "Next " + j.NextRun.In(zone).Format("Mon 2 Jan 15:04"), State: "Waiting"})
 		}
 	}
 	if len(out) > 12 {

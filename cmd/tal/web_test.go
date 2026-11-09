@@ -167,6 +167,73 @@ func TestTheControlScreenListsGoalsWatchesAndRemindersOfTheWebChatOnly(t *testin
 	}
 }
 
+func TestWebJobActionsPauseResumeAndRemoveStandingWork(t *testing.T) {
+	home := t.TempDir()
+	gs := &goal.Store{Path: filepath.Join(home, "sessions.db")}
+	ws := &watch.Store{Path: filepath.Join(home, "sessions.db")}
+	rt := app.Open(app.Config{Home: home, Goals: gs, Watches: ws})
+	defer rt.Close()
+
+	g, _ := gs.Add(goal.Goal{Gateway: "web", ChatID: web.ChatID, Title: "Goal", Objective: "x"})
+	w, _ := ws.Add(watch.Watch{Gateway: "web", ChatID: web.ChatID, Title: "Watch", Tool: "email_list", Every: 15 * time.Minute})
+	j, _ := rt.Cron.Add(cron.Job{Name: "Reminder", Schedule: "@every 24h", Prompt: "remind", Gateway: "web", ChatID: web.ChatID})
+
+	act := webSources(rt, time.UTC, nil).JobAction
+	if act == nil {
+		t.Fatal("no job action is wired")
+	}
+	for _, j := range webJobs(rt, time.UTC) {
+		if j.ID == "" {
+			t.Fatalf("a listed job has no id: %+v", j)
+		}
+	}
+	if err := act("GOAL", g.ID, "pause"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := gs.Get("web", web.ChatID, g.ID); got.Status != goal.Paused {
+		t.Fatalf("goal not paused: %+v", got)
+	}
+	if err := act("GOAL", g.ID, "resume"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := gs.Get("web", web.ChatID, g.ID); got.Status != goal.Open {
+		t.Fatalf("goal not resumed: %+v", got)
+	}
+	if err := act("WATCH", w.ID, "pause"); err != nil {
+		t.Fatal(err)
+	}
+	if err := act("WATCH", w.ID, "delete"); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := ws.List("web", web.ChatID); len(all) != 0 {
+		t.Fatalf("watch not deleted: %+v", all)
+	}
+	if err := act("TIME", j.ID, "pause"); err == nil {
+		t.Fatal("a reminder accepted pause, which it cannot do")
+	}
+	if err := act("TIME", j.ID, "delete"); err != nil {
+		t.Fatal(err)
+	}
+	jobs, _ := rt.Cron.List()
+	for _, x := range jobs {
+		if x.ID == j.ID {
+			t.Fatalf("reminder not deleted: %+v", jobs)
+		}
+	}
+	if err := act("GOAL", g.ID, "delete"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := gs.Get("web", web.ChatID, g.ID); got.Status != goal.Dropped {
+		t.Fatalf("goal not dropped: %+v", got)
+	}
+	if err := act("GOAL", "no-such-id", "pause"); err == nil {
+		t.Fatal("an unknown job was acted on")
+	}
+	if err := act("BOGUS", g.ID, "pause"); err == nil {
+		t.Fatal("an unknown kind was acted on")
+	}
+}
+
 func TestTheControlScreenListsWhatIsConnected(t *testing.T) {
 	rt := app.Open(app.Config{Home: t.TempDir()})
 	defer rt.Close()

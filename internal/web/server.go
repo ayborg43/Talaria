@@ -62,6 +62,7 @@ type MailItem struct {
 
 // JobInfo is something Talaria does on its own: a goal, a watch or a scheduled reminder.
 type JobInfo struct {
+	ID    string `json:"id"`
 	Kind  string `json:"kind"` // GOAL, WATCH, TIME
 	Title string `json:"title"`
 	Sub   string `json:"sub"`
@@ -80,7 +81,9 @@ type Sources struct {
 	Agenda func(ctx context.Context) (items []AgendaItem, note string, err error)
 	Mail   func(ctx context.Context) (unread int, items []MailItem, err error)
 	Jobs   func() []JobInfo
-	Links  func() []LinkInfo
+	// JobAction pauses, resumes or removes one standing job (kind GOAL, WATCH or TIME).
+	JobAction func(kind, id, action string) error
+	Links     func() []LinkInfo
 	// Zone is the time zone the person lives in.
 	Zone *time.Location
 }
@@ -168,6 +171,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/agents", s.authed(s.agents))
 	mux.HandleFunc("GET /api/control", s.authed(s.control))
 	mux.HandleFunc("POST /api/pause", s.authed(s.pause))
+	mux.HandleFunc("POST /api/jobs", s.authed(s.jobAction))
 	mux.HandleFunc("GET /api/push/key", s.authed(s.pushKey))
 	mux.HandleFunc("POST /api/push/subscribe", s.authed(s.pushSubscribe))
 	mux.HandleFunc("POST /api/push/unsubscribe", s.authed(s.pushUnsubscribe))
@@ -1532,6 +1536,48 @@ func (s *Server) pause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"paused": s.Pause.Paused()})
+}
+
+// jobAction pauses, resumes or removes one standing job from the Agents or Today screen. The page sends
+// only a kind, an id and an action; what those mean for each store stays with the wiring that built Sources.
+func (s *Server) jobAction(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Kind   string `json:"kind"`
+		ID     string `json:"id"`
+		Action string `json:"action"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	switch in.Kind {
+	case "GOAL", "WATCH", "TIME":
+	default:
+		fail(w, http.StatusBadRequest, "unknown kind of job")
+		return
+	}
+	switch in.Action {
+	case "pause", "resume", "delete":
+	default:
+		fail(w, http.StatusBadRequest, "unknown action")
+		return
+	}
+	if strings.TrimSpace(in.ID) == "" {
+		fail(w, http.StatusBadRequest, "no job was named")
+		return
+	}
+	if s.Sources.JobAction == nil {
+		fail(w, http.StatusNotImplemented, "acting on jobs is not set up")
+		return
+	}
+	if err := s.Sources.JobAction(in.Kind, in.ID, in.Action); err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	out := map[string]any{"ok": true, "jobs": []JobInfo{}}
+	if s.Sources.Jobs != nil {
+		out["jobs"] = s.Sources.Jobs()
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ---- push ----

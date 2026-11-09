@@ -632,6 +632,10 @@ holds live login cookies, so keep Dokploy access tight and back up the data volu
   **finished lately** with how long it took. It is live, survives a reload, and a helper cut short by Stop disappears at once.
 - **Pausing everything.** On the Agents screen (**Pause all**). Goals, watches and reminders stop being started and wait; what was due runs when you resume. The
   switch is kept in a file, so a restart does not quietly undo it. Chat still works while paused.
+- **Pausing one thing.** Each goal, watch and reminder listed on the Agents and Today screens has its own controls: **Pause** or **Resume** for
+  goals and watches, and **Drop** (goals), **Delete** (watches) or **Delete** (reminders; they cannot be paused, only removed). Earlier these were
+  only reachable by typing `goals pause ID`-style commands in a chat; the buttons act on the web chat's own jobs only, and a goal that is dropped
+  keeps its record, exactly as with the chat command.
 - **Light and dark** follow your phone. **Offline,** the app opens and says so; nothing from your conversation, mail or calendar is stored
   on the phone, only the app itself.
 - **What it is not.** One person, one password: there are no accounts, and no passkeys yet. It does not stream voice, and the dictation button appears only where the browser offers speech recognition.
