@@ -79,3 +79,24 @@ func TestSearchReturnsTitlesAddressesAndSnippets(t *testing.T) {
 		t.Fatal("an empty search was run")
 	}
 }
+
+func TestFetchRefusesARedirectToAPrivateAddress(t *testing.T) {
+	testAllowPrivate = true
+	defer func() { testAllowPrivate = false }()
+	var hits int
+	secret := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Write([]byte("the private service"))
+	}))
+	defer secret.Close()
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, secret.URL, http.StatusFound)
+	}))
+	defer s.Close()
+	if _, err := Fetch(context.Background(), s.URL); err == nil {
+		t.Fatal("a redirect to a private address was followed")
+	}
+	if hits != 0 {
+		t.Fatalf("the private service was reached %d times", hits)
+	}
+}

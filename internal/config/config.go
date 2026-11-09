@@ -286,8 +286,9 @@ type Policy struct {
 	UntrustedContent string `json:"untrusted_content,omitempty"`
 	// Permissions says which calls ask the user first. "deletes_and_posts" (the default) asks only before
 	// something is deleted or posted on social media, and runs everything else; "strict" also asks before
-	// running commands, writing files, changing schedules and the like, and, after outside content has been
-	// read, before anything that could send something out. Rules above still apply in either.
+	// running commands, writing files, changing schedules and the like. In either mode, after outside
+	// content has been read, anything that could send something out asks first (see UntrustedContent).
+	// Rules above still apply in either.
 	Permissions string `json:"permissions,omitempty"`
 	// SocialSites are sites to treat as social media besides the usual ones (x.com, facebook.com and so on):
 	// on them, clicking or typing in the browser asks, as it may post.

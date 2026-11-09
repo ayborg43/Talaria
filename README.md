@@ -243,9 +243,9 @@ out asks too.
   forbid a tool outright (`deny` is always obeyed).
 - **Mail, chat and payment tools of a connected service** do not count as posting unless they say so: give the ones you want
   asked about a rule (`"mcp_mail_send": "ask"`).
-- **The guard against reading something hostile and then acting on it** (outside content, then sending) is part of `strict`.
-  With only deletes and posts asking, a web page can still talk the agent into running a harmless-looking command, but not into
-  deleting something or posting without your seeing it.
+- **The guard against reading something hostile and then acting on it** (outside content, then sending) applies in both
+  modes: once a page or mail has been read, anything that could send something out or run a command asks first, even when
+  only deletes and posts normally ask. Turn it off only with `"policy": {"untrusted_content": "off"}`.
 - **One yes covers one call.** In this mode Always is not offered, and an approval does not cover the rest of the conversation.
 
 **A question waits for you.** When Talaria needs your yes (Telegram, Discord and the web app), the question is **saved** and the

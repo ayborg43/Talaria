@@ -24,9 +24,10 @@ far it has been checked.
   before it deletes something or posts on social media, so what counts is decided by the tool (a tool declares that it deletes
   or posts), by what a shell command says (a list of deleting commands and patterns, best effort: a script that removes a file
   from inside, or a command spelled in an unusual way, is not seen), and by the site a browser is on (a list of social sites).
-  In that mode the guard that makes anything able to send something out ask once outside content was read is off, so text on
-  a web page can talk the agent into commands that are not deletes or posts. `"strict"` restores asking for everything risky
-  and that guard. A connected service's send, pay or publish tools are asked about only if their name or a rule says so.
+  That does not cover everything in that mode: once outside content (a web page, a mail) has been read, anything that could
+  send something out, run a command or leave a note behind still asks first, in either mode, unless a rule above says
+  "allow" — that guard is what stops text on a web page talking the agent into a command. `"strict"` asks for everything
+  risky even before anything outside has been read. A connected service's send, pay or publish tools are asked about only if their name or a rule says so.
 - **Questions that wait.** A question is saved in `~/.talaria/held_*.json` (mode 0600) with the exact call, and carried out when
   answered, so a question left for days can be answered long after the page that showed it has changed; it names what will
   run and lapses after a week. Only a signed-in user (or an allowlisted chat) can answer it, once, by its unguessable token.

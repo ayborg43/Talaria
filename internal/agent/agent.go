@@ -430,7 +430,7 @@ func (a *Agent) executeAs(ctx context.Context, call provider.ToolCall, approved 
 		verdict.Action = Ask
 	}
 	flagged := false
-	if a.GuardUntrusted && a.Ask != AskDestructive && verdict.Action == Allow && verdict.Via != "rule" && a.ReadOutside() && t.Egress != nil && t.Egress(json.RawMessage(call.Arguments)) {
+	if a.GuardUntrusted && verdict.Action == Allow && verdict.Via != "rule" && a.ReadOutside() && t.Egress != nil && t.Egress(json.RawMessage(call.Arguments)) {
 		verdict = Verdict{Action: Ask, Via: "outside content"}
 		flagged = true
 	}

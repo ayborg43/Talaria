@@ -233,3 +233,25 @@ type errProvider struct{}
 func (errProvider) Chat(context.Context, provider.Request) (provider.Message, error) {
 	return provider.Message{}, errors.New("down")
 }
+
+func TestTheTaintGuardAsksInDestructiveModeToo(t *testing.T) {
+	// The default permissions mode asks only about deletes and posts, but once
+	// outside content has been read, anything that could send something out
+	// must still ask: that is the guard against instructions in a page or mail.
+	r := newTaintRig(t, true, []provider.ToolCall{call("read_web", "{}")}, []provider.ToolCall{call("send_out", "{}")}, []provider.ToolCall{call("plain", "{}")})
+	r.a.Ask = AskDestructive
+	r.run(t)
+	if strings.Join(r.ran, ",") != "read_web,plain" {
+		t.Fatalf("send_out ran unasked in destructive mode after outside content: %v", r.ran)
+	}
+	if len(r.asked) != 1 || r.asked[0] != "send_out (after reading outside content)" {
+		t.Fatalf("asked %v", r.asked)
+	}
+	// Without outside content, destructive mode still lets it run.
+	r2 := newTaintRig(t, true, []provider.ToolCall{call("send_out", "{}")})
+	r2.a.Ask = AskDestructive
+	r2.run(t)
+	if strings.Join(r2.ran, ",") != "send_out" || len(r2.asked) != 0 {
+		t.Fatalf("ran %v asked %v", r2.ran, r2.asked)
+	}
+}

@@ -62,11 +62,18 @@ func privateAddr(a netip.Addr) bool {
 // checkHost refuses names and addresses that are not public. It mirrors the
 // browser's checkHost; keep the two in step.
 func checkHost(ctx context.Context, host string) error {
+	return checkHostAllow(ctx, host, testAllowPrivate)
+}
+
+// checkHostAllow is checkHost with the test allowance made explicit, so a
+// redirect can be held to the strict rule even where a test let the first
+// address through.
+func checkHostAllow(ctx context.Context, host string, allowPrivate bool) error {
 	lower := strings.ToLower(strings.TrimSuffix(host, "."))
 	refuse := fmt.Errorf("%s is on this machine or a private network, which pages are not fetched from", host)
 	if lower == "localhost" || strings.HasSuffix(lower, ".localhost") || lower == "host.docker.internal" || lower == "metadata.google.internal" ||
 		strings.HasSuffix(lower, ".internal") || strings.HasSuffix(lower, ".local") {
-		if !testAllowPrivate {
+		if !allowPrivate {
 			return refuse
 		}
 	}
@@ -77,7 +84,7 @@ func checkHost(ctx context.Context, host string) error {
 	}
 	trimmed := strings.Trim(lower, "[]")
 	if a, err := netip.ParseAddr(trimmed); err == nil {
-		if !testAllowPrivate && privateAddr(a) {
+		if !allowPrivate && privateAddr(a) {
 			return refuse
 		}
 		return nil
@@ -166,7 +173,21 @@ func fetchBody(ctx context.Context, raw string) ([]byte, error) {
 	}
 	req.Header.Set("User-Agent", "Talaria/1 (watch)")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/*;q=0.9,*/*;q=0.1")
-	resp, err := http.DefaultClient.Do(req)
+	// Every redirect hop is checked again, strictly: a public page must not
+	// be able to send the reader on to this machine or a private network.
+	client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 {
+			return errors.New("the page redirected too many times")
+		}
+		if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+			return fmt.Errorf("%q is not a public web address", req.URL.String())
+		}
+		if req.URL.User != nil {
+			return errors.New("a redirect to an address with a login in it is not followed")
+		}
+		return checkHostAllow(req.Context(), req.URL.Hostname(), false)
+	}}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("the page could not be read: %w", err)
 	}

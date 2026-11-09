@@ -383,7 +383,7 @@ func (rt *Runtime) NewAgent(o AgentOptions) *agent.Agent {
 		Tools:          tools,
 		System:         system,
 		Approve:        o.Approve,
-		GuardUntrusted: !rt.cfg.TrustOutsideContent && rt.cfg.Ask != agent.AskDestructive,
+		GuardUntrusted: !rt.cfg.TrustOutsideContent,
 		Ask:            rt.cfg.Ask,
 		BeforeModel:    rt.budget.take,
 		Activity:       o.Activity,
