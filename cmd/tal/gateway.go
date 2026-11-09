@@ -351,7 +351,9 @@ func runGateway(c *cli) error {
 			subject = "mailto:admin@localhost.invalid"
 		}
 		push := &web.Pusher{Path: filepath.Join(c.home, "web_push.json"), Subject: subject, Logf: logf}
-		webHub.Notifier = push
+		// Every notification is written down for the app's own list; the push service gets the kinds that are not muted.
+		notices := &web.Notices{Path: filepath.Join(c.home, "web_notices.json"), Next: push}
+		webHub.Notifier = notices
 		s := &service{name: "web", allowed: allowed, markdown: true, sink: webHub}
 		eng := &chat.Engine{
 			T: webHub, Allowed: allowed, Logf: logf, Stream: true, MessagesPerMinute: c.cfg.Limits.Messages(),
@@ -376,6 +378,23 @@ func runGateway(c *cli) error {
 			ConfigPath: config.Path(c.home, c.getenv),
 			Cfg:        c.cfg,
 			Mailbox:    c.rt.Mail(), Calendars: c.rt.Calendars(), X: c.rt.X(), Getenv: c.getenv,
+			Notes: c.rt.Notes(), Notices: notices, Env: c.rt.Env(), Browsers: c.rt.Browsers,
+			ReceiptsPath: filepath.Join(c.home, "computer_receipts.json"),
+		}
+		if gd := c.rt.Guard(); gd != nil {
+			srv.Scrub = gd.For("web", s.name, web.ChatID).Scrub
+		}
+		// Finished background tasks, and running one again: the scheduler is this service's own, made by attach above.
+		srv.Sources.Tasks = func() []web.TaskInfo {
+			var out []web.TaskInfo
+			for _, d := range c.rt.Cron.DoneTasks(s.name, web.ChatID) {
+				out = append(out, web.TaskInfo{ID: d.Job.ID, Name: tidy(d.Job.Name, 80, "(task)"), Status: tidy(d.Status, 160, ""), Failed: d.Failed(), At: d.At})
+			}
+			return out
+		}
+		srv.Sources.RetryTask = func(id string) error {
+			_, err := cron.RetryChatTask(c.rt.Cron, s.sched, s.name, web.ChatID, id)
+			return err
 		}
 		if convos, err := web.OpenConvos(filepath.Join(c.home, "web_chats.json")); err != nil {
 			logf("web: kept conversations did not open: %v", err)

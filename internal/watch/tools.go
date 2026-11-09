@@ -44,14 +44,21 @@ func RegisterTools(r *tool.Registry, b Binding) {
 				"Pick a tool whose answer changes only when something happens (for example one that searches for unread or new items), not one that includes a clock. " +
 				"Relative-time wording ticking on its own (\"2 hours ago\" becoming \"3 hours ago\") is ignored; a changed number or line is reported as an update. " +
 				"Say in the instructions what would matter to the user. Each time the answer changes you are asked whether it is worth telling them; if it is, they get a message. " +
-				"Only tools that run without asking can be watched. It polls every 15 minutes by default (5 minutes to 24 hours).",
+				"Only tools that run without asking can be watched. It polls every 15 minutes by default (5 minutes to 24 hours). " +
+				"To wait for one thing instead of any change, give when: a price in US dollars reaching a threshold (price_below, price_above with usd; near picks the price after some text on a page with several), or words appearing or going (text_appears, text_gone with text). " +
+				"Such a watch costs no model run at all: the user is told once when the condition starts to hold.",
 			Schema: json.RawMessage(`{"type":"object","properties":{
 				"title":{"type":"string","description":"a short name, shown with each message"},
 				"tool":{"type":"string","description":"the exact name of the tool to poll, such as mcp_mail_search_mail"},
 				"arguments":{"type":"object","description":"the arguments to call it with, each time"},
 				"instructions":{"type":"string","description":"what the user wants to hear about, and what to ignore"},
 				"every_minutes":{"type":"integer","description":"how often to poll; default 15, from 5 to 1440"},
-				"max_changes":{"type":"integer","description":"how many changes to look at before pausing to hear from the user; default 30"}},
+				"max_changes":{"type":"integer","description":"how many changes to look at before pausing to hear from the user; default 30"},
+				"when":{"type":"object","description":"wait for one condition instead of any change","properties":{
+					"kind":{"type":"string","enum":["price_below","price_above","text_appears","text_gone"]},
+					"usd":{"type":"number","description":"the price threshold in US dollars"},
+					"text":{"type":"string","description":"the words to look for, for a text condition"},
+					"near":{"type":"string","description":"for a price: take the first price after this text"}},"required":["kind"]}},
 				"required":["title","tool","instructions"]}`),
 			NeedsApproval: true,
 			Describe:      describeCreate,
@@ -95,6 +102,7 @@ func describeCreate(raw json.RawMessage) string {
 		Every int             `json:"every_minutes"`
 		Max   int             `json:"max_changes"`
 		Ins   string          `json:"instructions"`
+		When  *Condition      `json:"when"`
 	}
 	if json.Unmarshal(raw, &a) != nil {
 		return ""
@@ -111,6 +119,10 @@ func describeCreate(raw json.RawMessage) string {
 	if args == "" || args == "null" {
 		args = "{}"
 	}
+	if a.When != nil {
+		return fmt.Sprintf("watch %q: every %s, call %s with %s, and tell you when %s (up to %d times before asking you)",
+			clip(a.Title, 80), every, a.Tool, clip(args, 200), a.When.Describe(), max)
+	}
 	return fmt.Sprintf("watch %q: every %s, call %s with %s, and look at the answer when it changes (up to %d times before asking you). Instructions: %s",
 		clip(a.Title, 80), every, a.Tool, clip(args, 200), max, clip(a.Ins, 200))
 }
@@ -122,9 +134,15 @@ func (b Binding) create(ctx context.Context, raw json.RawMessage) (string, error
 		Instructions string
 		Every        int `json:"every_minutes"`
 		Max          int `json:"max_changes"`
+		When         *Condition
 	}
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return "", err
+	}
+	if a.When != nil {
+		if err := a.When.validate(); err != nil {
+			return "", err
+		}
 	}
 	t, ok := b.Tools.Get(a.Tool)
 	switch {
@@ -135,7 +153,7 @@ func (b Binding) create(ctx context.Context, raw json.RawMessage) (string, error
 	case !strings.HasPrefix(a.Tool, "mcp_") && a.Tool != "web_fetch":
 		return "", errors.New("only the tools of connected services and web_fetch can be watched")
 	}
-	w := Watch{Gateway: b.Gateway, ChatID: b.ChatID, Title: a.Title, Tool: a.Tool, Args: a.Arguments, Instructions: a.Instructions, MaxTriggers: a.Max}
+	w := Watch{Gateway: b.Gateway, ChatID: b.ChatID, Title: a.Title, Tool: a.Tool, Args: a.Arguments, Instructions: a.Instructions, MaxTriggers: a.Max, When: a.When}
 	if a.Every > 0 {
 		w.Every = time.Duration(a.Every) * time.Minute
 	}
@@ -143,6 +161,18 @@ func (b Binding) create(ctx context.Context, raw json.RawMessage) (string, error
 	first, err := b.Call(ctx, a.Tool, a.Arguments)
 	if err != nil {
 		return "", fmt.Errorf("the first look failed, so nothing was set up: %w", err)
+	}
+	already := ""
+	if a.When != nil {
+		met, found, known := a.When.Check(first)
+		switch {
+		case !known:
+			return "", errors.New("the first look showed no dollar price, so nothing was set up: check the page address, or give near with text that comes just before the price")
+		case met:
+			already = " It already holds now" + map[bool]string{true: " (" + found + ")", false: ""}[found != ""] + ", so tell the user; I will speak again only after it stops holding and then holds once more."
+		case found != "":
+			already = " It reads " + found + " now."
+		}
 	}
 	w, err = b.Store.Add(w)
 	if err != nil {
@@ -157,6 +187,10 @@ func (b Binding) create(ctx context.Context, raw json.RawMessage) (string, error
 		return "", fmt.Errorf("the watch was not set up, because its polling could not be scheduled: %w", err)
 	}
 	next, _ := b.Sched.NextPoll(w.ID)
+	if w.When != nil {
+		return fmt.Sprintf("watching: %s (id %s). It polls %s every %s, first at %s, and the user is told when %s, with no model run.%s",
+			w.Title, w.ID, w.Tool, w.Every, next.Local().Format("15:04"), w.When.Describe(), already), nil
+	}
 	return fmt.Sprintf("watching: %s (id %s). It polls %s every %s, first at %s, and I will look at the answer whenever it changes, up to %d times before asking you.",
 		w.Title, w.ID, w.Tool, w.Every, next.Local().Format("15:04"), w.MaxTriggers), nil
 }
@@ -178,8 +212,18 @@ func (b Binding) list(ctx context.Context, _ json.RawMessage) (string, error) {
 
 func (b Binding) line(w Watch) string {
 	out := fmt.Sprintf("%s | %s | %s | every %s | %s", w.ID, w.Status, w.Title, w.Every, w.Tool)
+	if w.When != nil {
+		out += " | waits until " + w.When.Describe()
+		if w.LastFound != "" {
+			out += " (now " + w.LastFound + ")"
+		}
+	}
 	switch {
 	case w.Status != Active:
+	case w.When != nil && w.Met:
+		out += " | holds since " + w.LastChange.Local().Format("Mon 15:04")
+	case w.When != nil:
+		out += " | not yet"
 	case w.LastChange.IsZero():
 		out += " | nothing has changed yet"
 	default:

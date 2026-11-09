@@ -345,3 +345,93 @@ b,strong{font-weight:600}
 .choice-title{font-weight:600}
 .choice-opt{padding:10px 14px;border-radius:14px;border:1px solid var(--bubble-line);background:var(--card);color:var(--ink);font-size:15px;text-align:left}
 .choice-sub{font-size:13px;color:var(--ink2);padding:0 14px}
+
+/* tool results: a heading that opens the raw result, and under it a card for what the result is */
+.toolcards{display:flex;flex-direction:column;gap:8px}
+.toolcard{background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.toolhead{display:flex;align-items:center;gap:8px;width:100%;min-height:40px;padding:6px 12px;border:0;background:none;text-align:left;font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.toolhead svg{width:13px;height:13px;flex:none;color:var(--ok)}
+.toolhead .tag{width:auto;height:auto;padding:2px 7px;border-radius:99px;font-size:9.5px;letter-spacing:.06em}
+.toolhead em{font-style:normal;opacity:.75}
+.toolhead .chev{color:var(--faint)}
+.toolresult{border-top:1px solid var(--line2);padding:10px 12px;max-height:320px;overflow:auto;font-size:13px;overflow-wrap:anywhere}
+.toolresult p{margin:0 0 6px}
+.rich{border-top:1px solid var(--line2);padding:8px 12px 10px}
+.rich.doc,.rich.page{display:flex;align-items:center;gap:10px}
+.rich .t{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rich .s{display:block;font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rich button.row{width:100%;border:0;border-top:1px solid var(--line2);background:none;text-align:left;font-size:15px;padding:9px 0}
+.rich button.row:first-child{border-top:0}
+.rich .btn-row{margin-top:8px}
+.avatar.tint{background:var(--info-tint);color:var(--info)}
+.mailbody{margin-top:6px;padding:10px 12px;border-radius:12px;background:var(--bg);font-size:13.5px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink2)}
+.plansteps{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:14px}
+.plansteps li{display:flex;gap:9px;align-items:flex-start}
+.plansteps li.done{color:var(--muted);text-decoration:line-through}
+.plansteps .box{width:18px;height:18px;border-radius:6px;border:1.5px solid var(--btn-line);flex:none;display:flex;align-items:center;justify-content:center;font-size:12px;margin-top:1px;text-decoration:none}
+.plansteps li.done .box{background:var(--ok-tint);border-color:var(--ok-line);color:var(--ok)}
+.rich .progress{margin-top:8px}
+.stats{display:flex;gap:8px;margin:8px 0 4px}
+.stat{flex:1;min-width:0;padding:8px 10px;border-radius:12px;background:var(--bg)}
+.stat span{display:block;font-size:11px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+.stat b{display:block;font-family:var(--display);font-size:17px;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis}
+.cat{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:13px}
+.cat .catname{width:34%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cat .progress{flex:1;margin:0}
+.cat .catamt{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.filechip{display:inline-flex;gap:10px;align-items:baseline}
+.linkbtn{border:0;background:none;padding:0;color:var(--info);text-decoration:underline;text-underline-offset:2px;font-weight:600}
+.msg-user .filechip a{color:var(--info);text-decoration:underline;text-underline-offset:2px}
+.msg-user{position:relative}
+.msg-user .me{position:absolute;right:-6px;bottom:-10px;min-width:22px;height:22px;padding:0 4px;border-radius:99px;background:var(--card);border:1px solid var(--bubble-line);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;line-height:1}
+.unplayed{visibility:hidden}
+
+/* the panel: the agent's computer and the document viewer, over the whole app */
+.panel{position:fixed;inset:0;z-index:30;display:flex;flex-direction:column;background:var(--bg)}
+.panel-acts{display:flex;gap:6px;flex:none}
+.panel-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;padding:14px 16px calc(env(safe-area-inset-bottom) + 20px);display:flex;flex-direction:column;gap:12px;max-width:1100px;width:100%;margin:0 auto}
+.seg{flex:none;display:flex;gap:4px;padding:8px 16px;border-bottom:1px solid var(--line2);max-width:1100px;width:100%;margin:0 auto}
+.seg.inner{padding:0;border:0}
+.seg button{flex:1;min-height:40px;border-radius:12px;border:1px solid transparent;background:none;color:var(--muted);font-weight:600;font-size:14px}
+.seg button[aria-selected=true]{background:var(--tab-on);color:var(--brass-text);border-color:var(--brass-line)}
+.toolbar{flex:none;display:flex;align-items:center;gap:8px;min-width:0}
+.toolbar.keys{flex-wrap:wrap}
+.toolbar input{flex:1;min-width:0;height:42px;border-radius:12px;border:1px solid var(--bubble-line);background:var(--field);padding:0 12px;font-size:16px;outline:none}
+.toolbar input:focus{border-color:var(--brass)}
+.toolbar input.addr{font-family:var(--mono);font-size:13px}
+.key{flex:none;min-width:42px;height:42px;padding:0 12px;border-radius:12px;border:1px solid var(--btn-line);background:var(--card);color:var(--ink);font-weight:600;font-size:14px;display:inline-flex;align-items:center;justify-content:center}
+.key.go{background:var(--brass);border-color:var(--brass);color:var(--on-brass)}
+.key:disabled{opacity:.5}
+.stage{flex:none;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--card);box-shadow:var(--shadow);line-height:0}
+.shot{display:block;width:100%;aspect-ratio:1280/800;object-fit:contain;background:var(--line2);cursor:crosshair;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+.prompt{font-family:var(--mono);font-weight:600;color:var(--brass-text);flex:none}
+.panel-body.terminal .runs{flex:1;min-height:120px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:12px;border-radius:16px;background:var(--card);border:1px solid var(--line)}
+.run-head{display:flex;align-items:baseline;gap:8px;font-family:var(--mono);font-size:12.5px}
+.run-head .cmd{overflow-wrap:anywhere;font-weight:600}
+.run .out{margin:6px 0 0;padding:9px 11px;border-radius:10px;background:var(--bg);font-family:var(--mono);font-size:12px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto}
+.rowbtn{flex:1;min-width:0;display:flex;align-items:center;gap:12px;border:0;background:none;padding:0;text-align:left;font-size:15px;min-height:36px}
+.panel-body button.row{width:100%;border:0;border-top:1px solid var(--line2);background:none;text-align:left;font-size:15px}
+.panel-body button.row:first-child{border-top:0}
+.path{font-size:13px;overflow-wrap:anywhere}
+.panel-body.editing .editor{flex:1;min-height:220px;resize:none;border-radius:14px;border:1px solid var(--bubble-line);background:var(--field);padding:12px;font-size:13px;line-height:1.55;outline:none;white-space:pre;overflow:auto}
+.panel-body.editing .editor:focus{border-color:var(--brass)}
+.panel-body.doc .docview{flex:1;min-height:300px;border:1px solid var(--line);border-radius:14px;overflow:auto;background:var(--card)}
+.docframe{display:block;width:100%;height:100%;min-height:60vh;border:0}
+.docimg{display:block;max-width:none;height:auto;margin:0 auto}
+.doclabel{font-size:11.5px;color:var(--muted);white-space:nowrap}
+.formcheck{margin-top:12px}
+.row.convo{flex-wrap:wrap}
+.row.convo[aria-current=true]{background:var(--tab-on);border-radius:14px;padding-left:10px;padding-right:10px}
+.row.convo .acts{margin-left:0;flex-wrap:wrap}
+.sheet-new{padding:4px 0 10px}
+.noteitem{margin-top:10px;padding-top:10px;border-top:1px solid var(--line2);display:flex;flex-direction:column;gap:8px}
+.notearea{width:100%;min-height:58px;resize:vertical;border-radius:12px;border:1px solid var(--bubble-line);background:var(--field);padding:9px 12px;font-size:15px;line-height:1.4;outline:none}
+.notearea:focus{border-color:var(--brass)}
+.opt input[type=checkbox]{border-radius:6px}
+@media (min-width:900px){
+.panel{left:236px}
+.panel-body{padding:20px 32px 32px}
+.seg{padding:10px 32px}
+}
+@media (hover:hover){.key:hover,.seg button:hover{filter:brightness(.97)}.linkbtn:hover{color:var(--info-ink)}}
+.card>.btn-row,.card>.field-note+.btn-row{margin-top:12px}

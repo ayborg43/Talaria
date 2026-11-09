@@ -580,3 +580,20 @@ func TestAQuestionKeptAcrossARestartStaysPending(t *testing.T) {
 		t.Fatalf("%v", states)
 	}
 }
+
+func TestAToolResultIsKeptBoundedOnItsMessage(t *testing.T) {
+	h := &Hub{Now: func() time.Time { return time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC) }}
+	h.ToolStart(1, "email_list")
+	h.ToolEnd(1, "email_list", "1. A message")
+	msgs, _, _, _ := h.Snapshot()
+	if len(msgs) != 1 || msgs[0].Result != "1. A message" {
+		t.Fatalf("%+v", msgs)
+	}
+	h.ToolStart(1, "shell")
+	h.ToolEnd(1, "shell", strings.Repeat("x", maxResult+500))
+	msgs, _, _, _ = h.Snapshot()
+	r := []rune(msgs[1].Result)
+	if len(r) > maxResult+40 || !strings.Contains(msgs[1].Result, "cut here") {
+		t.Fatalf("result not bounded: %d runes", len(r))
+	}
+}

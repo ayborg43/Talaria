@@ -68,6 +68,19 @@ func RegisterTools(r *tool.Registry, b Binding) {
 		Run:    b.send,
 	})
 	r.Register(tool.Tool{
+		Name:        "pdf_form_inspect",
+		Description: "List the fillable fields of a kept PDF form: each field's name, kind and current value. Use before pdf_form_fill so the fields are named exactly. Encrypted and XFA forms are refused, and a PDF with no form says so.",
+		Schema:      json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
+		Run:         b.inspectForm,
+	})
+	r.Register(tool.Tool{
+		Name:          "pdf_form_fill",
+		Description:   "Fill a kept PDF form's fields by name and keep the filled copy as a new file: give values as field name to text (checkboxes as true or false). Asks first. The original is untouched; share the returned file's link, or send it with files_send or attach it with email_send.",
+		Schema:        json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"values":{"type":"object","additionalProperties":{"type":"string"}}},"required":["id","values"]}`),
+		NeedsApproval: true,
+		Run:           b.fillForm,
+	})
+	r.Register(tool.Tool{
 		Name:        "files_delete",
 		Description: "Delete a kept file before it expires.",
 		Schema:      json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
@@ -225,4 +238,68 @@ func (b Binding) delete(_ context.Context, raw json.RawMessage) (string, error) 
 		return "", errors.New("a file id is needed")
 	}
 	return "deleted", b.Store.Delete(strings.TrimSpace(a.ID))
+}
+
+func (b Binding) openPDF(raw json.RawMessage) (File, []byte, error) {
+	var a struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return File{}, nil, err
+	}
+	if strings.TrimSpace(a.ID) == "" {
+		return File{}, nil, errors.New("a file id is needed")
+	}
+	f, data, err := b.Store.Open(strings.TrimSpace(a.ID))
+	if err != nil {
+		return f, nil, err
+	}
+	if len(data) < 5 || string(data[:5]) != "%PDF-" {
+		return f, nil, errors.New(f.Name + " is not a PDF")
+	}
+	return f, data, nil
+}
+
+func (b Binding) inspectForm(_ context.Context, raw json.RawMessage) (string, error) {
+	_, data, err := b.openPDF(raw)
+	if err != nil {
+		return "", err
+	}
+	fields, err := InspectForm(data)
+	if err != nil {
+		return "", err
+	}
+	var sb strings.Builder
+	sb.WriteString("Form fields:\n")
+	for _, f := range fields {
+		fmt.Fprintf(&sb, "- %s (%s)", f.Name, f.Type)
+		if f.Value != "" {
+			fmt.Fprintf(&sb, " = %q", f.Value)
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String(), nil
+}
+
+func (b Binding) fillForm(_ context.Context, raw json.RawMessage) (string, error) {
+	var a struct {
+		Values map[string]string `json:"values"`
+	}
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return "", err
+	}
+	f, data, err := b.openPDF(raw)
+	if err != nil {
+		return "", err
+	}
+	filled, err := FillForm(data, a.Values)
+	if err != nil {
+		return "", err
+	}
+	name := strings.TrimSuffix(f.Name, ".pdf") + " (filled).pdf"
+	saved, err := b.Store.Save(name, filled, "filled form")
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Filled %s and kept the copy as file %s (%s, %d KB). The original is untouched.\n", f.Name, saved.ID, saved.Name, len(filled)>>10), nil
 }

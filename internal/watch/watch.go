@@ -65,6 +65,15 @@ type Watch struct {
 	MaxTriggers int       `json:"max_triggers"`
 	Errors      int       `json:"errors"` // polls that failed in a row
 
+	// When, if set, is the one thing this watch waits for: a price crossing a
+	// threshold, or words appearing or going. Such a watch never asks the
+	// model: Met remembers whether the condition held at the last poll, so the
+	// user hears once when it starts to hold and not at every poll after.
+	When      *Condition `json:"when,omitempty"`
+	Met       bool       `json:"met,omitempty"`
+	LastFound string     `json:"last_found,omitempty"` // the price last read, for listings
+	LastError string     `json:"last_error,omitempty"` // why the last poll could not be judged
+
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
 }
@@ -84,7 +93,13 @@ const (
 	// PausedByBudget: it has changed more often than the allowance for one
 	// stretch without the user, and the watch paused.
 	PausedByBudget
+	// ConditionMet: the watch's condition has just started to hold. The user
+	// is told, without the model.
+	ConditionMet
 )
+
+// errNoPrice is a poll that worked but showed no price to judge.
+var errNoPrice = errors.New("no dollar price was found in the answer")
 
 func hash(s string) string {
 	sum := sha256.Sum256([]byte(s))
@@ -103,7 +118,13 @@ func clip(s string, n int) string {
 // for the model to compare with.
 func (w *Watch) Observe(now time.Time, result string, err error) (out Outcome, previous string) {
 	w.LastRun = now
+	if err == nil && w.When != nil {
+		if _, _, known := w.When.Check(result); !known {
+			err = errNoPrice // a page that stopped showing the price is a poll that failed, not a quiet one
+		}
+	}
 	if err != nil {
+		w.LastError = clip(err.Error(), 200)
 		w.Errors++
 		if w.Errors >= MaxErrors {
 			w.Status = Paused
@@ -111,9 +132,25 @@ func (w *Watch) Observe(now time.Time, result string, err error) (out Outcome, p
 		}
 		return Failed, ""
 	}
-	w.Errors = 0
+	w.Errors, w.LastError = 0, ""
 	w.Polls++
 	h := hash(result)
+	if w.When != nil {
+		met, found, _ := w.When.Check(result)
+		w.LastHash, w.LastResult, w.LastFound, w.LastDiff = h, clip(result, maxResultKept), found, ""
+		was := w.Met
+		w.Met = met
+		if !met || was {
+			return Quiet, "" // not yet, or already said
+		}
+		w.LastChange = now
+		w.Triggers++
+		if w.Triggers > w.MaxTriggers {
+			w.Status = Paused
+			return PausedByBudget, ""
+		}
+		return ConditionMet, ""
+	}
 	switch {
 	case w.LastHash == "": // the first look: what to compare with from now on
 		w.LastHash, w.LastResult = h, clip(result, maxResultKept)
@@ -317,6 +354,11 @@ func validate(w *Watch) error {
 		return fmt.Errorf("a watch polls between every %s and every %s", MinEvery, MaxEvery)
 	case w.MaxTriggers < 1 || w.MaxTriggers > MaxTriggers:
 		return fmt.Errorf("the allowance of changes must be between 1 and %d", MaxTriggers)
+	}
+	if w.When != nil {
+		if err := w.When.validate(); err != nil {
+			return err
+		}
 	}
 	if len(w.Args) == 0 {
 		w.Args = json.RawMessage(`{}`)

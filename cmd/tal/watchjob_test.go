@@ -344,8 +344,8 @@ func TestTheModelGetsWatchToolsOnlyWhereThereIsAServiceToWatch(t *testing.T) {
 	home := t.TempDir()
 	bare := app.Open(app.Config{Home: home, Provider: &spy{}, Model: "m", Env: execenv.Local{}, Watches: &watch.Store{Path: filepath.Join(home, "sessions.db")}})
 	defer bare.Close()
-	if _, ok := bare.NewAgent(app.AgentOptions{ChatID: 5}).Tools.Get("watch_list"); ok {
-		t.Error("with no connected service there is nothing to watch")
+	if _, ok := bare.NewAgent(app.AgentOptions{ChatID: 5}).Tools.Get("watch_create"); !ok {
+		t.Error("with no connected service a public page can still be watched, through web_fetch")
 	}
 }
 

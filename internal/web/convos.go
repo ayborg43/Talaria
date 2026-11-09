@@ -21,8 +21,12 @@ const (
 // Convo is one conversation the page can go back to: what it looked like,
 // what the agent had been told, and when it was last touched.
 type Convo struct {
-	ID         string             `json:"id"`
-	Title      string             `json:"title,omitempty"`
+	ID       string `json:"id"`
+	Title    string `json:"title,omitempty"`
+	Archived bool   `json:"archived,omitempty"`
+	// Parent is the conversation this one was opened beside: a side chat, for
+	// a tangent that should not crowd the conversation it came from.
+	Parent     string             `json:"parent,omitempty"`
 	UpdatedAt  time.Time          `json:"updated_at"`
 	Display    []*Message         `json:"display,omitempty"`
 	Transcript []provider.Message `json:"transcript,omitempty"`
@@ -30,8 +34,14 @@ type Convo struct {
 
 // ConvoMeta is a conversation as the list shows it: never its contents.
 type ConvoMeta struct {
-	ID       string    `json:"id"`
-	Title    string    `json:"title"`
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Archived bool   `json:"archived,omitempty"`
+	// Main marks the one conversation that is always there: listed first,
+	// never archived and never dropped to make room. Side names the
+	// conversation a side chat was opened beside.
+	Main     bool      `json:"main,omitempty"`
+	Side     string    `json:"side,omitempty"`
 	Updated  time.Time `json:"updated_at"`
 	Messages int       `json:"messages"`
 	Active   bool      `json:"active"`
@@ -47,6 +57,7 @@ type Convos struct {
 	items  map[string]*Convo
 	order  []string // newest first
 	active string
+	main   string
 	seq    int64
 }
 
@@ -65,6 +76,7 @@ func OpenConvos(path string) (*Convos, error) {
 	}
 	var f struct {
 		Active string   `json:"active"`
+		Main   string   `json:"main"`
 		Convos []*Convo `json:"convos"`
 		Seq    int64    `json:"seq"`
 	}
@@ -90,6 +102,8 @@ func OpenConvos(path string) (*Convos, error) {
 		c.seq = int64(len(c.order))
 	}
 	c.sortLocked()
+	c.main = f.Main
+	c.ensureMainLocked()
 	return c, nil
 }
 
@@ -110,20 +124,158 @@ func (c *Convos) sortLocked() {
 	c.order = ordered
 }
 
-// List names every kept conversation, newest first, without their contents.
-func (c *Convos) List() []ConvoMeta {
+// List names every kept conversation that is not archived, newest first,
+// without their contents. The open one is listed even if archived, so the
+// page never shows a conversation its list denies exists.
+func (c *Convos) List() []ConvoMeta { return c.list(false) }
+
+// ListArchived names the archived conversations, newest first.
+func (c *Convos) ListArchived() []ConvoMeta { return c.list(true) }
+
+// ensureMainLocked keeps the main conversation real: when none is named, or
+// the named one is gone, the one that has been there longest takes its place.
+func (c *Convos) ensureMainLocked() {
+	if _, ok := c.items[c.main]; ok {
+		return
+	}
+	c.main = ""
+	for i := len(c.order) - 1; i >= 0; i-- { // newest first, so the last is the oldest
+		if cv := c.items[c.order[i]]; cv != nil && cv.Parent == "" && !cv.Archived {
+			c.main = cv.ID
+			return
+		}
+	}
+	if len(c.order) > 0 {
+		c.main = c.order[len(c.order)-1]
+	}
+}
+
+// MainID is the conversation that is always there.
+func (c *Convos) MainID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.main
+}
+
+// SetMain makes a kept conversation the main one. It stops being a side chat
+// or an archived one: the main conversation is neither.
+func (c *Convos) SetMain(id string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cv, ok := c.items[id]
+	if !ok {
+		return errUnknownConversation
+	}
+	cv.Parent, cv.Archived = "", false
+	c.main = id
+	c.saveLocked()
+	return nil
+}
+
+// NewSide starts a blank conversation beside the open one and shows it. The
+// open one is already kept, and stays exactly as it was.
+func (c *Convos) NewSide() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	parent := c.active
+	if p := c.items[parent]; p != nil && p.Parent != "" {
+		parent = p.Parent // a side chat of a side chat hangs from the same conversation
+	}
+	c.seq++
+	id := fmt.Sprintf("c%d", c.seq)
+	c.items[id] = &Convo{ID: id, Parent: parent, UpdatedAt: time.Now()}
+	c.order = append([]string{id}, c.order...)
+	c.active = id
+	c.trimLocked()
+	c.saveLocked()
+	return id
+}
+
+// SideOf names the conversation the open one was opened beside, or "" when
+// the open one is not a side chat.
+func (c *Convos) SideOf() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cv := c.items[c.active]
+	if cv == nil {
+		return ""
+	}
+	if _, ok := c.items[cv.Parent]; !ok {
+		return ""
+	}
+	return c.titleLocked(cv.Parent)
+}
+
+func (c *Convos) titleLocked(id string) string {
+	if cv := c.items[id]; cv != nil && cv.Title != "" {
+		return cv.Title
+	}
+	return "New chat"
+}
+
+func (c *Convos) list(archived bool) []ConvoMeta {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	out := make([]ConvoMeta, 0, len(c.order))
-	for _, id := range c.order {
+	for _, id := range c.order { // newest first; the page puts the main one at the top
 		cv := c.items[id]
+		if cv == nil {
+			continue
+		}
+		if cv.Archived != archived && id != c.active {
+			continue
+		}
+		if archived && !cv.Archived {
+			continue
+		}
 		title := cv.Title
 		if title == "" {
 			title = "New chat"
 		}
-		out = append(out, ConvoMeta{ID: id, Title: title, Updated: cv.UpdatedAt, Messages: len(cv.Display), Active: id == c.active})
+		meta := ConvoMeta{ID: id, Title: title, Archived: cv.Archived, Main: id == c.main, Updated: cv.UpdatedAt, Messages: len(cv.Display), Active: id == c.active}
+		if _, ok := c.items[cv.Parent]; ok {
+			meta.Side = c.titleLocked(cv.Parent)
+		}
+		out = append(out, meta)
 	}
 	return out
+}
+
+// Rename gives a conversation the user's own name. It sticks: the automatic
+// title is only ever filled in while a conversation has no name at all.
+func (c *Convos) Rename(id, title string) error {
+	title = strings.Join(strings.Fields(title), " ")
+	if title == "" {
+		return fmt.Errorf("give the conversation a name")
+	}
+	if r := []rune(title); len(r) > 80 {
+		title = string(r[:80])
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cv, ok := c.items[id]
+	if !ok {
+		return errUnknownConversation
+	}
+	cv.Title = title
+	c.saveLocked()
+	return nil
+}
+
+// SetArchived shelves a conversation, or brings it back. Nothing is deleted.
+func (c *Convos) SetArchived(id string, archived bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cv, ok := c.items[id]
+	if !ok {
+		return errUnknownConversation
+	}
+	if archived && id == c.main {
+		return errorString("the main conversation stays: make another one main first, or start a side chat")
+	}
+	cv.Archived = archived
+	c.saveLocked()
+	return nil
 }
 
 // ActiveID is the conversation the page shows.
@@ -157,6 +309,7 @@ func (c *Convos) New() string {
 	c.items[id] = &Convo{ID: id, UpdatedAt: time.Now()}
 	c.order = append([]string{id}, c.order...)
 	c.active = id
+	c.ensureMainLocked()
 	c.trimLocked()
 	c.saveLocked()
 	return id
@@ -223,12 +376,19 @@ func without(ids []string, drop string) []string {
 
 func (c *Convos) trimLocked() {
 	for len(c.order) > maxConvos {
-		last := c.order[len(c.order)-1]
-		if last == c.active {
-			break // the shelf is full of the open conversation: keep it all
+		// The oldest goes, but never the open conversation or the main one.
+		drop := -1
+		for i := len(c.order) - 1; i >= 0; i-- {
+			if id := c.order[i]; id != c.active && id != c.main {
+				drop = i
+				break
+			}
 		}
-		delete(c.items, last)
-		c.order = c.order[:len(c.order)-1]
+		if drop < 0 {
+			break
+		}
+		delete(c.items, c.order[drop])
+		c.order = append(c.order[:drop], c.order[drop+1:]...)
 	}
 }
 
@@ -242,9 +402,10 @@ func (c *Convos) saveLocked() {
 	}
 	raw, err := json.Marshal(struct {
 		Active string   `json:"active"`
+		Main   string   `json:"main,omitempty"`
 		Convos []*Convo `json:"convos"`
 		Seq    int64    `json:"seq"`
-	}{c.active, ordered, c.seq})
+	}{c.active, c.main, ordered, c.seq})
 	if err != nil {
 		return
 	}

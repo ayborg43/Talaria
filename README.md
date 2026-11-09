@@ -578,9 +578,12 @@ The agent gets three reading tools: `email_list` (by days back, unread, sender, 
 `email_read` (one message by id: who from and to, the subject, the text cut to a sensible length, and the *names* of attachments) and
 `email_folders`. "Tell me when mail comes from Amina" works as a watch on `email_list`, with no model call until something changes.
 `email_attachment` downloads one named attachment into the kept files, so a PDF form from a mail can be read with `files_read`.
+`email_thread` reads the whole conversation a message belongs to (its folder and Sent, oldest first, each message cut if long), so a
+reply answers the latest message. `email_draft` saves a message, or a threaded reply, in your Drafts folder without sending it: you
+finish and send it from your own mail program. A draft leaves nothing, so it does not ask.
 
 - **Reading is enforced, not just promised.** The mail client can send eight commands (sign in, list folders, open a folder,
-  search, fetch, capability, sign out, and APPEND, which files the Sent copy of an approved send), and none of them can delete,
+  search, fetch, capability, sign out, and APPEND, which files the Sent copy of an approved send or a draft), and none of them can delete,
   move or mark a mailbox. Folders are opened with `EXAMINE`, which the server itself
   treats as read-only, and messages are fetched with `BODY.PEEK`. A test fails if any other command is ever sent.
 - **Sending asks first, in full.** `email_send` and `email_reply` show the recipients, subject and body at the approval, and
@@ -648,6 +651,33 @@ holds live login cookies, so keep Dokploy access tight and back up the data volu
   picture: **Waiting for you** (the questions, which stay saved until you answer), **Working now** (each worker's number and the model it is using),
   what is **set up to run on its own** (goals, watches, reminders and when they next run), and what has
   **finished lately** with how long it took. It is live, survives a reload, and a helper cut short by Stop disappears at once.
+- **The agent's computer, in your hands.** The screen icon in the chat header (or the card on Agents) opens **Computer**, with three parts.
+  *Browser* shows the tab the agent has open as a picture, refreshed about once a second while you are looking and never
+  otherwise; click the picture to click the page, type into it, press keys, go to an address or back. That is how you sign in,
+  pass a check or finish something by hand, in the very session the agent uses. The agent is told you took control and reads the
+  page again before it carries on, and what you type is never shown to it. Addresses you type get the same check as the agent's.
+  *Terminal* runs one command at a time (30 seconds each) and keeps the last 30 with what they printed, known secrets scrubbed.
+  *Files* browses folders, edits text files, makes folders, and moves a PDF or picture to and from Documents.
+  The terminal and files are offered only where the agent's tools run apart from the server (the workspace, another container,
+  an SSH host): never on the machine Talaria itself runs on, where the app's password would become a key to the whole server.
+- **Documents open in the app.** A kept PDF or picture opens in a viewer (**View**, beside every download link): the browser's own
+  PDF viewer in a frame, with page and zoom controls, Open in a new tab, Save and Share. A PDF form's fields are listed under it;
+  fill them and **Save a filled copy** keeps a new file and leaves the original untouched, the same as when the agent fills one.
+  Nothing is rendered on the server and no viewer is shipped in the page. On an iPhone, a framed PDF shows its first page only:
+  use Open for the whole document.
+- **Results look like what they are.** A mail listing is a list you can tap, a message has Draft a reply and Whole thread, a page
+  the agent opened has **Take control**, a goal shows its plan with what is done, a spending import shows its categories as bars
+  with a field to set a savings goal, and a made or filled PDF has View and Save. The raw result is one tap away under each.
+- **Conversations.** One conversation is the **main** one: always there, listed first, never archived or dropped to make room.
+  **Side chat** opens a blank conversation beside the one you are in, for a tangent, and the header says which it came from.
+  Any conversation can be renamed, archived and restored (nothing is deleted), or made the main one; **Replay** shows the open
+  conversation again from its start, a step at a time, without sending or running anything.
+- **You.** Settings → You holds your name, an avatar and the tone you like (given to the agent with its notes from the next
+  conversation), and both note files, which you can correct, add to or remove from.
+- **Notifications you can read later.** Settings → Notifications lists the last 50, so one you swiped away is not lost, and lets
+  you stop either kind (needs your OK; replies and finished work) from buzzing your phone while still keeping it in the list.
+- **Run it again.** A background task that failed, was cancelled or finished is kept (the last 20) under Agents, with **Retry**:
+  it starts again exactly as it was approved, with the same instructions, model, environment and permissions.
 - **Pausing everything.** On the Agents screen (**Pause all**). Goals, watches and reminders stop being started and wait; what was due runs when you resume. The
   switch is kept in a file, so a restart does not quietly undo it. Chat still works while paused.
 - **Pausing one thing.** Each goal, watch and reminder listed on the Agents and Today screens has its own controls: **Pause** or **Resume** for
@@ -1017,6 +1047,13 @@ the service's read-only tools with `watch_create`, you approve it
 - **Bounded.** At most 5 active watches per chat. After 30 changes looked at without a word from you the watch pauses and says
   so (writing to the bot gives the allowance back), and after 5 failed polls in a row it pauses and says why.
   Polls are quiet while they fail, so an outage is one message, not one every 15 minutes.
+- **Waiting for one thing costs nothing.** Give a watch a condition and it never asks the model at all: "tell me when this drops
+  below $50" (`price_below` / `price_above` with a dollar amount, and optionally the text that comes just before the right price
+  on a page with several), or "tell me when it says In stock" / "when Sold out is gone" (`text_appears` / `text_gone`). You hear
+  once, when the condition starts to hold, and again only after it stopped holding and holds once more: not at every poll. The
+  message is written by Talaria, with nothing from the page in it but the price read. A page that stops showing a price counts as
+  a failed poll, so the watch backs off into a pause and says so instead of staying silent. Prices are read as US dollars as
+  written (`$1,299.00`, `USD 49`); no currency is converted.
 - **You stay in charge.** `/watches` lists them; `/watches pause|resume|delete ID` changes one. They are scheduled jobs of their
   own kind (`tal cron list` shows them), kept in `~/.talaria/sessions.db` (mode 0600, as the last answer is an excerpt of
   your mail), and a watch's runs are not kept in the searchable history.
@@ -1034,6 +1071,11 @@ Four tools the agent uses inside the conversation, each asked about and bounded:
 - **Documents** (`files_make_pdf`, `files_view`, `files_read`, `files_send`): the agent can make a PDF from a title
   and text and share its download link, show you an uploaded picture, read the words of an uploaded PDF, and send a kept
   file to Telegram or Discord as a real document.
+- **PDF forms** (`pdf_form_inspect`, `pdf_form_fill`): list a kept form's fields, then fill them by name (text, dates,
+  checkboxes, choices) into a new kept copy, asking first; the original is untouched, so the filled copy can be sent
+  back with `files_send` or attached with `email_send` — the "fill this in and send it back" path end to end. Encrypted
+  and XFA forms are refused by name. Filling uses pdfcpu, Talaria's one added dependency, invoked only when a form is
+  actually filled; nothing of it runs at startup or idle.
 - **Spending** (`finance_import`): paste a transaction CSV (`date,description,amount,category`) and get a summary with
   categories and a savings figure. Positive amounts are expenses, negative are income; no currency conversion is inferred.
 
@@ -1225,9 +1267,9 @@ and how it ended.
 | `internal/goal` | goals: plan, progress notes, check-in schedule and the tools to work on them |
 | `internal/vault` | the encrypted store of saved logins, service sign-ins and where each may be used |
 | `internal/oauth` | OAuth sign-in for MCP servers: discovery, registration, PKCE login over a loopback address, token renewal; `oauthtest` is a fake service for tests |
-| `internal/watch` | watches: the store, change detection, and the `watch_*` tools |
-| `internal/mailbox` | read-only mail over IMAP: a small client that cannot send a changing command, message parsing, the `email_list`, `email_read` and `email_folders` tools |
-| `internal/web` | the web app: sign-in, the conversation as a chat transport, the page itself (embedded), Web Push, and the Today and Control data |
+| `internal/watch` | watches: the store, change detection, price and text conditions, and the `watch_*` tools |
+| `internal/mailbox` | mail over IMAP and SMTP: a small client that cannot send a deleting, moving or marking command, message parsing, threads and drafts, and the `email_*` tools |
+| `internal/web` | the web app: sign-in, the conversation as a chat transport, the page itself (embedded), Web Push, the Today and Control data, and the hands-on screens (Computer, documents, profile and notes, kept notifications) |
 | `internal/calendar` | read-only calendars from iCal feeds: parsing, repeats, time zones, safe fetching, the `calendar_events` tool |
 | `internal/guard` | permission rules, "always allow" choices, the activity log, secret scrubbing |
 | `internal/backup` | `tal backup` and `tal restore`: the state folder as one archive, safely unpacked |

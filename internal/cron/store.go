@@ -621,6 +621,9 @@ func (s *Store) Finish(id string, at time.Time, status string) error {
 			j.NextRun = at.Add(retryBackoff(j.Attempts))
 			return s.save(jobs)
 		case !recurring:
+			if j.Kind == KindTask {
+				s.recordDone(*j, status, at) // kept so the user can run it again
+			}
 			return s.save(append(jobs[:i], jobs[i+1:]...))
 		case !failed:
 			j.Attempts = 0

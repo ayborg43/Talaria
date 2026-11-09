@@ -150,8 +150,9 @@ type Runtime struct {
 
 	budget *budget
 
-	bmu      sync.Mutex
-	browsers map[any]*browser.Manager // one browser per environment, started when first used
+	bmu          sync.Mutex
+	browsers     map[any]*browser.Manager // one browser per environment, started when first used
+	browserOrder []*browser.Manager       // the same, in the order they were made
 }
 
 // Open prepares shared state. History is optional: if the database cannot
@@ -194,6 +195,9 @@ func Open(cfg Config) *Runtime {
 
 // HasVault reports whether saved logins are available.
 func (rt *Runtime) HasVault() bool { return rt.cfg.Vault != nil }
+
+// Notes is the agent's notes and the user's profile, for the app's own screen to show and edit.
+func (rt *Runtime) Notes() *memory.Notes { return rt.notes }
 
 // Goals returns the goal store, nil if goals are off.
 func (rt *Runtime) Goals() *goal.Store { return rt.cfg.Goals }
@@ -388,7 +392,7 @@ func (rt *Runtime) NewAgent(o AgentOptions) *agent.Agent {
 		BeforeModel:    rt.budget.take,
 		Activity:       o.Activity,
 	}
-	if o.ChatID != 0 && rt.cfg.Watches != nil && rt.mcp.HasTools() {
+	if o.ChatID != 0 && rt.cfg.Watches != nil { // web_fetch is always there to watch, with or without a connected service
 		watch.RegisterTools(tools, rt.WatchBinding(o.Gateway, o.ChatID, tools, ag.Call, !o.NoCron))
 	}
 	scrub := func(s string) string { return s }

@@ -22,9 +22,12 @@ import (
 
 	"cmp"
 	"slices"
+	"talaria/internal/browser"
 	"talaria/internal/calendar"
 	"talaria/internal/config"
+	"talaria/internal/execenv"
 	"talaria/internal/files"
+	"talaria/internal/memory"
 	"talaria/internal/vault"
 
 	"talaria/internal/gateway/chat"
@@ -84,6 +87,9 @@ type Sources struct {
 	// JobAction pauses, resumes or removes one standing job (kind GOAL, WATCH or TIME).
 	JobAction func(kind, id, action string) error
 	Links     func() []LinkInfo
+	// Tasks lists the background tasks that have ended lately, and RetryTask starts one of them again as it was.
+	Tasks     func() []TaskInfo
+	RetryTask func(id string) error
 	// Zone is the time zone the person lives in.
 	Zone *time.Location
 }
@@ -129,6 +135,21 @@ type Server struct {
 	// as downloads. Nil uses a store next to the config file.
 	Files *files.Store
 
+	// Notes is the user's profile and the agent's notes, shown and edited under Settings. Nil hides them.
+	Notes *memory.Notes
+	// Notices keeps what was sent as a notification, to be read in the app. Nil keeps none.
+	Notices *Notices
+	// Env is the agent's computer as the Computer screen works it: only one
+	// apart from this machine is ever offered (see computer). Scrub removes
+	// known secrets from what a command prints, and ReceiptsPath is where the
+	// last commands are kept.
+	Env          execenv.Env
+	Scrub        func(string) string
+	ReceiptsPath string
+	// Browsers lists the browsers the agent has started, for taking control of a tab. Nil offers none.
+	Browsers func() []*browser.Manager
+
+	receiptMu sync.Mutex
 	cacheMu   sync.Mutex
 	todayAt   time.Time
 	todayJSON []byte
@@ -172,6 +193,22 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/control", s.authed(s.control))
 	mux.HandleFunc("POST /api/pause", s.authed(s.pause))
 	mux.HandleFunc("POST /api/jobs", s.authed(s.jobAction))
+	mux.HandleFunc("GET /api/files/{id}/form", s.authed(s.formGet))
+	mux.HandleFunc("POST /api/files/{id}/form", s.authed(s.formFill))
+	mux.HandleFunc("GET /api/profile", s.authed(s.profileGet))
+	mux.HandleFunc("POST /api/profile", s.authed(s.profilePost))
+	mux.HandleFunc("GET /api/notices", s.authed(s.noticesGet))
+	mux.HandleFunc("POST /api/notices", s.authed(s.noticesPost))
+	mux.HandleFunc("POST /api/tasks", s.authed(s.taskAction))
+	mux.HandleFunc("GET /api/computer", s.authed(s.computerGet))
+	mux.HandleFunc("POST /api/computer/run", s.authed(s.computerRun))
+	mux.HandleFunc("GET /api/computer/files", s.authed(s.computerFiles))
+	mux.HandleFunc("GET /api/computer/file", s.authed(s.computerFileGet))
+	mux.HandleFunc("POST /api/computer/file", s.authed(s.computerFilePost))
+	mux.HandleFunc("POST /api/computer/transfer", s.authed(s.computerTransfer))
+	mux.HandleFunc("GET /api/browser", s.authed(s.browserTabs))
+	mux.HandleFunc("GET /api/browser/shot", s.authed(s.browserShot))
+	mux.HandleFunc("POST /api/browser/act", s.authed(s.browserAct))
 	mux.HandleFunc("GET /api/push/key", s.authed(s.pushKey))
 	mux.HandleFunc("POST /api/push/subscribe", s.authed(s.pushSubscribe))
 	mux.HandleFunc("POST /api/push/unsubscribe", s.authed(s.pushUnsubscribe))
@@ -219,7 +256,7 @@ func (s *Server) headers(next http.Handler) http.Handler {
 			}
 		}()
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("X-Frame-Options", "DENY")
@@ -348,7 +385,15 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	msgs, seq, epoch, running := s.Hub.Snapshot()
 	paused := s.Pause != nil && s.Pause.Paused()
-	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs, "seq": seq, "epoch": epoch, "running": running, "agents": s.Hub.Workers(), "model": s.activeModel(), "version": s.Version, "paused": paused, "zone": s.zone().String(), "telegram": s.Telegram})
+	out := map[string]any{"messages": msgs, "seq": seq, "epoch": epoch, "running": running, "agents": s.Hub.Workers(), "model": s.activeModel(), "version": s.Version, "paused": paused, "zone": s.zone().String(), "telegram": s.Telegram}
+	if s.Notes != nil { // the name and avatar the page shows; the tone is for the agent alone
+		p := s.Notes.Profile()
+		out["profile"] = map[string]string{"name": p.Name, "avatar": p.Avatar}
+	}
+	if s.Convos != nil { // a side chat says what it was opened beside, so the page can say where "back" goes
+		out["side"] = s.Convos.SideOf()
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // activeModel is the model this chat is talking to: what answered last, or
@@ -1402,7 +1447,17 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", f.MIME)
-	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(f.Name))
+	disposition := "attachment"
+	if r.URL.Query().Get("inline") == "1" {
+		// The viewer shows a kept PDF or image inside the app, in a frame of
+		// its own page and nowhere else. The store keeps only PDFs and images
+		// (it checks the bytes, and nosniff holds the browser to the type), so
+		// nothing served this way can run as a page.
+		disposition = "inline"
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; object-src 'self'; frame-ancestors 'self'")
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	}
+	w.Header().Set("Content-Disposition", disposition+"; filename="+strconv.Quote(f.Name))
 	http.ServeContent(w, r, f.Name, f.Created, bytes.NewReader(raw))
 }
 
@@ -1504,6 +1559,12 @@ func (s *Server) agents(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"agents": s.Hub.Workers(), "recent": s.Hub.Recent(), "jobs": []JobInfo{}}
 	if s.Sources.Jobs != nil {
 		out["jobs"] = s.Sources.Jobs()
+	}
+	out["tasks"] = []TaskInfo{}
+	if s.Sources.Tasks != nil {
+		if t := s.Sources.Tasks(); t != nil {
+			out["tasks"] = t
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

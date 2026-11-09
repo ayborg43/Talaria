@@ -92,10 +92,14 @@ type errorString string
 
 func (e errorString) Error() string { return string(e) }
 
-// chats lists every kept conversation, newest first.
+// chats lists every kept conversation, newest first; ?archived=1 lists the shelved ones.
 func (s *Server) chats(w http.ResponseWriter, r *http.Request) {
 	if s.Convos == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"chats": []ConvoMeta{}})
+		return
+	}
+	if r.URL.Query().Get("archived") == "1" {
+		writeJSON(w, http.StatusOK, map[string]any{"chats": s.Convos.ListArchived()})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"chats": s.Convos.List()})
@@ -109,14 +113,57 @@ func (s *Server) switchChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		New  bool   `json:"new"`
-		Open string `json:"open"`
+		New       bool   `json:"new"`
+		Open      string `json:"open"`
+		Rename    string `json:"rename"`
+		Title     string `json:"title"`
+		Archive   string `json:"archive"`
+		Unarchive string `json:"unarchive"`
+		Side      bool   `json:"side"` // a blank conversation beside the open one
+		Main      string `json:"main"` // make this conversation the main one
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	s.SaveActive()
 	switch {
+	case in.Rename != "":
+		if err := s.Convos.Rename(in.Rename, in.Title); err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "chats": s.Convos.List()})
+		return
+	case in.Main != "":
+		if err := s.Convos.SetMain(in.Main); err != nil {
+			fail(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "chats": s.Convos.List()})
+		return
+	case in.Archive != "" || in.Unarchive != "":
+		id, archived := in.Archive, true
+		if id == "" {
+			id, archived = in.Unarchive, false
+		}
+		if err := s.Convos.SetArchived(id, archived); err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "chats": s.Convos.List()})
+		return
+	}
+	s.SaveActive()
+	if in.Open == "main" { // "back to main", without the page having to know which one that is
+		in.Open = s.Convos.MainID()
+	}
+	switch {
+	case in.Side:
+		id := s.Convos.NewSide()
+		s.Hub.Replace(nil)
+		if s.Engine != nil {
+			s.Engine.SetHistory(ChatID, nil)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
 	case in.New:
 		id := s.Convos.New()
 		s.Hub.Replace(nil)

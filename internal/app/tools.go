@@ -120,6 +120,7 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 	}
 	if rt.cfg.Mail != nil {
 		mailbox.RegisterTools(tools, rt.cfg.Mail)
+		mailbox.RegisterThreadTools(tools, rt.cfg.Mail)
 		var resolve mailbox.FileResolver
 		var save mailbox.FileSaver
 		if rt.cfg.Files != nil {
@@ -218,8 +219,21 @@ func (rt *Runtime) browserFor(env execenv.Env) *browser.Manager {
 		rt.browsers = map[any]*browser.Manager{}
 	}
 	rt.browsers[key] = m
+	rt.browserOrder = append(rt.browserOrder, m)
 	return m
 }
+
+// Browsers lists the browsers this process has made, in the order they were
+// first used, for the app's console: the user looking at, and working, the
+// tabs the agent has open. Most runs have one, or none.
+func (rt *Runtime) Browsers() []*browser.Manager {
+	rt.bmu.Lock()
+	defer rt.bmu.Unlock()
+	return append([]*browser.Manager(nil), rt.browserOrder...)
+}
+
+// Env is where this runtime's shell and file tools run by default.
+func (rt *Runtime) Env() execenv.Env { return rt.env }
 
 // inOwnContainer reports whether Talaria itself runs inside its container
 // image, where Chromium's sandbox cannot work (no privileges to take): the

@@ -88,7 +88,7 @@ const S = {
   model: '', paused: false, zone: undefined, version: '', tab: 'chat', sub: '', telegram: false, tgOn: false,
   today: null, blocks: new Map(), retry: 1000, installEvent: null,
   pinned: true, ownTop: 0, smoothUntil: 0, lastUserScroll: 0, dirty: false, flushTimer: 0,
-  agents: [], agentsAt: 0,
+  agents: [], agentsAt: 0, profile: {},
 };
 
 const fmtTime = (d) => new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: S.zone }).format(d);
@@ -125,19 +125,44 @@ function inline(text) {
     const t = m[0];
     if (t.startsWith('`')) out.push(h('code', { text: t.slice(1, -1) }));
     else if (t.startsWith('**')) out.push(h('b', { text: t.slice(2, -2) }));
-    else if (t.startsWith('/api/files/')) out.push(h('a', { href: t, text: 'Download', download: '', rel: 'noopener' })); // a kept file, served by this server
+    else if (t.startsWith('/api/files/')) out.push(fileChip(t)); // a kept file, served by this server
     else out.push(h('a', { href: t, target: '_blank', rel: 'noopener noreferrer', text: t })); // shows the address it goes to
     last = m.index + t.length;
   }
   if (last < text.length) out.push(text.slice(last));
   return out;
 }
+function isTableSep(line) { return /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(line) && line.includes('-'); }
+function tableRow(line) { return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim()); }
 function prose(text, frag) {
-  let para = [], list = null;
+  let para = [], list = null, quote = [], table = null;
   const flushPara = () => { if (para.length) { frag.append(h('p', null, ...para.flatMap((l, i) => i ? [document.createElement('br'), ...inline(l)] : inline(l)))); para = []; } };
   const flushList = () => { if (list) { frag.append(list); list = null; } };
-  for (const line of text.split('\n')) {
+  const flushQuote = () => { if (quote.length) { frag.append(h('blockquote', null, ...quote.flatMap((l, i) => i ? [document.createElement('br'), ...inline(l)] : inline(l)))); quote = []; } };
+  const flushTable = () => {
+    if (!table) return;
+    const t = h('table');
+    const head = h('tr', null, ...table[0].map((c) => h('th', null, ...inline(c))));
+    t.append(head);
+    for (const row of table.slice(1)) t.append(h('tr', null, ...row.map((c) => h('td', null, ...inline(c)))));
+    const wrap = h('div', { class: 'tablewrap' }, t);
+    frag.append(wrap); table = null;
+  };
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     let m;
+    if (line.includes('|') && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+      flushPara(); flushList(); flushQuote(); flushTable();
+      table = [tableRow(line)]; i++;
+      continue;
+    }
+    if (table) {
+      if (line.includes('|') && line.trim()) { table.push(tableRow(line)); continue; }
+      flushTable();
+    }
+    if ((m = /^>\s?(.*)/.exec(line))) { flushPara(); flushList(); quote.push(m[1]); continue; }
+    flushQuote();
     if ((m = /^\s*[-*•]\s+(.*)/.exec(line)) || (m = /^\s*\d+[.)]\s+(.*)/.exec(line))) {
       flushPara();
       const ordered = /^\s*\d/.test(line);
@@ -148,7 +173,7 @@ function prose(text, frag) {
     } else if (!line.trim()) { flushPara(); flushList(); }
     else { flushList(); para.push(line); }
   }
-  flushPara(); flushList();
+  flushPara(); flushList(); flushQuote(); flushTable();
 }
 function markdown(text) {
   const frag = document.createDocumentFragment();
@@ -220,9 +245,16 @@ function askCard(m, opts = {}) {
   return card;
 }
 
+// A kept file is offered two ways: View opens it inside the app, Download saves it.
+function fileChip(path) {
+  const id = path.slice('/api/files/'.length);
+  return h('span', { class: 'filechip' },
+    h('button', { type: 'button', class: 'linkbtn', text: 'View', onclick: () => openDoc(id) }),
+    h('a', { href: path, text: 'Download', download: '', rel: 'noopener' }));
+}
 function fileLinks(text) {
   const parts = String(text || '').split(/(\/api\/files\/[0-9a-fA-F]+)/g);
-  return parts.map((p, i) => (i % 2 === 1 ? h('a', { href: p, text: 'Download', download: '', rel: 'noopener' }) : p));
+  return parts.map((p, i) => (i % 2 === 1 ? fileChip(p) : p));
 }
 // A presented question becomes tappable buttons: tapping sends the option's
 // label as the reply, and the agent records the pick. Anything that does not
@@ -252,9 +284,37 @@ function choiceCard(text) {
   }
   return card;
 }
+const TOOL_LABELS = [
+  [/^email_/, 'Mail'], [/^calendar_/, 'Calendar'], [/^browser_/, 'Browser'], [/^finance_/, 'Finance'],
+  [/^files_|^pdf_/, 'Files'], [/^goal_/, 'Goal'], [/^watch_/, 'Watch'], [/^cron_|^task_/, 'Task'], [/^web_/, 'Web'],
+];
+function toolLabel(name) { for (const [re, label] of TOOL_LABELS) if (re.test(name)) return label; return 'Tool'; }
+function toolCard(t) {
+  const card = h('div', { class: 'toolcard' });
+  const head = h('button', { class: 'toolhead', type: 'button', 'aria-expanded': 'false' },
+    icon(t.state === 'ok' ? 'check' : t.state === 'error' ? 'x' : 'spin'),
+    h('span', { class: 'tag', text: toolLabel(t.tool) }),
+    h('span', { class: 'grow', text: t.tool }),
+    t.ms ? h('em', { text: (t.ms / 1000).toFixed(1) + 's' }) : null,
+    h('span', { class: 'chev', text: '▸' }));
+  const body = h('div', { class: 'toolresult', hidden: '' }, markdown(t.result || ''));
+  head.addEventListener('click', () => {
+    const open = body.hidden;
+    body.hidden = !open;
+    head.setAttribute('aria-expanded', String(open));
+    head.querySelector('.chev').textContent = open ? '▾' : '▸';
+  });
+  // Mail, pages, documents, plans and spending are shown as what they are, in
+  // the thread; the raw result stays one tap away under the heading.
+  const rich = t.state === 'ok' ? richResult(t) : null;
+  card.append(head, rich, body);
+  return card;
+}
 function buildBlock(b, isLast) {
-  if (b.kind === 'user') return h('div', { class: 'msg-user' }, fileLinks(b.m.text));
+  if (b.kind === 'user') return h('div', { class: 'msg-user' }, fileLinks(b.m.text), S.profile.avatar ? h('span', { class: 'me', 'aria-hidden': 'true', text: S.profile.avatar }) : null);
   if (b.kind === 'tools') {
+    if (b.items.some((t) => t.result)) return h('div', { class: 'toolcards' }, b.items.map((t) => t.result ? toolCard(t)
+      : h('div', { class: 'chips' }, h('span', { class: 'chip ' + t.state }, icon(t.state === 'ok' ? 'check' : t.state === 'error' ? 'x' : 'spin'), t.tool, t.ms ? h('em', { text: (t.ms / 1000).toFixed(1) + 's' }) : null))));
     return h('div', { class: 'chips' }, b.items.map((t) => h('span', { class: 'chip ' + t.state },
       icon(t.state === 'ok' ? 'check' : t.state === 'error' ? 'x' : 'spin'), t.tool,
       t.ms ? h('em', { text: (t.ms / 1000).toFixed(1) + 's' }) : null)));
@@ -412,7 +472,7 @@ function renderChrome() {
   // The status names the current work, not just that something is working.
   const current = count === 1 ? 'Working · ' + doingText(S.agents[0]) : count > 1 ? `${count} agents working` : busy ? 'Working…' : null;
   $('#status-text').textContent = !S.connected ? 'Reconnecting…' : S.paused ? 'Paused · chat still works'
-    : current || 'Online' + (S.model ? ' · ' + S.model : '');
+    : current || (S.side ? 'Side chat · ' : 'Online') + (S.side ? S.side : S.model ? ' · ' + S.model : '');
   const n = pendingAsks().length;
   const ab = $('#agent-badge');
   ab.hidden = n === 0 && S.agents.length === 0; ab.textContent = String(n || S.agents.length); ab.classList.toggle('work', n === 0);
@@ -482,13 +542,13 @@ function updateNow() { const el = $('#now'); if (el && S.tab === 'agents') keepS
 
 // The Agents screen: what waits for you, who is working, what is set up to run on its own, what has finished, and
 // the switch that stops it all.
-let recentAgents = [], standing = [], ctl = null;
+let recentAgents = [], standing = [], doneTasks = [], ctl = null;
 async function loadAgentsPage() {
   const body = $('#agents-body');
   if (!body.children.length) body.replaceChildren(h('div', { class: 'skeleton' }));
   try {
     const [d, c] = await Promise.all([api('/api/agents'), api('/api/control')]);
-    recentAgents = d.recent || []; standing = d.jobs || []; ctl = c; S.paused = c.paused;
+    recentAgents = d.recent || []; standing = d.jobs || []; doneTasks = d.tasks || []; ctl = c; S.paused = c.paused;
   } catch (e) { if (e instanceof AuthError) return; toast(e.message); }
   renderAgentsPage();
 }
@@ -554,6 +614,8 @@ function renderAgentsPage() {
     fin.append(rows);
   }
   out.push(fin);
+  const tc = tasksCard(); if (tc) out.push(tc);
+  out.push(computerCard());
   const hist = historyCard(); if (hist) out.push(hist);
   const act = activityCard(); if (act) out.push(act);
   const agentsBody = $('#agents-body');
@@ -693,25 +755,19 @@ fileInput.addEventListener('change', async () => {
     } else toast(e.message);
   }
 });
+// The conversations sheet: the main conversation first, side chats named after
+// what they were opened beside, and each one renamed, archived or brought back.
+let sheetArchived = false;
 async function openSheet() {
   const body = $('#sheet-body');
   $('#sheet').hidden = false;
-  body.replaceChildren(h('div', { class: 'card empty', text: 'Loading…' }));
+  if (!body.children.length) body.replaceChildren(h('div', { class: 'card empty', text: 'Loading…' }));
   try {
-    const d = await api('/api/chats');
-    const rows = h('div', { class: 'rows' });
-    rows.append(h('button', { class: 'row new', type: 'button', onclick: newConversation },
-      h('span', { class: 'grow' }, h('span', { class: 't', text: '+ New chat' }), h('span', { class: 's', text: 'What is open is kept first' }))));
-    for (const c of d.chats || []) {
-      rows.append(h('button', { class: 'row', type: 'button', 'aria-current': c.active ? 'true' : null, onclick: () => openConversation(c.id) },
-        h('span', { class: 'grow' }, h('span', { class: 't', text: c.title || 'New chat' }),
-          h('span', { class: 's', text: (c.messages || 0) + (c.messages === 1 ? ' message' : ' messages') })),
-        h('span', { class: 'when', text: c.updated ? fmtWhen(new Date(c.updated)) : '' })));
-    }
-    body.replaceChildren(h('div', { class: 'card' }, h('h2', null, 'Conversations'), rows));
+    const d = await api('/api/chats' + (sheetArchived ? '?archived=1' : ''));
+    body.replaceChildren(conversationsCard(d.chats || [], sheetArchived));
   } catch (e) { if (!(e instanceof AuthError)) body.replaceChildren(h('div', { class: 'card empty', text: e.message })); }
 }
-function closeSheet() { $('#sheet').hidden = true; }
+function closeSheet() { $('#sheet').hidden = true; sheetArchived = false; }
 // A new chat never loses anything: what was open is kept first, and the new one starts blank.
 async function newConversation() {
   closeSheet();
@@ -756,7 +812,7 @@ async function loadState() {
   setAgents(d.agents);
   S.epoch = d.epoch; S.seq = d.seq; S.running = d.running; S.model = d.model; S.paused = d.paused; S.version = d.version;
   S.telegram = !!d.telegram; renderTg();
-  S.zone = d.zone || S.zone;
+  S.zone = d.zone || S.zone; S.profile = d.profile || {}; S.side = d.side || '';
   if (!S.order.length) S.pinned = true; // a conversation that starts again starts at its bottom
   // Nothing is torn down: messages that are unchanged keep their elements, so the reader's place survives a reconnect.
   renderChat(); renderQueue();
@@ -824,7 +880,7 @@ function renderToday() {
   const d = S.today; if (!d || S.tab !== 'today') return;
   const now = new Date();
   const hr = Number(new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', timeZone: S.zone }).format(now));
-  $('#today-greeting').textContent = hr < 12 ? 'Good morning.' : hr < 18 ? 'Good afternoon.' : 'Good evening.';
+  $('#today-greeting').textContent = (hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening') + (S.profile.name ? ', ' + S.profile.name : '') + '.';
   $('#today-date').textContent = new Intl.DateTimeFormat([], { weekday: 'long', day: 'numeric', month: 'long', timeZone: S.zone }).format(now);
   const out = [];
   const n = pendingAsks().length;
@@ -902,7 +958,8 @@ function filesCard(list, hours, quotaMB) {
   list.slice(0, 8).forEach((f) => {
     rows.append(h('div', { class: 'row' },
       h('span', { class: 'grow' }, h('span', { class: 't', text: f.name }), h('span', { class: 's', text: (f.mime || 'file') + ' · ' + fmtSize(f.size) + ' · ' + left(f.created) })),
-      h('a', { class: 'btn', href: '/api/files/' + f.id, text: 'Get', download: '' })));
+      h('span', { class: 'acts' }, h('button', { class: 'btn small', type: 'button', text: 'View', onclick: () => openDoc(f.id, f) }),
+        h('a', { class: 'btn small', href: '/api/files/' + f.id, text: 'Get', download: '' }))));
   });
   card.append(rows);
   if (list.length > 8) card.append(h('div', { class: 'field-note', text: '+' + (list.length - 8) + ' more — ask in chat for the full list.' }));
@@ -969,8 +1026,9 @@ let settingsEditing = null;
 
 async function loadSettings() {
   try {
-    const [st, c] = await Promise.all([api('/api/settings'), api('/api/control')]);
-    S.settings = st; ctl = c; S.paused = c.paused;
+    // The profile and the notification list are extras: Settings opens without them, and does not wait on them in turn.
+    const [st, c, me, notices] = await Promise.all([api('/api/settings'), api('/api/control'), api('/api/profile').catch(() => null), api('/api/notices').catch(() => null)]);
+    S.settings = st; ctl = c; S.paused = c.paused; S.me = me; S.notices = notices;
   } catch (e) { if (!(e instanceof AuthError)) toast(e.message); return; }
   renderSettings();
 }
@@ -1334,6 +1392,7 @@ function uptime(sec) {
 }
 
 const SETTINGS_PAGES = [
+  { id: 'you', title: 'You', icon: 'user', sub: 'Your name, the tone you like, and what it remembers.' },
   { id: 'models', title: 'AI models', icon: 'cpu', sub: 'Which models work for you, and when each is used.' },
   { id: 'permissions', title: 'Permissions', icon: 'lock', sub: 'When Talaria has to ask you first.' },
   { id: 'connections', title: 'Connections', icon: 'link', sub: 'Email, calendars and chat apps.' },
@@ -1358,6 +1417,10 @@ function settingsSummary(id) {
     }
     case 'notifications': return { on: 'On for this device', off: 'Off', denied: 'Blocked in the browser', unsupported: 'Not supported here', 'needs-install': 'Add the app to your Home Screen first' }[S.push] || '';
     case 'about': return 'Talaria ' + (c.version || S.version || '');
+    case 'you': {
+      const me = S.me || {}, n = ((me.user || {}).entries || []).length + ((me.memory || {}).entries || []).length;
+      return [(me.profile || {}).name || 'No name set', n + (n === 1 ? ' note' : ' notes')].join(' · ');
+    }
   }
   return '';
 }
@@ -1448,7 +1511,7 @@ function paneConnections(s) {
   return out;
 }
 
-function paneNotifications() { return [notifyCard(ctl || { push: {} })]; }
+function paneNotifications() { return [notifyCard(ctl || { push: {} }), ...noticeCards()]; }
 
 function paneAbout() {
   const c = ctl || {};
@@ -1467,7 +1530,7 @@ function paneAbout() {
   return out;
 }
 
-const PANES = { models: paneModels, permissions: panePermissions, connections: paneConnections, notifications: paneNotifications, about: paneAbout };
+const PANES = { you: paneYou, models: paneModels, permissions: panePermissions, connections: paneConnections, notifications: paneNotifications, about: paneAbout };
 const wideScreen = () => window.matchMedia('(min-width: 900px)').matches;
 window.matchMedia('(min-width: 900px)').addEventListener?.('change', () => { if (S.tab === 'settings') renderSettings(); });
 $('#settings-back').addEventListener('click', () => { location.hash = '#settings'; });

@@ -93,22 +93,115 @@ func TestConversationsSurviveARestart(t *testing.T) {
 
 func TestTheShelfHoldsTheNewestHundred(t *testing.T) {
 	c := testConvos(t)
-	var first string
+	var first, second string
 	for i := 0; i < maxConvos+5; i++ {
 		id := c.New()
-		if i == 0 {
+		switch i {
+		case 0:
 			first = id
+		case 1:
+			second = id
 		}
 	}
 	if got := c.List(); len(got) != maxConvos {
 		t.Fatalf("the shelf is bounded: %d", len(got))
 	}
-	if _, ok := c.Get(first); ok {
+	if _, ok := c.Get(second); ok {
 		t.Fatal("the oldest inactive conversation makes room")
+	}
+	if _, ok := c.Get(first); !ok || c.MainID() != first {
+		t.Fatal("the main conversation was dropped to make room")
 	}
 	for _, m := range c.List() {
 		if strings.Contains(m.Title, "…") {
 			t.Fatalf("titles are short already: %q", m.Title)
+		}
+	}
+}
+
+func TestAConversationCanBeRenamedAndArchived(t *testing.T) {
+	c := testConvos(t)
+	id := c.New()
+	other := c.New() // newest, and open
+	if err := c.Rename(id, "  Trip to Kyoto  "); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Rename(id, "  "); err == nil {
+		t.Fatal("an empty name was accepted")
+	}
+	if err := c.Rename("nope", "x"); err == nil {
+		t.Fatal("a missing conversation was renamed")
+	}
+	got := c.List()
+	if len(got) != 2 || got[1].Title != "Trip to Kyoto" {
+		t.Fatalf("rename not listed: %+v", got)
+	}
+	// A rename survives later saves: the auto-title only fills an empty one.
+	c.Save(id, []*Message{{Role: "user", Text: "something else entirely"}}, nil)
+	if c.List()[0].ID != id || c.List()[0].Title != "Trip to Kyoto" {
+		t.Fatalf("save overwrote the rename: %+v", c.List())
+	}
+	if err := c.SetArchived(id, true); err == nil {
+		t.Fatal("the main conversation was archived")
+	}
+	if err := c.SetMain(other); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetArchived(id, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.List(); len(got) != 1 || got[0].ID != other {
+		t.Fatalf("archived still listed: %+v", got)
+	}
+	if got := c.ListArchived(); len(got) != 1 || got[0].ID != id || !got[0].Archived {
+		t.Fatalf("archive not listed separately: %+v", got)
+	}
+	if err := c.SetArchived(id, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.List()) != 2 {
+		t.Fatalf("unarchived not back: %+v", c.List())
+	}
+}
+
+// A side chat opens beside the conversation it came from, which stays as it
+// was; the main conversation is marked, and survives a reload.
+func TestSideChatsHangFromTheConversationTheyWereOpenedBeside(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chats.json")
+	c, err := OpenConvos(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := c.New()
+	c.Save(main, []*Message{{Role: "user", Text: "plan the trip"}}, nil)
+	side := c.NewSide()
+	if c.ActiveID() != side {
+		t.Fatal("the side chat is not the open one")
+	}
+	nested := c.NewSide() // a side chat of a side chat hangs from the same conversation
+	var metas = map[string]ConvoMeta{}
+	for _, m := range c.List() {
+		metas[m.ID] = m
+	}
+	if !metas[main].Main || metas[main].Side != "" || metas[main].Messages != 1 {
+		t.Fatalf("main = %+v", metas[main])
+	}
+	if metas[side].Side != "plan the trip" || metas[nested].Side != "plan the trip" || metas[side].Main {
+		t.Fatalf("side = %+v nested = %+v", metas[side], metas[nested])
+	}
+	again, err := OpenConvos(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.MainID() != main {
+		t.Fatalf("after a reload the main conversation is %q, want %q", again.MainID(), main)
+	}
+	if err := again.SetMain(side); err != nil || again.MainID() != side {
+		t.Fatalf("SetMain: %v", err)
+	}
+	for _, m := range again.List() {
+		if m.ID == side && (m.Side != "" || !m.Main) {
+			t.Fatalf("the new main conversation still reads as a side chat: %+v", m)
 		}
 	}
 }

@@ -45,6 +45,9 @@ type Message struct {
 	Tool  string `json:"tool,omitempty"`
 	State string `json:"state,omitempty"` // tool: running ok error; approval: pending allowed always denied expired
 	Ms    int64  `json:"ms,omitempty"`
+	// Result is a bounded copy of what a finished tool returned, so the page
+	// can show it in an expandable card instead of an opaque chip.
+	Result string `json:"result,omitempty"`
 	// Approval messages: the token that answers it, only while it is waiting, and whether "always" is offered.
 	Token  string `json:"token,omitempty"`
 	Always bool   `json:"always,omitempty"`
@@ -804,6 +807,7 @@ func (h *Hub) ToolEnd(_ int64, name, result string) {
 			if len(result) >= 7 && result[:7] == "error: " {
 				m.State = "error"
 			}
+			m.Result = boundResult(result)
 			if !m.started.IsZero() {
 				m.Ms = h.now().Sub(m.started).Milliseconds()
 			}
@@ -854,4 +858,16 @@ func firstLine(s string) string {
 		r = append(r[:110], '…')
 	}
 	return string(r)
+}
+
+// maxResult bounds a tool result kept for display, in runes.
+const maxResult = 4000
+
+// boundResult keeps the head of a tool result for the page, saying where it was cut.
+func boundResult(s string) string {
+	r := []rune(s)
+	if len(r) <= maxResult {
+		return s
+	}
+	return string(r[:maxResult]) + "\n\n[result cut here: it was longer]"
 }

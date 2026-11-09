@@ -3,8 +3,8 @@
    It never keeps anything from /api: what is in the conversation, your mail and your calendar are only ever
    fetched live, and are not left in a cache on the phone. */
 
-const CACHE = 'talaria-shell-v1';
-const SHELL = ['/', '/app.css', '/app.js', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png',
+const CACHE = 'talaria-shell-v2';
+const SHELL = ['/', '/app.css', '/app.js', '/more.js', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png',
   '/fonts/instrument.woff2', '/fonts/bricolage.woff2', '/fonts/jetbrains-mono.woff2'];
 
 self.addEventListener('install', (e) => {

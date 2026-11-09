@@ -76,14 +76,21 @@ func (r *jobRunner) runWatch(ctx context.Context, j cron.Job) (string, error) {
 
 	metrics.Inc("talaria_watch_polls_total", "outcome", map[watch.Outcome]string{
 		watch.Quiet: "quiet", watch.Changed: "changed", watch.Failed: "failed", watch.PausedByErrors: "paused", watch.PausedByBudget: "paused",
+		watch.ConditionMet: "met",
 	}[out])
 	switch out {
 	case watch.PausedByErrors:
 		r.rt.Cron.UnscheduleWatch(w.ID)
-		return fmt.Sprintf("I could not look at %s %d times in a row, so I have paused this watch. The last problem: %v\n\nTell me when it is fixed and I will resume it (or: /watches resume %s).", w.Tool, w.Errors, callErr, w.ID), nil
+		problem := w.LastError
+		if callErr != nil {
+			problem = callErr.Error()
+		}
+		return fmt.Sprintf("I could not look at %s %d times in a row, so I have paused this watch. The last problem: %s\n\nTell me when it is fixed and I will resume it (or: /watches resume %s).", w.Tool, w.Errors, problem, w.ID), nil
 	case watch.PausedByBudget:
 		r.rt.Cron.UnscheduleWatch(w.ID)
 		return fmt.Sprintf("This has changed %d times since you last wrote to me, so I have paused the watch rather than carry on unasked. Write to me to carry on, or: /watches resume %s.", w.Triggers-1, w.ID), nil
+	case watch.ConditionMet:
+		return watch.ConditionMessage(w, w.LastFound), nil // settled here: no model run, and nothing from the page but the price read
 	case watch.Changed:
 		a.MarkUntrusted() // what the model is about to read came from a service, not from the user
 		return a.Run(ctx, watch.Prompt(w, previous, result))

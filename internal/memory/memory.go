@@ -154,6 +154,7 @@ func (n *Notes) Usage(t Target) string {
 // start, so edits made during a session show up in the next one.
 func (n *Notes) Prompt() string {
 	var b strings.Builder
+	b.WriteString(n.profilePrompt())
 	for _, t := range []Target{Agent, User} {
 		entries, _ := n.load(t)
 		title := map[Target]string{Agent: "Your notes (MEMORY.md)", User: "About the user (USER.md)"}[t]
