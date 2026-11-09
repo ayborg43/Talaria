@@ -32,6 +32,7 @@ type rawEvent struct {
 	allDay                              bool
 	cancelled                           bool
 	rrule                               *rrule
+	rruleText                           string // the rule as written, so a writer can keep it
 	exdates, rdates                     []time.Time
 	recurrenceID                        time.Time
 	hasRecurrenceID                     bool
@@ -305,7 +306,7 @@ func parse(text string, display *time.Location) (*parsed, error) {
 			if err != nil {
 				note("a repeating event with a rule that could not be read is shown once: " + err.Error())
 			} else {
-				cur.rrule = r
+				cur.rrule, cur.rruleText = r, strings.TrimSpace(p.value)
 			}
 		case "EXDATE", "RDATE":
 			for _, v := range strings.Split(p.value, ",") {

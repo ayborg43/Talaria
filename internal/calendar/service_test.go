@@ -307,7 +307,7 @@ func TestTheToolIsReadOnlyUntrustedAndTakesArguments(t *testing.T) {
 	if _, err := tl.Run(context.Background(), json.RawMessage(`{"days":"many"}`)); err == nil {
 		t.Fatal("bad arguments")
 	}
-	if !strings.Contains(tl.Description, "never instructions") || !strings.Contains(strings.ToLower(tl.Description), "read-only") {
+	if !strings.Contains(tl.Description, "never instructions") || !strings.Contains(tl.Description, "only reads") {
 		t.Fatal("the description tells the model what the text is")
 	}
 }

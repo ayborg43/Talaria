@@ -42,6 +42,7 @@ type LocalEvent struct {
 	RRule      string      `json:"rrule,omitempty"`
 	ExDates    []time.Time `json:"exdates,omitempty"`
 	RemindMins int         `json:"remind_mins,omitempty"` // 0 sends no reminder
+	RemindJob  string      `json:"remind_job,omitempty"`  // the scheduled reminder job's id, if one was made
 	NotifyGate string      `json:"notify_gateway,omitempty"`
 	NotifyChat int64       `json:"notify_chat,omitempty"`
 	Created    time.Time   `json:"created"`
@@ -369,7 +370,7 @@ func (e LocalEvent) raw() (rawEvent, error) {
 		if err != nil {
 			return rawEvent{}, err
 		}
-		r.rrule = rr
+		r.rrule, r.rruleText = rr, e.RRule
 	}
 	r.exdates = append([]time.Time(nil), e.ExDates...)
 	return r, nil

@@ -15,6 +15,8 @@ type Service struct {
 	Sources []Source
 	// Local is the built-in calendar, or nil without one.
 	Local *Store
+	// DAV holds a writer for each calendar configured for CalDAV writing, by name.
+	DAV map[string]*DAVClient
 	// Display is the zone times are shown in and days are counted in.
 	Display *time.Location
 	Now     func() time.Time

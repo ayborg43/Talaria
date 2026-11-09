@@ -87,16 +87,38 @@ func calendarZone(cfg *config.Config, getenv func(string) string) (*time.Locatio
 }
 
 // buildCalendars makes the calendar service: the calendars read from elsewhere,
-// plus the built-in one, which is always there.
+// plus the built-in one, which is always there. A calendar with caldav_url
+// also gets a writer; its password comes from the named environment variable
+// and is never logged.
 func buildCalendars(cfg *config.Config, getenv func(string) string, home string) (*calendar.Service, []string) {
 	sources, problems := calendarSources(cfg, getenv)
 	loc, zp := calendarZone(cfg, getenv)
 	problems = append(problems, zp...)
-	return &calendar.Service{
+	svc := &calendar.Service{
 		Sources: sources,
 		Local:   &calendar.Store{Path: filepath.Join(home, "calendar.json")},
 		Display: loc,
-	}, problems
+	}
+	names := make([]string, 0, len(cfg.Calendars))
+	for n := range cfg.Calendars {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	for _, n := range names {
+		c := cfg.Calendars[n]
+		if c.CalDAVURL == "" {
+			continue
+		}
+		if svc.DAV == nil {
+			svc.DAV = map[string]*calendar.DAVClient{}
+		}
+		svc.DAV[n] = &calendar.DAVClient{
+			Collection: c.CalDAVURL,
+			Username:   c.Username,
+			Password:   getenv(c.PasswordEnv),
+		}
+	}
+	return svc, problems
 }
 
 // calendarSecrets are the feed addresses, and the part of each that makes it private, so they can be kept
@@ -127,6 +149,9 @@ func calendarEnvDeny(cfg *config.Config) []string {
 	for _, c := range cfg.Calendars {
 		if c.URLEnv != "" {
 			out = append(out, c.URLEnv)
+		}
+		if c.PasswordEnv != "" {
+			out = append(out, c.PasswordEnv)
 		}
 	}
 	return out

@@ -199,6 +199,12 @@ type Calendar struct {
 	URL string `json:"url,omitempty"`
 	// AllowPrivate lets the feed be on this machine or a private network, for a calendar you host yourself.
 	AllowPrivate bool `json:"allow_private,omitempty"`
+	// CalDAVURL, when set, is the CalDAV collection the agent may also write
+	// (create, change and delete events), with Username and the password in
+	// the variable PasswordEnv names. Without it the calendar is read-only.
+	CalDAVURL   string `json:"caldav_url,omitempty"`
+	Username    string `json:"username,omitempty"`
+	PasswordEnv string `json:"password_env,omitempty"`
 }
 
 // Email is the mailbox the agent can read. Values set here win over the

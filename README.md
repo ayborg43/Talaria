@@ -541,8 +541,16 @@ exceptions and moved or cancelled single occurrences), time zones and daylight s
 - **What it cannot read.** A repeat rule using BYSETPOS, BYWEEKNO or the like, or an hourly repeat, is shown once and the answer
   says so, instead of listing wrong dates. A time zone name it does not know (some Outlook names) is read as UTC and said. A feed is
   reused for five minutes, so a change you just made can take that long to show.
-- **Read-only means read-only.** To let the agent create or change events you need a connector that signs in (see Connecting to a
-  service), which is a different and riskier thing.
+- **Writing.** The agent also gets `calendar_add`, `calendar_update` and `calendar_delete`, which ask first and work on the
+  built-in Talaria calendar (with optional reminders, scheduled as one-shot jobs and cancelled when the event goes). A feed
+  calendar stays read-only unless it is also given a CalDAV collection to write:
+
+  ```json
+  { "calendars": { "work": { "url_env": "WORK_ICS", "caldav_url": "https://dav.example.com/cal/work/", "username": "me", "password_env": "WORK_DAV_PASSWORD" } } }
+  ```
+
+  Writes are guarded by the server's ETag, so a change made elsewhere since the event was read is refused rather than
+  overwritten. The password stays in its environment variable, out of the config file and the agent's shell.
 
 ## Email (read-only)
 

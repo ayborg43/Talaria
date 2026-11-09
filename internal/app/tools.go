@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 
 	"talaria/internal/agent"
 	"talaria/internal/browser"
@@ -96,6 +97,26 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 	rt.mcp.Register(tools)
 	if rt.cfg.Calendars != nil {
 		calendar.RegisterTools(tools, rt.cfg.Calendars)
+		var bind *calendar.ReminderBinder
+		if !o.NoCron && o.ChatID != 0 {
+			bind = &calendar.ReminderBinder{
+				Add: func(e calendar.LocalEvent) (string, error) {
+					at := e.Start.Add(-time.Duration(e.RemindMins) * time.Minute)
+					j, err := rt.Cron.Add(cron.Job{
+						Name:     "Reminder: " + e.Title,
+						Schedule: "@at " + at.UTC().Format(time.RFC3339),
+						Prompt:   fmt.Sprintf("Remind the user about %q at %s. Keep it to one short line.", e.Title, e.Start.Format("15:04")),
+						Gateway:  o.Gateway, ChatID: o.ChatID,
+					})
+					if err != nil {
+						return "", err
+					}
+					return j.ID, nil
+				},
+				Remove: func(jobID string) error { return rt.Cron.Remove(jobID, "", 0) },
+			}
+		}
+		calendar.RegisterWriteTools(tools, rt.cfg.Calendars, bind)
 	}
 	if rt.cfg.Mail != nil {
 		mailbox.RegisterTools(tools, rt.cfg.Mail)
