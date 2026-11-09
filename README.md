@@ -101,6 +101,11 @@ Provider details worth knowing:
 
 Streaming is on in the interactive CLI, in `-p`, and in Telegram and Discord chats (see below). Scheduled jobs wait for the full reply.
 
+For current information the agent has `web_search` (keyless DuckDuckGo HTML results: titles, addresses, snippets) beside `web_fetch`
+(read one page in full). The system prompt tells it to answer what was actually asked, to search and cite sources for news instead of
+promising a search or reciting a knowledge-cutoff date, and an empty final answer from the model is asked once more, then reported
+to you as an empty answer rather than shown as a bare "(no output)".
+
 ## Learning
 
 State lives in `~/.talaria` (override with `TALARIA_HOME`):

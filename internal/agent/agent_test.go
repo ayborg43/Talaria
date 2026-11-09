@@ -233,3 +233,36 @@ func TestTheLoopKeepsTheModelsReasoningOnItsMessages(t *testing.T) {
 		t.Fatalf("every earlier assistant message keeps its reasoning: %q", got)
 	}
 }
+
+func TestAnEmptyReplyIsRetriedOnceThenAnsweredHonestly(t *testing.T) {
+	p := &scripted{replies: []provider.Message{
+		{Role: provider.RoleAssistant, Content: ""},
+		{Role: provider.RoleAssistant, Content: "recovered"},
+	}}
+	a := newAgent(p)
+	out, err := a.Run(context.Background(), "hi")
+	if err != nil || out != "recovered" {
+		t.Fatalf("%q, %v", out, err)
+	}
+	if len(p.seen) != 2 {
+		t.Fatalf("the model was asked %d times, want 2", len(p.seen))
+	}
+	for _, m := range a.Transcript() {
+		if m.Role == provider.RoleAssistant && strings.TrimSpace(m.Content) == "" {
+			t.Fatalf("the empty reply was kept in history: %+v", a.Transcript())
+		}
+	}
+
+	p2 := &scripted{replies: []provider.Message{
+		{Role: provider.RoleAssistant, Content: "  "},
+		{Role: provider.RoleAssistant, Content: ""},
+	}}
+	b := newAgent(p2)
+	out, err = b.Run(context.Background(), "hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "empty answer") {
+		t.Fatalf("a twice-empty reply was not explained to the user: %q", out)
+	}
+}

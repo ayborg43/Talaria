@@ -57,7 +57,7 @@ var knownTools = map[string]bool{
 	"task_cancel":     true, "task_list": true, "task_start": true,
 	"vault_list":   true,
 	"watch_create": true, "watch_list": true, "watch_update": true,
-	"web_fetch":  true,
+	"web_fetch": true, "web_search": true,
 	"write_file": true,
 	"x_mentions": true, "x_post": true,
 }

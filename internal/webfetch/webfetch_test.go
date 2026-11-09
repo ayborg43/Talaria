@@ -44,3 +44,38 @@ func TestFetchRefusesWhatItShouldNot(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchReturnsTitlesAddressesAndSnippets(t *testing.T) {
+	testAllowPrivate = true
+	defer func() { testAllowPrivate = false }()
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("q") != "nigeria politics today" {
+			t.Errorf("query not passed through: %s", r.URL)
+		}
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><body>
+			<div class="result"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fnews&amp;rut=abc">Big <b>Story</b></a>
+			<a class="result__snippet" href="//duckduckgo.com/l/?uddg=x">What happened, in brief.</a></div>
+			<div class="result"><a class="result__a" href="https://other.example/item">Second</a>
+			<a class="result__snippet">Another summary.</a></div>
+			<div class="result"><a class="result__a" href="https://third.example/">Third has no snippet</a></div>
+		</body></html>`))
+	}))
+	defer s.Close()
+	old := searchEndpoint
+	searchEndpoint = s.URL
+	defer func() { searchEndpoint = old }()
+
+	out, err := Search(context.Background(), "nigeria politics today")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Big Story", "https://example.com/news", "What happened, in brief.", "Second", "https://other.example/item", "Third has no snippet"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+	if _, err := Search(context.Background(), "  "); err == nil {
+		t.Fatal("an empty search was run")
+	}
+}

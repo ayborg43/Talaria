@@ -415,3 +415,47 @@ func TestAnAgentIsGivenTheSinkThatShowsWhoIsWorking(t *testing.T) {
 		t.Fatal("an agent with no sink has one")
 	}
 }
+
+func TestTheModelIsToldToReportOnlyWhatItsToolsDid(t *testing.T) {
+	var system string
+	p := chatFunc(func(_ context.Context, req provider.Request) (provider.Message, error) {
+		system = req.Messages[0].Content
+		return provider.Message{Role: provider.RoleAssistant, Content: "ok"}, nil
+	})
+	rt := Open(Config{Home: t.TempDir(), Provider: p, Model: "m"})
+	defer rt.Close()
+	if _, err := rt.NewAgent(AgentOptions{}).Run(context.Background(), "hi"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Never narrate a tool call you did not make",
+		"quote the ID or address the tool returned",
+		"If a tool was denied, failed, or never ran, say so plainly",
+	} {
+		if !strings.Contains(system, want) {
+			t.Errorf("system prompt is missing the grounding rule %q\n%s", want, system)
+		}
+	}
+}
+
+func TestTheModelIsToldToAnswerWhatWasAskedAndSearchHonestly(t *testing.T) {
+	var system string
+	p := chatFunc(func(_ context.Context, req provider.Request) (provider.Message, error) {
+		system = req.Messages[0].Content
+		return provider.Message{Role: provider.RoleAssistant, Content: "ok"}, nil
+	})
+	rt := Open(Config{Home: t.TempDir(), Provider: p, Model: "m"})
+	defer rt.Close()
+	if _, err := rt.NewAgent(AgentOptions{}).Run(context.Background(), "hello"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"A greeting gets a greeting",
+		"web_search",
+		"Never recite a knowledge-cutoff date",
+	} {
+		if !strings.Contains(system, want) {
+			t.Errorf("system prompt is missing the honesty rule %q\n%s", want, system)
+		}
+	}
+}

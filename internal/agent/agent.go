@@ -206,6 +206,7 @@ func (a *Agent) Run(ctx context.Context, input string) (string, error) {
 	if steps <= 0 {
 		steps = defaultMaxSteps
 	}
+	emptyRetried := false
 
 	for i := 0; i < steps; i++ {
 		if a.BeforeModel != nil {
@@ -228,6 +229,19 @@ func (a *Agent) Run(ctx context.Context, input string) (string, error) {
 		metrics.Observe("talaria_model_call", time.Since(began))
 		if err != nil {
 			return "", err
+		}
+		if len(reply.ToolCalls) == 0 && strings.TrimSpace(reply.Content) == "" {
+			// An empty final answer is a model hiccup, not a reply: ask once more, without keeping
+			// the empty message in history. Twice empty is reported as what it is, so the user sees
+			// an explanation instead of a bare "(no output)".
+			if !emptyRetried {
+				emptyRetried = true
+				continue
+			}
+			const msg = "The model returned an empty answer twice, so there is nothing to show. Try sending that again, or switch model in Settings."
+			reply.Content = msg
+			a.add(reply)
+			return msg, nil
 		}
 		a.add(reply)
 		if len(reply.ToolCalls) == 0 {

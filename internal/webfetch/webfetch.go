@@ -139,50 +139,60 @@ func isNumPart(s string) bool {
 
 // Fetch returns the page's text. Only public http(s) pages are fetched.
 func Fetch(ctx context.Context, raw string) (string, error) {
+	body, err := fetchBody(ctx, raw)
+	if err != nil {
+		return "", err
+	}
+	return textify(body), nil
+}
+
+// fetchBody returns a public page's raw body, with the same address checks as Fetch.
+func fetchBody(ctx context.Context, raw string) ([]byte, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "", fmt.Errorf("%q is not a public web address (give a full http(s) URL)", raw)
+		return nil, fmt.Errorf("%q is not a public web address (give a full http(s) URL)", raw)
 	}
 	if u.User != nil {
-		return "", errors.New("addresses with a user name or password in them are not fetched: they put a login in the URL")
+		return nil, errors.New("addresses with a user name or password in them are not fetched: they put a login in the URL")
 	}
 	if err := checkHost(ctx, u.Hostname()); err != nil {
-		return "", err
+		return nil, err
 	}
 	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(rctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("User-Agent", "Talaria/1 (watch)")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/*;q=0.9,*/*;q=0.1")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("the page could not be read: %w", err)
+		return nil, fmt.Errorf("the page could not be read: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return "", fmt.Errorf("the page answered %s", resp.Status)
+		return nil, fmt.Errorf("the page answered %s", resp.Status)
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "" {
 		main := strings.ToLower(strings.TrimSpace(strings.SplitN(ct, ";", 2)[0]))
 		if !strings.HasPrefix(main, "text/") && !strings.Contains(main, "html") && !strings.Contains(main, "xml") && !strings.Contains(main, "json") {
-			return "", fmt.Errorf("only readable pages are fetched, not %s", main)
+			return nil, fmt.Errorf("only readable pages are fetched, not %s", main)
 		}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxBytes+1))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if len(body) > MaxBytes {
-		return "", fmt.Errorf("the page is too big to watch (%d KB at most)", MaxBytes>>10)
+		return nil, fmt.Errorf("the page is too big to watch (%d KB at most)", MaxBytes>>10)
 	}
-	return textify(body), nil
+	return body, nil
 }
 
-// RegisterTools adds the page reader: public pages only, no approval needed.
+// RegisterTools adds the page reader and the search: public pages only, no approval needed.
 func RegisterTools(r *tool.Registry) {
+	registerSearch(r)
 	r.Register(tool.Tool{
 		Name: "web_fetch",
 		Description: "Read one public web page as text: headlines, prices, availability. " +

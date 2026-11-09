@@ -410,8 +410,8 @@ func TestBadCallsAndOddAnswers(t *testing.T) {
 		}
 		return got
 	}
-	if got := answering("  \n "); got != "(the subagent finished without giving a result)" {
-		t.Fatalf("an empty answer gets a placeholder: %q", got)
+	if got := answering("  \n "); !strings.Contains(got, "empty answer") {
+		t.Fatalf("an empty answer is explained, not passed on blank: %q", got)
 	}
 	long := answering(strings.Repeat("é", 20000)) // 40 KB of two-byte characters
 	if !utf8.ValidString(long) || !strings.Contains(long, "cut here") || len(long) > maxResult+200 {
