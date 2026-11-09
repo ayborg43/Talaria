@@ -7,6 +7,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -54,6 +55,13 @@ type Transport interface {
 type ToolWatcher interface {
 	ToolStart(chat int64, name string)
 	ToolEnd(chat int64, name, result string)
+}
+
+// ArtifactWatcher is an optional extra for a ToolWatcher that can show a result as what it is: a list of mail, a
+// plan, a document. ToolArtifact is called with a tool's typed record (see tool.Result.Artifact) just before
+// ToolEnd for the same call.
+type ArtifactWatcher interface {
+	ToolArtifact(chat int64, name string, artifact json.RawMessage)
 }
 
 // RunWatcher is an optional extra for a Transport that shows when the agent is working on a chat's message:

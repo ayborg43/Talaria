@@ -21,19 +21,19 @@ func RegisterTools(r *tool.Registry) {
 		Schema: json.RawMessage(`{"type":"object","properties":{
 			"csv":{"type":"string","description":"the transaction CSV text"}},
 			"required":["csv"]}`),
-		Run: func(_ context.Context, raw json.RawMessage) (string, error) {
+		RunRich: func(_ context.Context, raw json.RawMessage) (tool.Result, error) {
 			var a struct {
 				CSV string `json:"csv"`
 			}
 			if err := json.Unmarshal(raw, &a); err != nil {
-				return "", err
+				return tool.Result{}, err
 			}
 			if strings.TrimSpace(a.CSV) == "" {
-				return "", errors.New("paste the transaction CSV first")
+				return tool.Result{}, errors.New("paste the transaction CSV first")
 			}
 			s, err := Analyze(a.CSV)
 			if err != nil {
-				return "", err
+				return tool.Result{}, err
 			}
 			var b strings.Builder
 			fmt.Fprintf(&b, "Imported %d transactions (%s to %s).\n", s.Count, s.Period.From, s.Period.To)
@@ -45,7 +45,12 @@ func RegisterTools(r *tool.Registry) {
 				}
 				fmt.Fprintf(&b, "%s %.2f. ", c.Name, c.Amount)
 			}
-			return strings.TrimSpace(b.String()), nil
+			cats := s.Categories
+			if len(cats) > 12 { // the card shows the biggest; the text says how many there were
+				cats = cats[:12]
+			}
+			return tool.Result{Text: strings.TrimSpace(b.String()), Artifact: tool.Artifact("spending", map[string]any{
+				"count": s.Count, "from": s.Period.From, "to": s.Period.To, "spending": s.Spending, "income": s.Income, "saved": s.Saved, "categories": cats})}, nil
 		},
 	})
 }

@@ -102,7 +102,12 @@ func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
 	if env != nil {
 		r.rt.UseEnvironment(a, env)
 	}
-	return a.Run(ctx, prompt)
+	reply, err := a.Run(ctx, prompt)
+	if err != nil && a.Acted() {
+		// It had already done something. The scheduler tries a failed one-shot again; this one it must not.
+		return reply, cron.Acted(err)
+	}
+	return reply, err
 }
 
 func (r *jobRunner) backend(name string) (chat.Backend, error) {

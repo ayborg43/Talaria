@@ -321,86 +321,75 @@ async function openDoc(id, f) {
 }
 
 // ---------- results shown as what they are ----------
-function fileIdIn(text) { const m = /\/api\/files\/([0-9a-fA-F]+)/.exec(text) || /kept the copy as file ([0-9a-fA-F]+)/.exec(text); return m ? m[1] : ''; }
-function docCard(id, title, sub) {
-  return h('div', { class: 'rich doc' }, h('span', { class: 'tag', text: 'PDF' }),
-    h('span', { class: 'grow' }, h('span', { class: 't', text: title }), sub ? h('span', { class: 's', text: sub }) : null),
-    h('button', { class: 'btn small', type: 'button', text: 'View', onclick: () => openDoc(id) }),
-    h('a', { class: 'btn small', href: '/api/files/' + id, download: '', text: 'Save' }));
+// A tool that knows what its result is says so in a typed record beside the text (m.artifact: a kind and its
+// fields), and the card is drawn from that. A result with no record (an older conversation, a tool that gives
+// none) is read out of the text instead, by the readers at the end of this section, into the same shape.
+function docCard(d) {
+  return h('div', { class: 'rich doc' }, h('span', { class: 'tag', text: /image/.test(d.mime || '') ? 'IMG' : 'PDF' }),
+    h('span', { class: 'grow' }, h('span', { class: 't', text: d.name || 'Document' }), h('span', { class: 's', text: d.size ? fmtSize(d.size) : 'Kept in Documents' })),
+    h('button', { class: 'btn small', type: 'button', text: 'View', onclick: () => openDoc(d.id) }),
+    h('a', { class: 'btn small', href: '/api/files/' + d.id, download: '', text: 'Save' }));
 }
-function mailRows(text) {
-  const rows = [];
-  for (const line of text.split('\n')) {
-    const m = /^id (\d+) ([* ]) (.+?) {2}From: (.*?) {2}Subject: (.*)$/.exec(line);
-    if (m) rows.push({ id: m[1], unread: m[2] === '*', when: m[3], from: m[4], subject: m[5] });
-  }
-  if (!rows.length) return null;
+function mailListCard(d) {
+  const items = d.items || [];
+  if (!items.length) return null;
   const box = h('div', { class: 'rich rows' });
-  rows.slice(0, 8).forEach((r, i) => {
-    const name = r.from.replace(/\s*<.*>$/, '') || r.from;
+  items.slice(0, 8).forEach((r, i) => {
+    const from = r.from || '(unknown)', name = from.replace(/\s*<.*>$/, '') || from;
     const av = h('span', { class: 'avatar', text: (name.trim()[0] || '?').toUpperCase() });
     av.style.background = TINTS[i % 4][0]; av.style.color = TINTS[i % 4][1];
     box.append(h('button', { class: 'row', type: 'button', onclick: () => sendText('Read message ' + r.id + ' and tell me what it says.') }, av,
-      h('span', { class: 'grow' }, h('span', { class: 't', text: name }), h('span', { class: 's', text: r.subject })),
-      h('span', { class: 'when' + (r.unread ? ' state-info' : ''), text: r.when })));
+      h('span', { class: 'grow' }, h('span', { class: 't', text: name }), h('span', { class: 's', text: r.subject || '(no subject)' })),
+      h('span', { class: 'when' + (r.unread ? ' state-info' : ''), text: r.when || '' })));
   });
-  if (rows.length > 8) box.append(h('div', { class: 'field-note', text: '+' + (rows.length - 8) + ' more in the full result.' }));
+  if (items.length > 8) box.append(h('div', { class: 'field-note', text: '+' + (items.length - 8) + ' more in the full result.' }));
   return box;
 }
-function mailCard(text) {
-  const from = /^From: (.*)$/m.exec(text), subject = /^Subject: (.*)$/m.exec(text), id = /^Message (\d+)$/m.exec(text);
-  if (!from || !subject) return null;
-  const start = text.indexOf('---\n'), end = text.indexOf('\n--- end of message ---');
-  let bodyText = start >= 0 && end > start ? text.slice(start + 4, end).trim() : '';
-  if (bodyText.length > 420) bodyText = bodyText.slice(0, 420) + '…';
-  const name = from[1].replace(/\s*<.*>$/, '') || from[1];
+function mailCard(d) {
+  if (!d.from && !d.subject) return null;
+  const from = d.from || '(unknown)', name = from.replace(/\s*<.*>$/, '') || from;
   const card = h('div', { class: 'rich mail' }, h('div', { class: 'row' },
     h('span', { class: 'avatar tint', text: (name.trim()[0] || '?').toUpperCase() }),
-    h('span', { class: 'grow' }, h('span', { class: 't', text: subject[1] }), h('span', { class: 's', text: from[1] }))),
-  bodyText ? h('div', { class: 'mailbody', text: bodyText }) : null);
-  if (id) card.append(h('div', { class: 'btn-row' },
-    h('button', { class: 'btn small', type: 'button', text: 'Draft a reply', onclick: () => sendText('Draft a reply to message ' + id[1] + ' and show it to me before anything is sent.') }),
-    h('button', { class: 'btn small', type: 'button', text: 'Whole thread', onclick: () => sendText('Show me the whole conversation of message ' + id[1] + '.') })));
+    h('span', { class: 'grow' }, h('span', { class: 't', text: d.subject || '(no subject)' }), h('span', { class: 's', text: from }))),
+  d.excerpt ? h('div', { class: 'mailbody', text: d.excerpt }) : null,
+  (d.attachments || []).length ? h('div', { class: 'field-note', text: 'Attached: ' + d.attachments.join(', ') }) : null);
+  if (d.id) card.append(h('div', { class: 'btn-row' },
+    h('button', { class: 'btn small', type: 'button', text: 'Draft a reply', onclick: () => sendText('Draft a reply to message ' + d.id + ' and show it to me before anything is sent.') }),
+    h('button', { class: 'btn small', type: 'button', text: 'Whole thread', onclick: () => sendText('Show me the whole conversation of message ' + d.id + '.') })));
   return card;
 }
-function pageCard(text) {
-  const title = /^Page: (.*)$/m.exec(text), url = /^URL: (.*)$/m.exec(text);
-  if (!url) return null;
-  let host = url[1];
-  try { host = new URL(url[1]).host || url[1]; } catch { /* keep what was given */ }
+function pageCard(d) {
+  if (!d.url) return null;
+  let host = d.url;
+  try { host = new URL(d.url).host || d.url; } catch { /* keep what was given */ }
   return h('div', { class: 'rich page' }, h('span', { class: 'tag', text: 'WEB' }),
-    h('span', { class: 'grow' }, h('span', { class: 't', text: (title && title[1]) || host }), h('span', { class: 's mono', text: url[1] })),
+    h('span', { class: 'grow' }, h('span', { class: 't', text: d.title || host }), h('span', { class: 's mono', text: d.url })),
     h('button', { class: 'btn small', type: 'button', text: 'Take control', onclick: () => openComputer('browser') }));
 }
-function planCard(text) {
-  const head = /^(?:updated\.\n)?Goal (\S+): (.*) \[(\w+)\]$/m.exec(text);
-  if (!head) return null;
-  const steps = [...text.matchAll(/^ {2}\d+\. \[([ x])\] (.*)$/gm)].map((m) => ({ done: m[1] === 'x', text: m[2] }));
-  const next = /^Next: (.*)$/m.exec(text);
-  const done = steps.filter((s) => s.done).length;
+function planCard(d) {
+  if (!d.title) return null;
+  const steps = d.steps || [], done = steps.filter((s) => s.done).length, status = d.status || 'open';
   const card = h('div', { class: 'rich plan' }, h('div', { class: 'row' }, h('span', { class: 'tag goal', text: 'GOAL' }),
-    h('span', { class: 'grow' }, h('span', { class: 't', text: head[2] }), h('span', { class: 's', text: steps.length ? done + ' of ' + steps.length + ' steps done' : head[3] })),
-    h('span', { class: 'pill ' + (head[3] === 'open' ? 'ok' : 'brass'), text: head[3].toUpperCase() })));
+    h('span', { class: 'grow' }, h('span', { class: 't', text: d.title }), h('span', { class: 's', text: steps.length ? done + ' of ' + steps.length + ' steps done' : status })),
+    h('span', { class: 'pill ' + (status === 'open' ? 'ok' : 'brass'), text: status.toUpperCase() })));
   if (steps.length) {
     const bar = h('i'); bar.style.width = Math.round((done / steps.length) * 100) + '%';
     card.append(h('div', { class: 'progress' }, bar), h('ul', { class: 'plansteps' }, steps.map((s) => h('li', { class: s.done ? 'done' : '' }, h('span', { class: 'box', 'aria-hidden': 'true' }, s.done ? icon('check') : null), s.text))));
   }
-  if (next) card.append(h('div', { class: 'field-note', text: 'Next: ' + next[1] }));
+  if (d.next) card.append(h('div', { class: 'field-note', text: 'Next: ' + d.next }));
   return card;
 }
-function spendingCard(text) {
-  const head = /^Imported (\d+) transactions \((.*?) to (.*?)\)\.\nSpending ([\d.]+), income ([\d.]+), saved (-?[\d.]+)\./.exec(text);
-  if (!head) return null;
-  const tail = text.slice(head[0].length);
-  const cats = [...tail.matchAll(/([^.\d][^.]*?) (\d+\.\d\d)\.(?: |$)/g)].map((m) => ({ name: m[1].trim(), amount: Number(m[2]) })).filter((c) => !/^\+\d+ more/.test(c.name));
+function spendingCard(d) {
+  if (d.spending == null) return null;
+  const cats = d.categories || [];
   const amount = (n) => Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const stat = (label, value, cls) => h('div', { class: 'stat' }, h('span', { text: label }), h('b', { class: cls || '', text: amount(value) }));
   const card = h('div', { class: 'rich spend' },
-    h('div', { class: 'row' }, h('span', { class: 'tag time', text: '$' }), h('span', { class: 'grow' }, h('span', { class: 't', text: 'Spending summary' }), h('span', { class: 's', text: head[1] + ' transactions · ' + head[2] + ' to ' + head[3] }))),
-    h('div', { class: 'stats' }, stat('Spent', head[4]), stat('Income', head[5]), stat('Saved', head[6], Number(head[6]) >= 0 ? 'state-ok' : 'state-bad')));
-  const max = Math.max(1, ...cats.map((c) => c.amount));
-  for (const c of cats) {
-    const fill = h('i'); fill.style.width = Math.max(2, Math.round((c.amount / max) * 100)) + '%';
+    h('div', { class: 'row' }, h('span', { class: 'tag time', text: '$' }), h('span', { class: 'grow' }, h('span', { class: 't', text: 'Spending summary' }), h('span', { class: 's', text: d.count + ' transactions · ' + d.from + ' to ' + d.to }))),
+    h('div', { class: 'stats' }, stat('Spent', d.spending), stat('Income', d.income), stat('Saved', d.saved, Number(d.saved) >= 0 ? 'state-ok' : 'state-bad')));
+  const max = Math.max(1, ...cats.map((c) => Number(c.amount) || 0));
+  for (const c of cats.slice(0, 8)) {
+    const fill = h('i'); fill.style.width = Math.max(2, Math.round(((Number(c.amount) || 0) / max) * 100)) + '%';
     card.append(h('div', { class: 'cat' }, h('span', { class: 'catname', text: c.name }), h('div', { class: 'progress' }, fill), h('span', { class: 'mono catamt', text: amount(c.amount) })));
   }
   const goal = h('input', { type: 'number', min: '1', step: '1', inputmode: 'decimal', 'aria-label': 'Amount to save each month', placeholder: 'Save each month' });
@@ -411,20 +400,51 @@ function spendingCard(text) {
   } })));
   return card;
 }
-function richResult(t) {
-  const text = t.result || '';
-  try {
-    if (t.tool === 'email_list') return mailRows(text);
-    if (t.tool === 'email_read') return mailCard(text);
-    if (/^browser_(open|snapshot|click|type|press|select|scroll|back|wait)$/.test(t.tool)) return pageCard(text);
-    if (/^goal_(create|get|update)$/.test(t.tool)) return planCard(text);
-    if (t.tool === 'finance_import') return spendingCard(text);
-    if (/^(files_make_pdf|pdf_form_fill|email_attachment)$/.test(t.tool)) {
-      const id = fileIdIn(text);
-      if (id) return docCard(id, t.tool === 'pdf_form_fill' ? 'Filled form' : t.tool === 'email_attachment' ? 'Attachment' : 'Document', text.split('\n')[0].slice(0, 120));
+const CARDS = { mail_list: mailListCard, mail: mailCard, page: pageCard, plan: planCard, spending: spendingCard, document: (d) => (d.id ? docCard(d) : null) };
+
+// The readers: the same records, taken from a result's text when no record came with it.
+function readArtifact(tool, text) {
+  let m;
+  if (tool === 'email_list') {
+    const items = [];
+    for (const line of text.split('\n')) {
+      if ((m = /^id (\d+) ([* ]) (.+?) {2}From: (.*?) {2}Subject: (.*)$/.exec(line))) items.push({ id: m[1], unread: m[2] === '*', when: m[3], from: m[4], subject: m[5] });
     }
-  } catch { /* a result that does not parse is shown as text, as before */ }
+    return { kind: 'mail_list', items };
+  }
+  if (tool === 'email_read') {
+    const from = /^From: (.*)$/m.exec(text), subject = /^Subject: (.*)$/m.exec(text), id = /^Message (\d+)$/m.exec(text);
+    const start = text.indexOf('---\n'), end = text.indexOf('\n--- end of message ---');
+    let excerpt = start >= 0 && end > start ? text.slice(start + 4, end).trim() : '';
+    if (excerpt.length > 420) excerpt = excerpt.slice(0, 420) + '…';
+    return { kind: 'mail', id: id && id[1], from: from && from[1], subject: subject && subject[1], excerpt };
+  }
+  if (/^browser_(open|snapshot|click|type|press|select|scroll|back|wait)$/.test(tool)) {
+    const title = /^Page: (.*)$/m.exec(text), url = /^URL: (.*)$/m.exec(text);
+    return { kind: 'page', title: title && title[1], url: url && url[1] };
+  }
+  if (/^goal_(create|get|update)$/.test(tool)) {
+    if (!(m = /^(?:updated\.\n)?Goal (\S+): (.*) \[(\w+)\]$/m.exec(text))) return null;
+    const next = /^Next: (.*)$/m.exec(text);
+    return { kind: 'plan', id: m[1], title: m[2], status: m[3], next: next && next[1], steps: [...text.matchAll(/^ {2}\d+\. \[([ x])\] (.*)$/gm)].map((x) => ({ done: x[1] === 'x', text: x[2] })) };
+  }
+  if (tool === 'finance_import') {
+    if (!(m = /^Imported (\d+) transactions \((.*?) to (.*?)\)\.\nSpending ([\d.]+), income ([\d.]+), saved (-?[\d.]+)\./.exec(text))) return null;
+    const categories = [...text.slice(m[0].length).matchAll(/([^.\d][^.]*?) (\d+\.\d\d)\.(?: |$)/g)].map((x) => ({ name: x[1].trim(), amount: Number(x[2]) })).filter((c) => !/^\+\d+ more/.test(c.name));
+    return { kind: 'spending', count: m[1], from: m[2], to: m[3], spending: m[4], income: m[5], saved: m[6], categories };
+  }
+  if (/^(files_make_pdf|pdf_form_fill|email_attachment)$/.test(tool)) {
+    if (!(m = /\/api\/files\/([0-9a-fA-F]+)/.exec(text) || /kept the copy as file ([0-9a-fA-F]+)/.exec(text) || /\bfile ([0-9a-f]{8,64})\b/.exec(text))) return null;
+    return { kind: 'document', id: m[1], name: tool === 'pdf_form_fill' ? 'Filled form' : tool === 'email_attachment' ? 'Attachment' : 'Document' };
+  }
   return null;
+}
+function richResult(t) {
+  try {
+    const d = t.artifact && t.artifact.kind ? t.artifact : readArtifact(t.tool, t.result || '');
+    const draw = d && CARDS[d.kind];
+    return draw ? draw(d) : null;
+  } catch { return null; } // a record that does not fit is shown as text, as before
 }
 
 // ---------- conversations ----------

@@ -34,6 +34,17 @@ func Register(r *tool.Registry, m *Manager, owner string) {
 	t := &toolset{m: m, owner: owner}
 	reg := func(tl tool.Tool) { // everything a page returns is text from outside
 		tl.Untrusted = true
+		if run := tl.Run; run != nil && tl.RunRich == nil && tl.Name != Prefix+"close" {
+			// A tool that returns the page also says which page that is, as a typed record, so a front end can
+			// name it and offer to take control without reading it back out of the listing.
+			tl.RunRich = func(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
+				text, err := run(ctx, raw)
+				if err != nil {
+					return tool.Result{}, err
+				}
+				return tool.Result{Text: text, Artifact: pageArtifact(text)}, nil
+			}
+		}
 		r.Register(tl)
 	}
 	obj := func(props string, required ...string) json.RawMessage {
@@ -514,4 +525,22 @@ func (t *toolset) describeSelect(raw json.RawMessage) string {
 		return fmt.Sprintf("choose %q in element %d (not in the last page listing)", a.Value, a.Ref)
 	}
 	return fmt.Sprintf("choose %q in %s on %s", clip(a.Value, 80), Brief(e), clip(SafeURL(url), 120))
+}
+
+// pageArtifact reads the page's title and address from the top of a listing Render wrote ("Page: ...", then
+// "URL: ..."), the two lines every listing begins with.
+func pageArtifact(listing string) json.RawMessage {
+	var title, addr string
+	for _, line := range strings.SplitN(listing, "\n", 6) {
+		if v, ok := strings.CutPrefix(line, "Page: "); ok && title == "" {
+			title = v
+		}
+		if v, ok := strings.CutPrefix(line, "URL: "); ok && addr == "" {
+			addr = v
+		}
+	}
+	if addr == "" {
+		return nil
+	}
+	return tool.Artifact("page", map[string]any{"title": title, "url": addr})
 }

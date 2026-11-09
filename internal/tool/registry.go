@@ -62,6 +62,24 @@ func (t Tool) RiskOf(args json.RawMessage) Risk {
 type Result struct {
 	Text   string
 	Images []provider.Image
+	// Artifact, if set, is the same result as a small typed record: a JSON object with a "kind" (mail_list,
+	// page, plan, spending, document, ...) and that kind's fields. It is for a front end to show the result as
+	// what it is without reading it back out of Text. The model is given Text only, never this.
+	Artifact json.RawMessage
+}
+
+// Artifact builds a Result's typed record from a kind and its fields. A value that cannot be written as JSON
+// gives no record, which leaves Text to stand alone.
+func Artifact(kind string, fields map[string]any) json.RawMessage {
+	rec := map[string]any{"kind": kind}
+	for k, v := range fields {
+		rec[k] = v
+	}
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 // Execute runs the tool by whichever of Run and RunRich it has.

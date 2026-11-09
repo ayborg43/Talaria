@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -52,6 +53,30 @@ func RegisterTools(r *tool.Registry, s *Service) {
 			}
 			return s.List(ctx, Query{Folder: a.Folder, Days: a.Days, From: a.From, Text: a.Query, Unread: a.Unread, Limit: a.Limit})
 		},
+		RunRich: func(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
+			var a struct {
+				Days   int
+				Unread bool
+				From   string
+				Query  string
+				Folder string
+				Limit  int
+			}
+			if len(raw) > 0 {
+				if err := json.Unmarshal(raw, &a); err != nil {
+					return tool.Result{}, err
+				}
+			}
+			text, list, err := s.listRich(ctx, Query{Folder: a.Folder, Days: a.Days, From: a.From, Text: a.Query, Unread: a.Unread, Limit: a.Limit})
+			if err != nil {
+				return tool.Result{}, err
+			}
+			items := make([]map[string]any, 0, len(list))
+			for _, m := range list {
+				items = append(items, map[string]any{"id": m.UID, "from": m.From, "subject": m.Subject, "when": s.when(m.Date), "unread": m.Unread})
+			}
+			return tool.Result{Text: text, Artifact: tool.Artifact("mail_list", map[string]any{"folder": a.Folder, "items": items})}, nil
+		},
 	})
 	r.Register(tool.Tool{
 		Name: "email_read",
@@ -70,6 +95,29 @@ func RegisterTools(r *tool.Registry, s *Service) {
 				return "", err
 			}
 			return s.Show(ctx, a.Folder, a.ID)
+		},
+		RunRich: func(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
+			var a struct {
+				ID     int64
+				Folder string
+			}
+			if err := json.Unmarshal(raw, &a); err != nil {
+				return tool.Result{}, err
+			}
+			m, err := s.read(ctx, a.Folder, a.ID)
+			if err != nil {
+				return tool.Result{}, err
+			}
+			names := make([]string, 0, len(m.Attachments))
+			for _, at := range m.Attachments {
+				names = append(names, plainLine(at.Name, 80))
+			}
+			excerpt := m.Body
+			if r := []rune(excerpt); len(r) > 420 {
+				excerpt = string(r[:420]) + "…"
+			}
+			return tool.Result{Text: Format(m), Artifact: tool.Artifact("mail", map[string]any{
+				"id": m.UID, "folder": a.Folder, "from": m.From, "to": m.To, "subject": m.Subject, "date": m.Date, "excerpt": excerpt, "attachments": names})}, nil
 		},
 	})
 	r.Register(tool.Tool{
@@ -96,15 +144,29 @@ func checkArg(name, v string) (string, error) {
 
 // List is the text email_list returns, and `tal email` prints.
 func (s *Service) List(ctx context.Context, q Query) (string, error) {
+	text, _, err := s.listRich(ctx, q)
+	return text, err
+}
+
+// listRich is List with the messages themselves, for a front end to show as a list.
+func (s *Service) listRich(ctx context.Context, q Query) (string, []Summary, error) {
+	text, list, err := s.list(ctx, q)
+	if err != nil {
+		return "", nil, err
+	}
+	return text, list, nil
+}
+
+func (s *Service) list(ctx context.Context, q Query) (string, []Summary, error) {
 	var err error
 	if q.Folder, err = checkArg("folder", q.Folder); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if q.From, err = checkArg("from", q.From); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if q.Text, err = checkArg("query", q.Text); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	switch {
 	case q.Days == 0 && (q.From != "" || q.Text != ""):
@@ -112,19 +174,19 @@ func (s *Service) List(ctx context.Context, q Query) (string, error) {
 	case q.Days == 0:
 		q.Days = defaultDays
 	case q.Days < 0 || q.Days > maxAge:
-		return "", fmt.Errorf("days must be between 1 and %d", maxAge)
+		return "", nil, fmt.Errorf("days must be between 1 and %d", maxAge)
 	}
 	switch {
 	case q.Limit == 0:
 		q.Limit = defaultLimit
 	case q.Limit < 0 || q.Limit > maxLimit:
-		return "", fmt.Errorf("limit must be between 1 and %d", maxLimit)
+		return "", nil, fmt.Errorf("limit must be between 1 and %d", maxLimit)
 	}
 	list, total, err := s.Search(ctx, q)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return s.formatList(list, total, q), nil
+	return s.formatList(list, total, q), list, nil
 }
 
 func (s *Service) when(t time.Time) string {
@@ -175,18 +237,23 @@ func (s *Service) formatList(list []Summary, total int, q Query) string {
 
 // Show is the text email_read returns.
 func (s *Service) Show(ctx context.Context, folder string, id int64) (string, error) {
-	folder, err := checkArg("folder", folder)
-	if err != nil {
-		return "", err
-	}
-	if id <= 0 || id > 1<<32-2 {
-		return "", fmt.Errorf("id must be a message id from email_list")
-	}
-	m, err := s.Read(ctx, folder, uint32(id))
+	m, err := s.read(ctx, folder, id)
 	if err != nil {
 		return "", err
 	}
 	return Format(m), nil
+}
+
+// read checks a message's address as the tools give it, and fetches it.
+func (s *Service) read(ctx context.Context, folder string, id int64) (*Message, error) {
+	folder, err := checkArg("folder", folder)
+	if err != nil {
+		return nil, err
+	}
+	if id <= 0 || id > 1<<32-2 {
+		return nil, fmt.Errorf("id must be a message id from email_list")
+	}
+	return s.Read(ctx, folder, uint32(id))
 }
 
 // Format shows one message.
@@ -342,6 +409,9 @@ func RegisterSendTools(r *tool.Registry, s *Service, resolve FileResolver) {
 	})
 }
 
+// savedRef finds a kept file's id in the reference a FileSaver returned.
+var savedRef = regexp.MustCompile(`\bfile ([0-9a-f]{8,64})\b`)
+
 // RegisterDownloadTool gives the agent email_attachment: download one
 // attachment of one message into the kept files, so files_read or the
 // download link can be used on it. Attachment bytes are fetched only here.
@@ -372,4 +442,23 @@ func RegisterDownloadTool(r *tool.Registry, s *Service, save FileSaver) {
 			return fmt.Sprintf("Saved attachment %q (%d bytes) as %s\n", att.Name, att.Size, ref), nil
 		},
 	})
+	// The same tool, with the kept file as a typed record for a front end. The reference is whatever the file
+	// store's owner chose to call it; where it names a file id, the record carries that id.
+	if t, ok := r.Get("email_attachment"); ok {
+		run := t.Run
+		t.RunRich = func(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
+			text, err := run(ctx, raw)
+			if err != nil {
+				return tool.Result{}, err
+			}
+			res := tool.Result{Text: text}
+			var a struct{ Name string }
+			_ = json.Unmarshal(raw, &a)
+			if m := savedRef.FindStringSubmatch(text); m != nil {
+				res.Artifact = tool.Artifact("document", map[string]any{"id": m[1], "name": plainLine(a.Name, 80)})
+			}
+			return res, nil
+		}
+		r.Register(t)
+	}
 }

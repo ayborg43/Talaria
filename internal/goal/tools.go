@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -52,6 +53,7 @@ func RegisterTools(r *tool.Registry, b Binding) {
 			NeedsApproval: true,
 			Describe:      describeCreate,
 			Run:           b.create,
+			RunRich:       b.withPlan(b.create),
 		})
 	}
 	r.Register(tool.Tool{
@@ -65,6 +67,7 @@ func RegisterTools(r *tool.Registry, b Binding) {
 		Description: "Show one goal in full: objective, plan, progress notes and next step.",
 		Schema:      json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		Run:         b.get,
+		RunRich:     b.withPlan(b.get),
 	})
 	r.Register(tool.Tool{
 		Name: "goal_update",
@@ -92,8 +95,38 @@ func RegisterTools(r *tool.Registry, b Binding) {
 			}
 			return 0
 		},
-		Run: b.update,
+		Run:     b.update,
+		RunRich: b.withPlan(b.update),
 	})
+}
+
+// createdID reads the id out of what create says, which is written a few lines below.
+var createdID = regexp.MustCompile(`^took on goal (\S+) `)
+
+// withPlan runs a goal tool and adds the goal as it now stands, as a typed record: its plan with what is done,
+// for a front end to draw as a checklist rather than read back out of the text.
+func (b Binding) withPlan(run func(context.Context, json.RawMessage) (string, error)) func(context.Context, json.RawMessage) (tool.Result, error) {
+	return func(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
+		text, err := run(ctx, raw)
+		if err != nil {
+			return tool.Result{}, err
+		}
+		res := tool.Result{Text: text}
+		var a struct{ ID string }
+		_ = json.Unmarshal(raw, &a)
+		id := strings.TrimSpace(a.ID)
+		if m := createdID.FindStringSubmatch(text); id == "" && m != nil {
+			id = m[1]
+		}
+		if g, gerr := b.Store.Get(b.Gateway, b.ChatID, id); gerr == nil {
+			steps := make([]map[string]any, 0, len(g.Plan))
+			for _, s := range g.Plan {
+				steps = append(steps, map[string]any{"text": s.Text, "done": s.Done})
+			}
+			res.Artifact = tool.Artifact("plan", map[string]any{"id": g.ID, "title": g.Title, "status": g.Status, "steps": steps, "next": g.Next})
+		}
+		return res, nil
+	}
 }
 
 func describeCreate(raw json.RawMessage) string {

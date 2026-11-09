@@ -16,6 +16,24 @@ import (
 // jobs that must no longer run (for example, their owner lost access).
 var ErrDrop = errors.New("drop job")
 
+// Acted wraps the error of a run that had already changed or sent something before it failed: a command run, a
+// mail sent, a post made. Such a run is never tried again on its own, because whatever it did would be done
+// twice; the user is told so, and may start it again themselves.
+func Acted(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &actedError{err}
+}
+
+type actedError struct{ err error }
+
+func (e *actedError) Error() string { return e.err.Error() }
+func (e *actedError) Unwrap() error { return e.err }
+
+// actedNote is added to what the user is told when such a run fails.
+const actedNote = "\n\nIt had already acted (run a command, changed a file or sent something) before it failed, so I have not tried it again: doing so could do the same thing twice. Start it again yourself if that is safe."
+
 // Silent is the reply a job gives when there is nothing worth reporting.
 const Silent = "[SILENT]"
 
@@ -293,8 +311,15 @@ func (s *Scheduler) runJob(ctx, rctx context.Context, r *run, j Job) {
 		// Shutting down: not a failure of the job. Hand the claim back so it
 		// runs again after the restart, and deliver nothing. A job the run
 		// itself dropped is removed here as it would have been below.
+		var acted *actedError
 		if errors.Is(err, ErrDrop) {
 			if err := s.Store.Remove(j.ID, "", 0); err != nil {
+				s.logf("cron: %v", err)
+			}
+		} else if errors.As(err, &acted) {
+			// It had already acted when the shutdown cut it off: running it again after the restart could do the
+			// same thing twice. It ends here, and is kept with the finished tasks for the user to start again.
+			if err := s.Store.FinishFinal(j.ID, started, "error: stopped by a restart after it had already acted"); err != nil {
 				s.logf("cron: %v", err)
 			}
 		} else if err := s.Store.Release(j.ID); err != nil {
@@ -334,6 +359,8 @@ func (s *Scheduler) runJob(ctx, rctx context.Context, r *run, j Job) {
 		return
 	}
 
+	var acted *actedError
+	final := errors.As(err, &acted) // it did something before failing: one attempt is all it gets
 	status, text := "ok", ""
 	switch {
 	case err != nil && errors.Is(err, context.DeadlineExceeded) && runCtx.Err() != nil:
@@ -347,7 +374,14 @@ func (s *Scheduler) runJob(ctx, rctx context.Context, r *run, j Job) {
 	default:
 		text = say(j, true, strings.TrimSpace(reply))
 	}
-	if err := s.Store.Finish(j.ID, started, status); err != nil {
+	finish := s.Store.Finish
+	if final {
+		finish = s.Store.FinishFinal
+		if text != "" && s.Store.wouldRetry(j) {
+			text += actedNote
+		}
+	}
+	if err := finish(j.ID, started, status); err != nil {
 		s.logf("cron: %v", err)
 	}
 	if text != "" {

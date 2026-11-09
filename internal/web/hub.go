@@ -48,6 +48,9 @@ type Message struct {
 	// Result is a bounded copy of what a finished tool returned, so the page
 	// can show it in an expandable card instead of an opaque chip.
 	Result string `json:"result,omitempty"`
+	// Artifact is the same result as a small typed record (a list of mail, a plan, a document), when the
+	// tool gave one, for the page to draw as what it is. It is bounded, and never markup.
+	Artifact json.RawMessage `json:"artifact,omitempty"`
 	// Approval messages: the token that answers it, only while it is waiting, and whether "always" is offered.
 	Token  string `json:"token,omitempty"`
 	Always bool   `json:"always,omitempty"`
@@ -123,9 +126,10 @@ type Hub struct {
 	recent    []Finished                 // newest last
 	workers   map[int64]*activity.Worker // who is working now
 	lastWork  int64
-	mainID    int64          // the main agent's number while it works
-	tools     map[string]int // tools the main agent is running now, and how many of each
-	seen      time.Time      // when the page last said it was open and in view
+	mainID    int64                        // the main agent's number while it works
+	tools     map[string]int               // tools the main agent is running now, and how many of each
+	arts      map[string][]json.RawMessage // typed records waiting for the end of their call, by tool
+	seen      time.Time                    // when the page last said it was open and in view
 	timers    map[int64]*time.Timer
 	activity  map[int64]int // tool calls and messages per hour, by the hour's Unix time / 3600
 	saveT     *time.Timer
@@ -791,10 +795,38 @@ func (h *Hub) ToolStart(_ int64, name string) {
 	h.noteMain()
 }
 
+// maxArtifact bounds a typed record kept with a message: a few hundred messages are held in memory at once.
+const maxArtifact = 4 << 10
+
+// ToolArtifact keeps a tool's typed record until the end of its call is reported, which is the next thing the
+// agent does.
+func (h *Hub) ToolArtifact(_ int64, name string, artifact json.RawMessage) {
+	if len(artifact) == 0 || len(artifact) > maxArtifact || !json.Valid(artifact) {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.arts == nil {
+		h.arts = map[string][]json.RawMessage{}
+	}
+	if len(h.arts[name]) < 8 { // a call whose end is never reported must not leave these to pile up
+		h.arts[name] = append(h.arts[name], append(json.RawMessage(nil), artifact...))
+	}
+}
+
 func (h *Hub) ToolEnd(_ int64, name, result string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.init()
+	var art json.RawMessage
+	if q := h.arts[name]; len(q) > 0 {
+		art = q[0]
+		if len(q) == 1 {
+			delete(h.arts, name)
+		} else {
+			h.arts[name] = q[1:]
+		}
+	}
 	if h.tools[name] > 1 {
 		h.tools[name]--
 	} else {
@@ -808,6 +840,9 @@ func (h *Hub) ToolEnd(_ int64, name, result string) {
 				m.State = "error"
 			}
 			m.Result = boundResult(result)
+			if m.State == "ok" {
+				m.Artifact = art
+			}
 			if !m.started.IsZero() {
 				m.Ms = h.now().Sub(m.started).Milliseconds()
 			}

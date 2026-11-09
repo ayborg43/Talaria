@@ -1,7 +1,10 @@
 package cron
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -58,5 +61,43 @@ func TestDoneTasksAreBounded(t *testing.T) {
 	}
 	if n := len(s.DoneTasks("web", 1)); n != maxDoneTasks {
 		t.Fatalf("kept %d, want %d", n, maxDoneTasks)
+	}
+}
+
+// A run that had already acted when it failed gets one attempt: trying it
+// again could send the same mail twice. A run that only read is retried.
+func TestARunThatActedBeforeFailingIsNotTriedAgain(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		err      error
+		attempts int
+		note     bool
+	}{
+		{"acted", Acted(errors.New("the model went away")), 1, true},
+		{"only read", errors.New("the model went away"), MaxAttempts, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, func(context.Context, Job) (string, error) { return "", tc.err })
+			j, err := h.store.AddTask(Job{Name: "send the slip", Kind: KindTask, Prompt: "reply with the slip", ChatID: 7}, nil, 3)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, at := range []string{"2026-10-20 10:01", "2026-10-20 10:10", "2026-10-20 10:30", "2026-10-20 11:30"} {
+				h.fireAt(at)
+			}
+			if len(h.execed) != tc.attempts {
+				t.Fatalf("ran %d times, want %d", len(h.execed), tc.attempts)
+			}
+			if h.store.Exists(j.ID) {
+				t.Fatal("the job is still scheduled")
+			}
+			if got := strings.Contains(h.got[0].text, "have not tried it again"); got != tc.note {
+				t.Fatalf("first message %q: note present = %v, want %v", h.got[0].text, got, tc.note)
+			}
+			// Either way it is kept, so the user can start it again themselves.
+			if done := h.store.DoneTasks("", 7); len(done) != 1 || !done[0].Failed() {
+				t.Fatalf("done = %+v", done)
+			}
+		})
 	}
 }

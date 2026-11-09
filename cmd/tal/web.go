@@ -26,7 +26,9 @@ import (
 
 type webSettings struct {
 	Listen, Password, PublicURL string
-	Secure                      bool // the public address is https, so cookies are for https only and a front proxy is in the way
+	// AGUIKey lets a client that is not the page hold the conversation over the AG-UI protocol; empty is off.
+	AGUIKey string
+	Secure  bool // the public address is https, so cookies are for https only and a front proxy is in the way
 }
 
 // webConfig reads the web app's settings: TALARIA_WEB_PASSWORD (what signs you in), TALARIA_WEB_LISTEN (where
@@ -43,6 +45,9 @@ func webConfig(getenv func(string) string) (w webSettings, problems []string, co
 		problems = append(problems, "TALARIA_WEB_PASSWORD is not set: it is the password you sign in to the web app with")
 	} else if err := web.ValidatePassword(w.Password); err != nil {
 		problems = append(problems, "TALARIA_WEB_PASSWORD: "+err.Error())
+	}
+	if w.AGUIKey = strings.TrimSpace(getenv("TALARIA_AGUI_KEY")); w.AGUIKey != "" && len(w.AGUIKey) < 24 {
+		problems = append(problems, "TALARIA_AGUI_KEY must be at least 24 characters: it is the only thing between the internet and the agent on that door")
 	}
 	if w.Listen == "" {
 		w.Listen = ":8080"

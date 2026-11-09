@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"slices"
@@ -490,7 +491,7 @@ func (e *Engine) runOneWith(c *chat, text string, job *resumeJob) {
 	}
 
 	defer func() {
-		a.OnText, a.OnToolStart, a.OnToolCall = nil, nil, nil
+		a.OnText, a.OnToolStart, a.OnToolCall, a.OnToolArtifact = nil, nil, nil, nil
 		cancel()
 		c.mu.Lock()
 		c.cancel, c.live = nil, nil
@@ -525,6 +526,9 @@ func (e *Engine) runOneWith(c *chat, text string, job *resumeJob) {
 			tw.ToolStart(c.id, name)
 		}
 		a.OnToolCall = func(name, _, result string) { tw.ToolEnd(c.id, name, result) }
+		if aw, ok := e.T.(ArtifactWatcher); ok {
+			a.OnToolArtifact = func(name string, artifact json.RawMessage) { aw.ToolArtifact(c.id, name, artifact) }
+		}
 	}
 
 	if job != nil {

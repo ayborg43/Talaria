@@ -146,6 +146,9 @@ type Server struct {
 	Env          execenv.Env
 	Scrub        func(string) string
 	ReceiptsPath string
+	// AGUIKey, if set, lets a client that is not this page hold the conversation over the AG-UI protocol, with
+	// the key as a bearer token. Empty leaves that door to the signed-in page alone.
+	AGUIKey string
 	// Browsers lists the browsers the agent has started, for taking control of a tab. Nil offers none.
 	Browsers func() []*browser.Manager
 
@@ -209,6 +212,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/browser", s.authed(s.browserTabs))
 	mux.HandleFunc("GET /api/browser/shot", s.authed(s.browserShot))
 	mux.HandleFunc("POST /api/browser/act", s.authed(s.browserAct))
+	// The AG-UI door checks its own key: a client that is not this page has no session to show.
+	mux.HandleFunc("POST /api/agui", s.agui)
+	mux.HandleFunc("POST /api/agui/approve", s.aguiApprove)
 	mux.HandleFunc("GET /api/push/key", s.authed(s.pushKey))
 	mux.HandleFunc("POST /api/push/subscribe", s.authed(s.pushSubscribe))
 	mux.HandleFunc("POST /api/push/unsubscribe", s.authed(s.pushUnsubscribe))
@@ -1261,50 +1267,14 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Hub.Seen()
-	name := ""
-	if strings.HasPrefix(text, "/") {
-		name = strings.ToLower(strings.TrimPrefix(strings.Fields(text)[0], "/"))
-	}
-	if name == "" || !s.Engine.HasCommand(name) { // a command is not part of the conversation
-		s.Hub.AddUser(text)
-	}
-	if name == "new" { // the open conversation is kept, and a blank one starts
-		s.newConversation()
-	}
-	toAgent := text
-	if in.Telegram && s.Telegram && name == "" {
-		toAgent += telegramAsk
-	}
-	s.Engine.Incoming(ChatID, UserID, toAgent)
+	s.accept(text, in.Telegram)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // telegramAsk is added, out of sight, to a message sent with "also send to Telegram" on.
 const telegramAsk = "\n\n(When you have finished, also send me the result on Telegram with telegram_notify, written so it reads on its own.)"
 
-func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
-	var in struct{ Token, Choice string }
-	if !readJSON(w, r, &in) {
-		return
-	}
-	choice, ok := map[string]chat.Choice{"allow": chat.ChoiceAllow, "always": chat.ChoiceAlways, "deny": chat.ChoiceDeny}[in.Choice]
-	if !ok || in.Token == "" || len(in.Token) > 64 {
-		fail(w, http.StatusBadRequest, "that answer is not one of allow, always or deny")
-		return
-	}
-	decision, got := s.Engine.Decide(in.Token, UserID, ChatID, choice)
-	switch decision {
-	case chat.DecisionExpired:
-		fail(w, http.StatusGone, chat.MsgExpired)
-	case chat.DecisionForbidden:
-		fail(w, http.StatusForbidden, chat.MsgNotAllowed)
-	case chat.DecisionAnswered:
-		fail(w, http.StatusConflict, chat.MsgAnswered)
-	default:
-		s.Hub.Resolve(in.Token, got)
-		w.WriteHeader(http.StatusNoContent)
-	}
-}
+func (s *Server) approve(w http.ResponseWriter, r *http.Request) { s.decide(w, r) }
 
 func (s *Server) presence(w http.ResponseWriter, r *http.Request) {
 	var in struct{ Visible bool }

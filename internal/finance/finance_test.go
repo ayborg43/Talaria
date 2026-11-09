@@ -1,8 +1,12 @@
 package finance
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"talaria/internal/tool"
 )
 
 func TestAnalyzeSpendingTotals(t *testing.T) {
@@ -36,5 +40,34 @@ func TestAnalyzeStrictness(t *testing.T) {
 	}
 	if _, err := Analyze("date,description,amount,category\n"); err == nil {
 		t.Fatal("no rows must fail")
+	}
+}
+
+func TestImportReturnsTheSummaryAsARecord(t *testing.T) {
+	r := tool.NewRegistry()
+	RegisterTools(r)
+	tl, _ := r.Get("finance_import")
+	args, _ := json.Marshal(map[string]string{"csv": "date,description,amount,category\n2026-10-01,Rent,900,Housing\n2026-10-02,Pay,-3200,Income\n2026-10-03,Food,410.25,Groceries\n"})
+	res, err := tl.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Kind             string
+		Count            int
+		Spending, Income float64
+		Categories       []struct {
+			Name   string
+			Amount float64
+		}
+	}
+	if err := json.Unmarshal(res.Artifact, &got); err != nil {
+		t.Fatalf("%v: %s", err, res.Artifact)
+	}
+	if got.Kind != "spending" || got.Count != 3 || got.Spending != 1310.25 || got.Income != 3200 || len(got.Categories) == 0 {
+		t.Fatalf("%+v", got)
+	}
+	if !strings.HasPrefix(res.Text, "Imported 3 transactions") {
+		t.Fatalf("text %q", res.Text)
 	}
 }

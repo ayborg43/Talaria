@@ -380,6 +380,10 @@ func runGateway(c *cli) error {
 			Mailbox:    c.rt.Mail(), Calendars: c.rt.Calendars(), X: c.rt.X(), Getenv: c.getenv,
 			Notes: c.rt.Notes(), Notices: notices, Env: c.rt.Env(), Browsers: c.rt.Browsers,
 			ReceiptsPath: filepath.Join(c.home, "computer_receipts.json"),
+			AGUIKey:      webSet.AGUIKey,
+		}
+		if webSet.AGUIKey != "" {
+			logf("web: AG-UI clients may connect at /api/agui with TALARIA_AGUI_KEY as a bearer token")
 		}
 		if gd := c.rt.Guard(); gd != nil {
 			srv.Scrub = gd.For("web", s.name, web.ChatID).Scrub

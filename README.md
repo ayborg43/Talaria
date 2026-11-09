@@ -665,9 +665,27 @@ holds live login cookies, so keep Dokploy access tight and back up the data volu
   fill them and **Save a filled copy** keeps a new file and leaves the original untouched, the same as when the agent fills one.
   Nothing is rendered on the server and no viewer is shipped in the page. On an iPhone, a framed PDF shows its first page only:
   use Open for the whole document.
+- **Another app can hold the conversation (AG-UI).** Set `TALARIA_AGUI_KEY` (24 characters or more) and a client that speaks
+  the [AG-UI protocol](https://docs.ag-ui.com), such as a native phone app built on CopilotKit, can post runs to
+  `/api/agui` with the key as a bearer token and get the standard event stream back: `RUN_STARTED`, `TEXT_MESSAGE_START` /
+  `CONTENT` / `END`, `TOOL_CALL_START` / `ARGS` / `END` / `RESULT`, `RUN_FINISHED`. It is a second door into the same
+  conversation, not a second agent: a run is a message to the web chat, with the same permissions and history, and shows
+  on the page as it happens. Without the key the door is shut to everything but the signed-in page.
+  - Of the messages a client sends, only the newest from the user is used: the conversation is kept here, not there.
+    The thread and run ids are echoed back, and every client shares the one open conversation.
+  - A question that needs your yes arrives as a `CUSTOM` event named `talaria.approval`, with the token that answers it;
+    post `{"token": ..., "choice": "allow" | "deny" | "always"}` to `/api/agui/approve` with the same key. A tool's typed
+    record arrives as `CUSTOM` `talaria.artifact`. Tool arguments are not on the stream (they are in the activity log),
+    so `TOOL_CALL_ARGS` is always `{}`.
+  - The key is as good as the password for talking to the agent, so treat it as one. It needs https like the rest. There
+    are no CORS headers: it is meant for apps, not for a page on another site.
 - **Results look like what they are.** A mail listing is a list you can tap, a message has Draft a reply and Whole thread, a page
   the agent opened has **Take control**, a goal shows its plan with what is done, a spending import shows its categories as bars
   with a field to set a savings goal, and a made or filled PDF has View and Save. The raw result is one tap away under each.
+  The tools say what their result is themselves: beside the text the model reads, each returns a small typed record
+  (`mail_list`, `mail`, `page`, `plan`, `spending`, `document`) that the page draws from, so a card does not depend on
+  the wording of the text. The model never sees the record, known secrets are scrubbed from it as from the text, and one
+  over 4 KB is dropped in favour of the text.
 - **Conversations.** One conversation is the **main** one: always there, listed first, never archived or dropped to make room.
   **Side chat** opens a blank conversation beside the one you are in, for a tangent, and the header says which it came from.
   Any conversation can be renamed, archived and restored (nothing is deleted), or made the main one; **Replay** shows the open
@@ -961,6 +979,14 @@ The task runs on its own, with its own copy of the tools, and its final reply ar
   and so does `/stop` when nothing is running in the conversation itself. A cancelled task says so.
 - Tasks are jobs underneath, so they have the same guarantees: they run once, are logged in the activity log under
   `job:<id>`, and are delivered only to chats still on the allowlist.
+- **A task that had already acted is never retried on its own.** A task that fails is normally tried again (three
+  attempts, a few minutes apart), which is right for one that only read: the model was down, the network blinked.
+  But if it had already run a command, changed a file, clicked in the browser, sent a mail or posted before it failed,
+  trying again could do that twice, so it gets the one attempt and the message says why. The same holds when a restart
+  cuts such a task off: it is not run again afterwards. It is kept with the finished tasks, where **Retry** starts it
+  again if you judge that safe. What counts as acting is the tool's own account of itself: it asks for approval, it
+  deletes or posts, or it is a connected service's tool that could send something out. Reading, searching and saving a
+  note do not count.
 
 ### Goals
 

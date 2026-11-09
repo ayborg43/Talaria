@@ -257,6 +257,9 @@ func (p *Pool) run(ctx context.Context, parent *agent.Agent, background func() s
 	runCtx, cancel := context.WithTimeout(ctx, p.Timeout)
 	defer cancel()
 	answer, err := sub.Run(runCtx, task)
+	if sub.Acted() {
+		parent.MarkActed() // what a helper changed or sent was done on the parent's behalf
+	}
 	if err != nil {
 		if runCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
 			return "", fmt.Errorf("subagent %q timed out after %s", label, p.Timeout)

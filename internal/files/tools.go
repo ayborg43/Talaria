@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -44,7 +45,8 @@ func RegisterTools(r *tool.Registry, b Binding) {
 			"title":{"type":"string","description":"the document title"},
 			"text":{"type":"string","description":"the full text, paragraphs separated by blank lines"}},
 			"required":["title","text"]}`),
-		Run: b.makePDF,
+		Run:     b.makePDF,
+		RunRich: b.withDocument(b.makePDF),
 	})
 	r.Register(tool.Tool{
 		Name: "files_view",
@@ -79,6 +81,7 @@ func RegisterTools(r *tool.Registry, b Binding) {
 		Schema:        json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"values":{"type":"object","additionalProperties":{"type":"string"}}},"required":["id","values"]}`),
 		NeedsApproval: true,
 		Run:           b.fillForm,
+		RunRich:       b.withDocument(b.fillForm),
 	})
 	r.Register(tool.Tool{
 		Name:        "files_delete",
@@ -106,6 +109,35 @@ func expiryNote(b Binding) string {
 }
 
 func link(id string) string { return "/api/files/" + id }
+
+// madeFile finds the id of the file a tool has just made in what the tool says about it: both wordings are
+// written in this file.
+var madeFile = regexp.MustCompile(`(?:/api/files/|kept the copy as file )([0-9a-f]{8,64})`)
+
+// withDocument runs a tool that makes a file and adds that file as a typed record (its id, name, type and
+// size), for a front end to offer it to view and save without reading the id back out of the text.
+func (b Binding) withDocument(run func(context.Context, json.RawMessage) (string, error)) func(context.Context, json.RawMessage) (tool.Result, error) {
+	return func(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
+		text, err := run(ctx, raw)
+		if err != nil {
+			return tool.Result{}, err
+		}
+		res := tool.Result{Text: text}
+		m := madeFile.FindStringSubmatch(text)
+		if m == nil {
+			return res, nil
+		}
+		if list, lerr := b.Store.List(); lerr == nil {
+			for _, f := range list {
+				if f.ID == m[1] {
+					res.Artifact = tool.Artifact("document", map[string]any{"id": f.ID, "name": f.Name, "mime": f.MIME, "size": f.Size})
+					break
+				}
+			}
+		}
+		return res, nil
+	}
+}
 
 func (b Binding) list(_ context.Context, _ json.RawMessage) (string, error) {
 	files, err := b.Store.List()

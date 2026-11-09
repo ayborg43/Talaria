@@ -592,6 +592,26 @@ func (s *Store) ClaimDue(now time.Time, gateway string) ([]Job, error) {
 // tried again, up to MaxAttempts, so one bad minute does not lose it. A
 // recurring job stays, its attempt count reset by anything but a failure.
 func (s *Store) Finish(id string, at time.Time, status string) error {
+	return s.finish(id, at, status, false)
+}
+
+// FinishFinal records the outcome of a run that must not be tried again even though it failed: it had already
+// acted, so a second attempt could do the same thing twice. A one-shot job is then gone, as after a success.
+func (s *Store) FinishFinal(id string, at time.Time, status string) error {
+	return s.finish(id, at, status, true)
+}
+
+// wouldRetry says whether a failure of this job would normally be tried again: it is a one-shot with attempts left.
+func (s *Store) wouldRetry(j Job) bool {
+	sch, err := ParseSchedule(j.Schedule)
+	if err != nil {
+		return false
+	}
+	_, recurring := sch.Next(s.now())
+	return !recurring && j.Attempts < MaxAttempts
+}
+
+func (s *Store) finish(id string, at time.Time, status string, final bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := s.lockFile()
@@ -617,7 +637,7 @@ func (s *Store) Finish(id string, at time.Time, status string) error {
 		}
 		failed := strings.HasPrefix(status, "error")
 		switch {
-		case !recurring && failed && j.Attempts < MaxAttempts:
+		case !recurring && failed && !final && j.Attempts < MaxAttempts:
 			j.NextRun = at.Add(retryBackoff(j.Attempts))
 			return s.save(jobs)
 		case !recurring:

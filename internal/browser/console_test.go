@@ -62,3 +62,18 @@ func TestTheConsoleCannotBeSentToAPrivateAddress(t *testing.T) {
 		t.Fatalf("a bare host was not opened over https: %v", err)
 	}
 }
+
+func TestAPageListingCarriesItsTitleAndAddressAsARecord(t *testing.T) {
+	r := newRig(t, Options{})
+	tl, _ := r.reg.Get("browser_open")
+	res, err := tl.Execute(context.Background(), []byte(`{"url":"http://shop.test/"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(res.Artifact); !strings.Contains(got, `"kind":"page"`) || !strings.Contains(got, `"title":"Shop"`) || !strings.Contains(got, `"url":"http://shop.test/"`) {
+		t.Fatalf("artifact %s", got)
+	}
+	if !strings.HasPrefix(res.Text, "Page: Shop\nURL: http://shop.test/") {
+		t.Fatalf("the listing changed: %q", res.Text[:60])
+	}
+}

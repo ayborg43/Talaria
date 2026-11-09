@@ -130,6 +130,10 @@ type Agent struct {
 	OnToolStart func(name, args string)
 	// OnToolCall, if set, is told about each tool call and its outcome.
 	OnToolCall func(name, args, result string)
+	// OnToolArtifact, if set, is given the typed record a tool returned beside its text (see tool.Result.Artifact),
+	// just before OnToolCall for the same call. It is for a front end to show the result as what it is; the model
+	// never sees it.
+	OnToolArtifact func(name string, artifact json.RawMessage)
 	// OnMessage, if set, sees every message added to the conversation (for persistence).
 	OnMessage func(provider.Message)
 	// Activity, if set, is told about the subagents this agent starts, for a front end that shows who is working.
@@ -140,6 +144,28 @@ type Agent struct {
 
 	messages []provider.Message
 	tainted  int32 // set once an untrusted tool has run; atomic, as parallel tools update it
+	acted    int32 // set once a call that changes or sends something has run; atomic, for the same reason
+}
+
+// Acted reports whether this conversation has run a call that changes or sends something: a command, a file
+// written, a mail sent, a click in the browser, a post. A run that has acted and then fails is not safe to
+// simply run again, since whatever it did would be done twice.
+func (a *Agent) Acted() bool { return atomic.LoadInt32(&a.acted) == 1 }
+
+// MarkActed records that something was changed or sent on this conversation's behalf, as when a helper it
+// started did so.
+func (a *Agent) MarkActed() { atomic.StoreInt32(&a.acted, 1) }
+
+// acts says whether a call is one that changes or sends something, by the tool's own account: it asks for
+// approval, it deletes or posts, or it is a connected service's tool that could send something out.
+func acts(t tool.Tool, name string, args json.RawMessage) bool {
+	switch {
+	case t.NeedsApproval, t.NeedsApprovalFor != nil && t.NeedsApprovalFor(args), t.RiskOf(args) != 0:
+		return true
+	case strings.HasPrefix(name, "mcp_") && t.Egress != nil && t.Egress(args):
+		return true
+	}
+	return false
 }
 
 // MarkUntrusted records that the conversation has taken in text from outside, as
@@ -308,6 +334,9 @@ func (a *Agent) dropOldImages(msgs []provider.Message) []provider.Message {
 // recorded in the order the model asked for them either way.
 func (a *Agent) runCalls(ctx context.Context, calls []provider.ToolCall) {
 	finish := func(call provider.ToolCall, result execResult) {
+		if a.OnToolArtifact != nil && len(result.artifact) > 0 {
+			a.OnToolArtifact(call.Name, result.artifact)
+		}
 		if a.OnToolCall != nil {
 			a.OnToolCall(call.Name, call.Arguments, result.text)
 		}
@@ -366,6 +395,9 @@ func (a *Agent) Call(ctx context.Context, name string, args json.RawMessage) (st
 		args = json.RawMessage(`{}`)
 	}
 	res := quiet.execute(ctx, provider.ToolCall{ID: "direct", Name: name, Arguments: string(args)})
+	if quiet.Acted() {
+		a.MarkActed()
+	}
 	if msg, failed := strings.CutPrefix(res.text, "error: "); failed {
 		return "", errors.New(msg)
 	}
@@ -374,8 +406,9 @@ func (a *Agent) Call(ctx context.Context, name string, args json.RawMessage) (st
 
 // execResult is what one tool call came to: text, and any pictures.
 type execResult struct {
-	text   string
-	images []provider.Image
+	text     string
+	images   []provider.Image
+	artifact json.RawMessage // a typed record for a front end; never sent to the model
 }
 
 // execute never returns an error: failures go back to the model as text so it can recover.
@@ -392,6 +425,9 @@ func (a *Agent) CallApproved(ctx context.Context, name string, args json.RawMess
 		args = json.RawMessage(`{}`)
 	}
 	res := quiet.executeAs(ctx, provider.ToolCall{ID: "approved", Name: name, Arguments: string(args)}, true)
+	if quiet.Acted() {
+		a.MarkActed()
+	}
 	if msg, failed := strings.CutPrefix(res.text, "error: "); failed {
 		return "", errors.New(msg)
 	}
@@ -481,6 +517,9 @@ func (a *Agent) executeAs(ctx context.Context, call provider.ToolCall, approved 
 	if a.OnToolStart != nil {
 		a.OnToolStart(call.Name, call.Arguments)
 	}
+	if acts(t, call.Name, json.RawMessage(call.Arguments)) {
+		a.MarkActed() // before it runs: a call that fails or is cut off half way may still have done its work
+	}
 	start := time.Now()
 	out, err := a.executeTool(ctx, t, call.Arguments)
 	entry.Took = time.Since(start)
@@ -496,7 +535,23 @@ func (a *Agent) executeAs(ctx context.Context, call provider.ToolCall, approved 
 	if len(text) > maxToolOutput {
 		text = text[:maxToolOutput] + "\n[truncated]"
 	}
-	return execResult{text: text, images: out.Images}
+	return execResult{text: text, images: out.Images, artifact: a.scrubArtifact(out.Artifact)}
+}
+
+// maxArtifact bounds the typed record a tool may hand a front end.
+const maxArtifact = 8 << 10
+
+// scrubArtifact removes known secrets from a tool's typed record, as from its text, and drops a record that is
+// too big or is no longer JSON once scrubbed: the text result is always there to fall back on.
+func (a *Agent) scrubArtifact(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || len(raw) > maxArtifact {
+		return nil
+	}
+	out := json.RawMessage(a.scrub(string(raw)))
+	if !json.Valid(out) {
+		return nil
+	}
+	return out
 }
 
 func (a *Agent) scrub(s string) string {
