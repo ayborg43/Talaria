@@ -207,9 +207,17 @@ func (s *Server) Serve(ctx context.Context, addr string) error {
 	return ctx.Err()
 }
 
-// headers puts the protections on every response.
+// headers puts the protections on every response. A panic in a handler is
+// recovered here and answered as a JSON 500, so one bad request cannot drop
+// the connection without an answer.
 func (s *Server) headers(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if v := recover(); v != nil {
+				s.logf("web: handler panic on %s %s: %v", r.Method, r.URL.Path, v)
+				fail(w, http.StatusInternalServerError, "something went wrong on the server")
+			}
+		}()
 		h := w.Header()
 		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		h.Set("X-Content-Type-Options", "nosniff")

@@ -1788,3 +1788,13 @@ func TestThePageHasOnlyTheTabsThatEarnTheirPlace(t *testing.T) {
 		}
 	}
 }
+
+func TestAHandlerPanicIsAnsweredNotDropped(t *testing.T) {
+	s := &Server{}
+	h := s.headers(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") }))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/state", nil))
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), `"error"`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}

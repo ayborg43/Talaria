@@ -50,7 +50,7 @@ func seedVault(t *testing.T, path, passphrase string) {
 	}
 }
 
-func getSettings(t *testing.T, s *Server) (int, settingsView, string) {
+func getVaultSettings(t *testing.T, s *Server) (int, settingsView, string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	s.settingsGet(rec, httptest.NewRequest(http.MethodGet, "/api/settings", nil))
@@ -71,7 +71,7 @@ func postSettings(t *testing.T, s *Server, payload string) (int, string) {
 func TestSettingsGetListsVaultWithoutSecrets(t *testing.T) {
 	s, path := vaultTestServer(t, "right-horse-battery")
 	seedVault(t, path, "right-horse-battery")
-	code, view, body := getSettings(t, s)
+	code, view, body := getVaultSettings(t, s)
 	if code != http.StatusOK {
 		t.Fatalf("get settings: %d (%s)", code, body)
 	}
@@ -101,7 +101,7 @@ func TestSaveVaultCredentialAddAndDelete(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("add: %d (%s)", code, body)
 	}
-	_, view, _ := getSettings(t, s)
+	_, view, _ := getVaultSettings(t, s)
 	found := false
 	for _, c := range view.Vault {
 		if c.Name == "gh" {
@@ -115,7 +115,7 @@ func TestSaveVaultCredentialAddAndDelete(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("delete: %d (%s)", code, body)
 	}
-	_, view, _ = getSettings(t, s)
+	_, view, _ = getVaultSettings(t, s)
 	for _, c := range view.Vault {
 		if c.Name == "gh" {
 			t.Fatalf("deleted login is still listed: %+v", view.Vault)
@@ -144,7 +144,7 @@ func TestSaveVaultCredentialValidation(t *testing.T) {
 	if code, body := postSettings(t, s, `{"vault_credential":{"op":"add","name":"api2","password":"pw123","sites":"github.com"}}`); code != http.StatusOK {
 		t.Fatalf("add secret: %d (%s)", code, body)
 	}
-	_, view, _ := getSettings(t, s)
+	_, view, _ := getVaultSettings(t, s)
 	found := false
 	for _, c := range view.Vault {
 		if c.Name == "api2" {
@@ -161,7 +161,7 @@ func TestVaultLockedStatus(t *testing.T) {
 	seedVault(t, path, "right-horse-battery")
 
 	locked, _ := vaultTestServer(t, "wrong-passphrase-here")
-	if code, view, _ := getSettings(t, locked); code != http.StatusOK || len(view.Vault) != 0 || view.VaultStatus == "" {
+	if code, view, _ := getVaultSettings(t, locked); code != http.StatusOK || len(view.Vault) != 0 || view.VaultStatus == "" {
 		t.Fatalf("wrong passphrase: %d (%+v)", code, view)
 	}
 	if code, body := postSettings(t, locked, `{"vault_credential":{"op":"delete","name":"x"}}`); code != http.StatusBadRequest {
@@ -169,13 +169,13 @@ func TestVaultLockedStatus(t *testing.T) {
 	}
 
 	missing, _ := vaultTestServer(t, "")
-	if code, view, _ := getSettings(t, missing); code != http.StatusOK || view.VaultStatus == "" {
+	if code, view, _ := getVaultSettings(t, missing); code != http.StatusOK || view.VaultStatus == "" {
 		t.Fatalf("no passphrase: %d (%+v)", code, view)
 	}
 
 	fresh, _ := vaultTestServer(t, "right-horse-battery")
 	_ = path
-	if code, view, _ := getSettings(t, fresh); code != http.StatusOK || !strings.Contains(view.VaultStatus, "tal vault init") {
+	if code, view, _ := getVaultSettings(t, fresh); code != http.StatusOK || !strings.Contains(view.VaultStatus, "tal vault init") {
 		t.Fatalf("no vault file: %d (%+v)", code, view)
 	}
 	if code, body := postSettings(t, fresh, `{"vault_credential":{"op":"add","name":"gh","password":"pw","sites":"github.com"}}`); code != http.StatusBadRequest || !strings.Contains(body, "tal vault init") {

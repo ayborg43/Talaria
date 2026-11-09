@@ -574,6 +574,9 @@ func (v *Vault) ChangePassphrase(passphrase string) error {
 // Passphrase finds the vault's passphrase without asking: the environment
 // variable TALARIA_VAULT_PASSPHRASE, else the contents of keyFile.
 func Passphrase(getenv func(string) string, keyFile string) (string, error) {
+	if getenv == nil {
+		getenv = func(string) string { return "" }
+	}
 	if p := getenv("TALARIA_VAULT_PASSPHRASE"); p != "" {
 		return p, nil
 	}

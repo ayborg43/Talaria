@@ -448,3 +448,17 @@ func TestUpdateRereadsBeforeChanging(t *testing.T) {
 		t.Fatal("the credential the other process added was lost")
 	}
 }
+
+func TestPassphraseWithNoEnvironmentLookup(t *testing.T) {
+	// A caller that wires no environment lookup (tests, settings probes) must
+	// get the usual "no passphrase" error, not a panic.
+	if _, err := Passphrase(nil, ""); err == nil || !strings.Contains(err.Error(), "TALARIA_VAULT_PASSPHRASE") {
+		t.Fatalf("%v", err)
+	}
+	dir := t.TempDir()
+	keyFile := filepath.Join(dir, "key")
+	os.WriteFile(keyFile, []byte("from the key file\n"), 0o600)
+	if p, err := Passphrase(nil, keyFile); err != nil || p != "from the key file" {
+		t.Fatalf("%q %v", p, err)
+	}
+}
