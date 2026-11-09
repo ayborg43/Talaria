@@ -122,16 +122,19 @@ async function showBrowser(body) {
   const go = () => { if (addr.value.trim()) { addr.blur(); act({ kind: 'open', url: addr.value.trim() }); } };
   addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
   const key = (label, name) => h('button', { type: 'button', class: 'key', text: label, 'aria-label': name, onclick: () => act({ kind: 'key', key: name }) });
+  const ikey = (name, label, fn) => h('button', { type: 'button', class: 'key', 'aria-label': label, title: label, onclick: fn }, icon(name));
   const picker = tabs.length > 1 ? h('div', { class: 'seg inner' }, tabs.map((t, i) => h('button', { type: 'button', 'aria-selected': String(t.id === COMPUTER.tab), text: 'Tab ' + (i + 1), onclick: () => { COMPUTER.tab = t.id; showComputer(); } }))) : null;
   body.className = 'panel-body browser';
   body.replaceChildren(picker,
     h('div', { class: 'toolbar' },
-      h('button', { type: 'button', class: 'key', text: '←', 'aria-label': 'Back', onclick: () => act({ kind: 'back' }) }),
-      h('button', { type: 'button', class: 'key', text: '↻', 'aria-label': 'Refresh the picture', onclick: shot }),
+      ikey('back', 'Back a page', () => act({ kind: 'back' })),
       addr, h('button', { type: 'button', class: 'key go', text: 'Go', onclick: go })),
     stage,
     h('div', { class: 'toolbar' }, typed, h('button', { type: 'button', class: 'key go', text: 'Type', onclick: send })),
-    h('div', { class: 'toolbar keys' }, key('Enter', 'Enter'), key('Tab', 'Tab'), key('Esc', 'Escape'), key('⌫', 'Backspace'), key('↑', 'ArrowUp'), key('↓', 'ArrowDown'), key('PgDn', 'PageDown'), key('PgUp', 'PageUp')),
+    h('div', { class: 'toolbar keys' }, key('Enter', 'Enter'), key('Tab', 'Tab'), key('Esc', 'Escape'), ikey('del', 'Backspace', () => act({ kind: 'key', key: 'Backspace' })),
+      ikey('up', 'Up arrow', () => act({ kind: 'key', key: 'ArrowUp' })), ikey('down', 'Down arrow', () => act({ kind: 'key', key: 'ArrowDown' })),
+      ikey('refresh', 'Refresh the picture', shot),
+      ikey('zoom', 'Make the picture bigger or smaller', () => stage.classList.toggle('zoomed'))),
     h('div', { class: 'field-note', text: 'You are working the same tab the agent uses. It is told you took control, and reads the page again before it carries on. What you type here is not shown to it.' }));
   await shot(); loop();
 }
@@ -187,7 +190,7 @@ async function showFiles(body) {
   if (COMPUTER.seg !== 'files' || $('#panel').hidden) return;
   const here = d.path;
   const rows = h('div', { class: 'rows' });
-  if (here !== '.' && here !== '/') rows.append(h('button', { class: 'row', type: 'button', onclick: () => { COMPUTER.path = parentPath(here); showComputer(); } }, h('span', { class: 'tag', text: '↑' }), h('span', { class: 'grow' }, h('span', { class: 't', text: 'Up a folder' }))));
+  if (here !== '.' && here !== '/') rows.append(h('button', { class: 'row', type: 'button', onclick: () => { COMPUTER.path = parentPath(here); showComputer(); } }, h('span', { class: 'tag' }, icon('up')), h('span', { class: 'grow' }, h('span', { class: 't', text: 'Up a folder' }))));
   for (const e of d.entries || []) {
     const full = joinPath(here, e.name);
     const open = e.dir ? () => { COMPUTER.path = full; showComputer(); } : () => editFile(full);
@@ -274,11 +277,11 @@ async function openDoc(id, f) {
     label.textContent = (isPDF ? 'Page ' + page + ' · ' : '') + zoom + '%';
   };
   const label = h('span', { class: 'doclabel mono' });
-  const btn = (text, name, fn) => h('button', { type: 'button', class: 'key', text, 'aria-label': name, onclick: () => { fn(); draw(); } });
+  const btn = (name, label, fn) => h('button', { type: 'button', class: 'key', 'aria-label': label, title: label, onclick: () => { fn(); draw(); } }, icon(name));
   const bar = h('div', { class: 'toolbar' },
-    isPDF ? btn('‹', 'Previous page', () => { page = Math.max(1, page - 1); }) : null,
-    isPDF ? btn('›', 'Next page', () => { page++; }) : null,
-    btn('−', 'Zoom out', () => { zoom = Math.max(25, zoom - 25); }), btn('+', 'Zoom in', () => { zoom = Math.min(400, zoom + 25); }), label, h('span', { class: 'grow' }),
+    isPDF ? btn('left', 'Previous page', () => { page = Math.max(1, page - 1); }) : null,
+    isPDF ? btn('right', 'Next page', () => { page++; }) : null,
+    btn('minus', 'Zoom out', () => { zoom = Math.max(25, zoom - 25); }), btn('plus', 'Zoom in', () => { zoom = Math.min(400, zoom + 25); }), label, h('span', { class: 'grow' }),
     h('a', { class: 'key go', href: src + '?inline=1', target: '_blank', rel: 'noopener', text: 'Open' }),
     h('a', { class: 'key go', href: src, download: '', text: 'Save' }));
   if (navigator.share && window.File) {
@@ -380,7 +383,7 @@ function planCard(text) {
     h('span', { class: 'pill ' + (head[3] === 'open' ? 'ok' : 'brass'), text: head[3].toUpperCase() })));
   if (steps.length) {
     const bar = h('i'); bar.style.width = Math.round((done / steps.length) * 100) + '%';
-    card.append(h('div', { class: 'progress' }, bar), h('ul', { class: 'plansteps' }, steps.map((s) => h('li', { class: s.done ? 'done' : '' }, h('span', { class: 'box', 'aria-hidden': 'true', text: s.done ? '✓' : '' }), s.text))));
+    card.append(h('div', { class: 'progress' }, bar), h('ul', { class: 'plansteps' }, steps.map((s) => h('li', { class: s.done ? 'done' : '' }, h('span', { class: 'box', 'aria-hidden': 'true' }, s.done ? icon('check') : null), s.text))));
   }
   if (next) card.append(h('div', { class: 'field-note', text: 'Next: ' + next[1] }));
   return card;

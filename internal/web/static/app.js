@@ -43,6 +43,16 @@ const ICONS = {
   link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 18.7l1-1"/></svg>',
   bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>',
   user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>',
+  back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg>',
+  left: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>',
+  right: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+  minus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/></svg>',
+  up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
+  down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
+  del: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 6H9l-6 6 6 6h12zM13 10l4 4M17 10l-4 4"/></svg>',
+  zoom: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5M11 8.5v5M8.5 11h5"/></svg>',
   chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="20" height="20"><path d="M9 6l6 6-6 6"/></svg>',
 };
 function icon(name) {
@@ -296,13 +306,12 @@ function toolCard(t) {
     h('span', { class: 'tag', text: toolLabel(t.tool) }),
     h('span', { class: 'grow', text: t.tool }),
     t.ms ? h('em', { text: (t.ms / 1000).toFixed(1) + 's' }) : null,
-    h('span', { class: 'chev', text: '▸' }));
+    h('span', { class: 'chev' }, icon('right')));
   const body = h('div', { class: 'toolresult', hidden: '' }, markdown(t.result || ''));
   head.addEventListener('click', () => {
     const open = body.hidden;
     body.hidden = !open;
-    head.setAttribute('aria-expanded', String(open));
-    head.querySelector('.chev').textContent = open ? '▾' : '▸';
+    head.setAttribute('aria-expanded', String(open)); // the arrow turns with it, in the stylesheet
   });
   // Mail, pages, documents, plans and spending are shown as what they are, in
   // the thread; the raw result stays one tap away under the heading.
@@ -981,10 +990,10 @@ function hero(timed, now) {
   };
   const orbit = () => { const ns = 'http://www.w3.org/2000/svg'; const s = document.createElementNS(ns, 'svg'); s.setAttribute('class', 'orbit'); s.setAttribute('viewBox', '0 0 260 260'); s.setAttribute('aria-hidden', 'true'); for (const r of [40, 70, 100, 128]) { const c = document.createElementNS(ns, 'circle'); c.setAttribute('cx', 130); c.setAttribute('cy', 130); c.setAttribute('r', r); s.append(c); } return s; };
   let kick, ev, g;
-  if (cur) { kick = 'HAPPENING NOW'; ev = cur; const left = Math.max(0, Math.round((cur.e - now) / 60000)); g = gauge((now - cur.s) / (cur.e - cur.s), String(left), 'MIN LEFT'); }
-  else if (next) { kick = 'NEXT UP'; ev = next; const mins = Math.max(0, Math.round((next.s - now) / 60000)); g = gauge(1 - Math.min(mins, 120) / 120, mins >= 120 ? Math.round(mins / 60) + 'h' : String(mins), mins >= 120 ? 'HOURS' : 'MIN'); }
-  if (!ev) return h('div', { class: 'hero' }, orbit(), h('div', { class: 'hero-in' }, gauge(1, '✓', 'CLEAR'), h('div', null, h('div', { class: 'kick', text: 'ALL CLEAR' }), h('div', { class: 'big', text: 'Nothing else today' }), h('div', { class: 'sub', text: 'Enjoy the quiet.' }))));
-  return h('div', { class: 'hero' }, orbit(), h('div', { class: 'hero-in' }, g, h('div', { class: 'grow' }, h('div', { class: 'kick', text: kick }), h('div', { class: 'big', text: ev.title }), h('div', { class: 'sub', text: [fmtTime(ev.s) + ' – ' + fmtTime(ev.e), ev.where].filter(Boolean).join(' · ') }))));
+  if (cur) { kick = 'Happening now'; ev = cur; const left = Math.max(0, Math.round((cur.e - now) / 60000)); g = gauge((now - cur.s) / (cur.e - cur.s), String(left), 'MIN LEFT'); }
+  else if (next) { kick = 'Next up'; ev = next; const mins = Math.max(0, Math.round((next.s - now) / 60000)); g = gauge(1 - Math.min(mins, 120) / 120, mins >= 120 ? Math.round(mins / 60) + 'h' : String(mins), mins >= 120 ? 'HOURS' : 'MIN'); }
+  if (!ev) return h('div', { class: 'hero' }, orbit(), h('div', { class: 'hero-in' }, gauge(1, '0', 'LEFT'), h('div', null, h('div', { class: 'big', text: 'Nothing else today' }), h('div', { class: 'sub', text: 'Enjoy the quiet.' }))));
+  return h('div', { class: 'hero' }, orbit(), h('div', { class: 'hero-in' }, g, h('div', { class: 'grow' }, h('div', { class: 'big', text: ev.title }), h('div', { class: 'sub', text: [fmtTime(ev.s) + ' – ' + fmtTime(ev.e), ev.where].filter(Boolean).join(' · ') }), h('span', { class: 'when-pill', text: kick }))));
 }
 setInterval(() => { if (S.tab === 'today' && S.today && !document.hidden) renderToday(); }, 30000);
 
