@@ -1049,7 +1049,7 @@ How it runs:
 - **Nobody is watching a scheduled run, so tools that need approval are denied** (`shell`, `write_file`, skill changes). A job can be created with `allow_risky`, which is shown in the approval prompt; `-yolo` allows them everywhere.
 - A job whose reply is exactly `[SILENT]` delivers nothing, so "tell me only if something changed" jobs stay quiet.
 - Failures are delivered as a message. A run is capped at 10 minutes, and at most 2 jobs run at once.
-- After downtime, a recurring job runs once to catch up rather than once per missed slot. A one-shot whose time passed while the gateway was down runs when it starts back up. Runs are at-most-once: a crash mid-run does not repeat it.
+- After downtime, a recurring job runs once to catch up rather than once per missed slot. A one-shot whose time passed while the gateway was down runs when it starts back up. Runs are leased: a claimed job stays in the store until it finishes, so a crash mid-run hands it out again once its lease lapses rather than losing it; a shutdown hands the claim back for a restart. A one-shot that fails is retried after a minute, then two, then dropped after the third failure. Side effects can therefore happen twice if the crash came after them; a run that ended is never repeated.
 - Jobs only deliver to chats that are still on the allowlist; others are dropped. Up to 50 jobs.
 - **A job belongs to the service it was made on.** Each job records its gateway (`telegram` or `discord`, and jobs from before
   there were two are Telegram's), and each service has its own scheduler that claims only its own jobs. A job for a service

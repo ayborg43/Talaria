@@ -215,8 +215,10 @@ func (s *Scheduler) tick(ctx context.Context) {
 				switch {
 				case ctx.Err() == nil: // cancelled while waiting for a slot
 					s.finishCancelled(ctx, j)
-				case !s.Store.Exists(j.ID): // shutdown before it started, and claiming deleted it
-					s.deliverShutdownNote(j, "Talaria shut down before it started; start it again if you still want it")
+				default: // shutdown before it started: hand the claim back
+					if err := s.Store.Release(j.ID); err != nil {
+						s.logf("cron: %v", err)
+					}
 				}
 				return
 			}
@@ -278,14 +280,6 @@ func (s *Scheduler) finishCancelled(ctx context.Context, j Job) {
 	s.Deliver(ctx, j.ChatID, fmt.Sprintf("🛑 %s was cancelled before it started.", j.Name))
 }
 
-// deliverShutdownNote tells the chat that a claimed one-shot died with the
-// shutdown. It uses a fresh context: the scheduler's own is already done.
-func (s *Scheduler) deliverShutdownNote(j Job, why string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	s.Deliver(ctx, j.ChatID, say(j, false, why))
-}
-
 func (s *Scheduler) runJob(ctx, rctx context.Context, r *run, j Job) {
 	runCtx, cancel := context.WithTimeout(rctx, s.timeoutFor(j))
 	defer cancel()
@@ -296,12 +290,15 @@ func (s *Scheduler) runJob(ctx, rctx context.Context, r *run, j Job) {
 	reply, err := s.Exec(runCtx, j)
 	end()
 	if ctx.Err() != nil {
-		// Shutting down: not a failure of the job, so a recurring job stays
-		// silent and runs again. But a claimed one-shot was deleted from the
-		// store, so without a note here the user would never learn it died.
-		// Dropped jobs stay silent whatever stopped them.
-		if !errors.Is(err, ErrDrop) && !s.Store.Exists(j.ID) {
-			s.deliverShutdownNote(j, "Talaria shut down while it was running; start it again if you still want it")
+		// Shutting down: not a failure of the job. Hand the claim back so it
+		// runs again after the restart, and deliver nothing. A job the run
+		// itself dropped is removed here as it would have been below.
+		if errors.Is(err, ErrDrop) {
+			if err := s.Store.Remove(j.ID, "", 0); err != nil {
+				s.logf("cron: %v", err)
+			}
+		} else if err := s.Store.Release(j.ID); err != nil {
+			s.logf("cron: %v", err)
 		}
 		return
 	}

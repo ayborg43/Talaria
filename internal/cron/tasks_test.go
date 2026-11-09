@@ -24,8 +24,8 @@ func TestAddNowStoresAJobThatIsDueAtOnce(t *testing.T) {
 	if err != nil || len(due) != 1 || due[0].ID != j.ID {
 		t.Fatalf("%+v %v", due, err)
 	}
-	if jobs, _ := s.List(); len(jobs) != 0 {
-		t.Fatalf("a task runs once, and is gone once claimed: %+v", jobs)
+	if jobs, _ := s.List(); len(jobs) != 1 || jobs[0].ClaimedAt.IsZero() {
+		t.Fatalf("a claimed task stays stored under its lease until it finishes: %+v", jobs)
 	}
 	for name, bad := range map[string]Job{
 		"empty": {Prompt: " ", ChatID: 1}, "no chat": {Prompt: "p"}, "negative timeout": {Prompt: "p", ChatID: 1, TimeoutSec: -1},

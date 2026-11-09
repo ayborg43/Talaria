@@ -170,14 +170,19 @@ func TestRunStopsOnCancelAndDoesNotReportCancelledJobs(t *testing.T) {
 	}
 }
 
-// A claimed one-shot was deleted from the store; if the shutdown kills it mid
-// run, a note is the only trace left, so one is delivered.
-func TestShutdownReportsAOneShotThatDiedWithIt(t *testing.T) {
+// A shutdown mid-run hands the claim back: nothing is delivered, the job
+// stays stored unclaimed, and the next scheduler runs it to completion.
+func TestShutdownReleasesAOneShotSoItRunsAfterRestart(t *testing.T) {
 	started := make(chan struct{})
+	var calls int
 	h := newHarness(t, func(ctx context.Context, _ Job) (string, error) {
-		close(started)
-		<-ctx.Done()
-		return "", ctx.Err()
+		calls++
+		if calls == 1 {
+			close(started)
+			<-ctx.Done()
+			return "", ctx.Err()
+		}
+		return "the report", nil
 	})
 	h.store.AddNow(Job{Kind: KindTask, Name: "report", Prompt: "p", ChatID: 1})
 	h.sched.now = func() time.Time { return utc("2026-10-20 10:06") }
@@ -193,8 +198,20 @@ func TestShutdownReportsAOneShotThatDiedWithIt(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return after cancel")
 	}
-	if len(h.got) != 1 || !strings.Contains(h.got[0].text, "report") || !strings.Contains(h.got[0].text, "shut down") {
-		t.Fatalf("a task that died with the shutdown was not reported: %+v", h.got)
+	if len(h.got) != 0 {
+		t.Fatalf("a shutdown is not a job failure to report: %+v", h.got)
+	}
+	jobs, _ := h.store.List()
+	if len(jobs) != 1 || !jobs[0].ClaimedAt.IsZero() {
+		t.Fatalf("the claim was not handed back: %+v", jobs)
+	}
+	// The restarted scheduler picks it up and finishes it.
+	h.fireAt("2026-10-20 10:07")
+	if len(h.execed) != 2 || len(h.got) != 1 || !strings.Contains(h.got[0].text, "the report") {
+		t.Fatalf("execed=%v got=%+v", h.execed, h.got)
+	}
+	if jobs, _ := h.store.List(); len(jobs) != 0 {
+		t.Fatalf("finished one-shot still stored: %+v", jobs)
 	}
 }
 

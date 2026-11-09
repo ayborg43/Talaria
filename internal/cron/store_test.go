@@ -105,16 +105,19 @@ func TestClaimDue(t *testing.T) {
 	}
 
 	jobs, _ := s.List()
-	if len(jobs) != 2 {
-		t.Fatalf("one-shot should be deleted on claim, have %d jobs", len(jobs))
+	if len(jobs) != 3 {
+		t.Fatalf("claimed jobs stay stored under lease, have %d jobs", len(jobs))
 	}
 	for _, j := range jobs {
 		if j.ID == every.ID && !j.NextRun.Equal(utc("2026-10-20 10:30")) {
 			t.Fatalf("recurring job next run %v, want 10:30", j.NextRun)
 		}
+		if j.ID == once.ID && (j.ClaimedAt.IsZero() || !j.LeaseUntil.After(at)) {
+			t.Fatalf("one-shot not held under lease: %+v", j)
+		}
 	}
 
-	// Claiming again at the same instant finds nothing: runs are at-most-once.
+	// Claiming again at the same instant finds nothing: a live lease is not handed out twice.
 	if due, _ := s.ClaimDue(at, ""); len(due) != 0 {
 		t.Fatalf("job claimed twice: %+v", due)
 	}
@@ -262,5 +265,87 @@ func TestConcurrentTaskStartsShareTheLastSlot(t *testing.T) {
 	}
 	if n != 3 {
 		t.Fatalf("%d tasks stored", n)
+	}
+}
+
+func TestAClaimedOneShotStaysStoredUnderLeaseUntilItFinishes(t *testing.T) {
+	s := newStore(t, utc("2026-10-20 10:00"))
+	once, _ := s.Add(Job{Schedule: "@at 2026-10-20T10:05:00Z", Prompt: "one-shot", ChatID: 1})
+	at := utc("2026-10-20 10:06")
+	due, err := s.ClaimDue(at, "")
+	if err != nil || len(due) != 1 {
+		t.Fatalf("%+v %v", due, err)
+	}
+	jobs, _ := s.List()
+	if len(jobs) != 1 || jobs[0].ClaimedAt.IsZero() || !jobs[0].LeaseUntil.After(at) || jobs[0].Attempts != 1 {
+		t.Fatalf("a claimed one-shot must stay stored, leased: %+v", jobs)
+	}
+	if due, _ := s.ClaimDue(at, ""); len(due) != 0 {
+		t.Fatalf("a leased job was claimed twice: %+v", due)
+	}
+	if err := s.Finish(once.ID, at, "ok"); err != nil {
+		t.Fatal(err)
+	}
+	if jobs, _ := s.List(); len(jobs) != 0 {
+		t.Fatalf("a finished one-shot should be gone: %+v", jobs)
+	}
+}
+
+func TestAnExpiredLeaseHandsTheJobOutAgain(t *testing.T) {
+	s := newStore(t, utc("2026-10-20 10:00"))
+	once, _ := s.Add(Job{Schedule: "@at 2026-10-20T10:05:00Z", Prompt: "one-shot", ChatID: 1})
+	at := utc("2026-10-20 10:06")
+	if due, _ := s.ClaimDue(at, ""); len(due) != 1 {
+		t.Fatalf("%+v", due)
+	}
+	// The process dies without Finish. While the lease lives, nothing moves.
+	if due, _ := s.ClaimDue(at.Add(5*time.Minute), ""); len(due) != 0 {
+		t.Fatalf("claimed again inside its lease: %+v", due)
+	}
+	// After it, the same job is handed out again, counting the new attempt.
+	later := at.Add(16 * time.Minute)
+	due, err := s.ClaimDue(later, "")
+	if err != nil || len(due) != 1 || due[0].ID != once.ID || due[0].Attempts != 2 {
+		t.Fatalf("expired lease not requeued: %+v %v", due, err)
+	}
+	_ = once
+}
+
+func TestAFailedOneShotRetriesWithBackoffThenIsDropped(t *testing.T) {
+	s := newStore(t, utc("2026-10-20 10:00"))
+	j, _ := s.AddNow(Job{Kind: KindTask, Name: "report", Prompt: "p", ChatID: 1})
+	at := utc("2026-10-20 10:01")
+	if due, _ := s.ClaimDue(at, ""); len(due) != 1 {
+		t.Fatalf("%+v", due)
+	}
+	if err := s.Finish(j.ID, at, "error: model unreachable"); err != nil {
+		t.Fatal(err)
+	}
+	jobs, _ := s.List()
+	if len(jobs) != 1 || !jobs[0].NextRun.Equal(at.Add(time.Minute)) || !jobs[0].ClaimedAt.IsZero() {
+		t.Fatalf("first failure should retry in a minute, unclaimed: %+v", jobs)
+	}
+	if due, _ := s.ClaimDue(at.Add(30*time.Second), ""); len(due) != 0 {
+		t.Fatalf("retried before its backoff: %+v", due)
+	}
+	at2 := at.Add(time.Minute)
+	if due, _ := s.ClaimDue(at2, ""); len(due) != 1 || due[0].Attempts != 2 {
+		t.Fatalf("second attempt not handed out: %+v", due)
+	}
+	if err := s.Finish(j.ID, at2, "error: model unreachable"); err != nil {
+		t.Fatal(err)
+	}
+	if jobs, _ := s.List(); len(jobs) != 1 || !jobs[0].NextRun.Equal(at2.Add(2*time.Minute)) {
+		t.Fatalf("second failure should wait two minutes: %+v", jobs)
+	}
+	at3 := at2.Add(2 * time.Minute)
+	if due, _ := s.ClaimDue(at3, ""); len(due) != 1 || due[0].Attempts != 3 {
+		t.Fatalf("third attempt not handed out: %+v", due)
+	}
+	if err := s.Finish(j.ID, at3, "error: model unreachable"); err != nil {
+		t.Fatal(err)
+	}
+	if jobs, _ := s.List(); len(jobs) != 0 {
+		t.Fatalf("a one-shot that failed %d times should be dropped: %+v", MaxAttempts, jobs)
 	}
 }

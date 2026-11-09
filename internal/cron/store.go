@@ -63,6 +63,32 @@ type Job struct {
 	NextRun     time.Time `json:"next_run"`
 	LastRun     time.Time `json:"last_run,omitzero"`
 	LastStatus  string    `json:"last_status,omitempty"`
+	// ClaimedAt and LeaseUntil mark a run in progress: while the lease lives
+	// the job is not handed out again; if the process dies, the lease lapses
+	// and the job is handed out once more. Attempts counts claims since the
+	// last success; a one-shot job that fails MaxAttempts times is dropped.
+	ClaimedAt  time.Time `json:"claimed_at,omitzero"`
+	LeaseUntil time.Time `json:"lease_until,omitzero"`
+	Attempts   int       `json:"attempts,omitempty"`
+}
+
+// MaxAttempts is how many times a one-shot job is tried before it is dropped.
+const MaxAttempts = 3
+
+// claimLease is how long a claim lasts: the job's own run limit (or the
+// scheduler's default), plus grace for delivery and recording the outcome.
+func claimLease(j Job) time.Duration {
+	run := 10 * time.Minute
+	if j.TimeoutSec > 0 {
+		run = min(time.Duration(j.TimeoutSec)*time.Second, 2*time.Hour)
+	}
+	return run + 5*time.Minute
+}
+
+// retryBackoff is how long a failed one-shot waits before its next attempt.
+func retryBackoff(attempts int) time.Duration {
+	d := time.Minute << max(0, attempts-1)
+	return min(d, 15*time.Minute)
 }
 
 // Store keeps jobs in one JSON file. It rereads the file on every call, so
@@ -490,9 +516,12 @@ func (s *Store) Remove(id, gateway string, chatID int64) error {
 	return fmt.Errorf("no job with id %q", id)
 }
 
-// ClaimDue returns the jobs due at now and, in the same write, moves each
-// recurring job to its next future run (so downtime causes at most one
-// catch-up run) and deletes one-shot jobs. Runs are therefore at-most-once.
+// ClaimDue hands out the jobs due at now under a lease (see Job.ClaimedAt):
+// each claimed job stays stored, marked claimed until its lease lapses, and
+// recurring jobs move to their next future run in the same write (so downtime
+// causes at most one catch-up run). A claimed job is never handed out twice
+// while its lease lives; if the process dies before Finish or Release, the
+// lease lapses and the job is handed out again — at-least-once, not lost.
 //
 // With a gateway named, only that gateway's jobs are claimed; the others are
 // left exactly as they are for whoever serves them, so a job for a service that
@@ -514,7 +543,22 @@ func (s *Store) ClaimDue(now time.Time, gateway string) ([]Job, error) {
 	keep := jobs[:0]
 	changed := false
 	for _, j := range jobs {
-		if j.NextRun.After(now) || (gateway != "" && j.Gateway != gateway) {
+		if gateway != "" && j.Gateway != gateway {
+			keep = append(keep, j)
+			continue
+		}
+		if !j.ClaimedAt.IsZero() {
+			if j.LeaseUntil.After(now) {
+				keep = append(keep, j) // a run is in progress under a live lease
+				continue
+			}
+			// The lease lapsed without a finish: the process died mid-run.
+			// Make the job due again below, as if never claimed.
+			j.ClaimedAt, j.LeaseUntil = time.Time{}, time.Time{}
+			j.NextRun = now
+			changed = true
+		}
+		if j.NextRun.After(now) {
 			keep = append(keep, j)
 			continue
 		}
@@ -523,14 +567,19 @@ func (s *Store) ClaimDue(now time.Time, gateway string) ([]Job, error) {
 		if err != nil { // hand-edited into nonsense: park it instead of losing it
 			j.LastStatus = "invalid schedule: " + err.Error()
 			j.NextRun = now.AddDate(100, 0, 0)
+			j.ClaimedAt, j.LeaseUntil = time.Time{}, time.Time{}
 			keep = append(keep, j)
 			continue
 		}
+		j.ClaimedAt, j.LeaseUntil = now, now.Add(claimLease(j))
+		j.Attempts++
 		due = append(due, j)
 		if next, ok := sch.Next(now); ok {
 			j.NextRun = next
-			keep = append(keep, j)
+		} else {
+			j.NextRun = j.LeaseUntil // a one-shot waits out its lease, no sooner
 		}
+		keep = append(keep, j)
 	}
 	if !changed {
 		return nil, nil
@@ -538,7 +587,10 @@ func (s *Store) ClaimDue(now time.Time, gateway string) ([]Job, error) {
 	return due, s.save(keep)
 }
 
-// Finish records the outcome of a run, if the job still exists.
+// Finish records the outcome of a run and ends its claim. A one-shot job is
+// then gone — unless it failed, in which case it waits out a backoff and is
+// tried again, up to MaxAttempts, so one bad minute does not lose it. A
+// recurring job stays, its attempt count reset by anything but a failure.
 func (s *Store) Finish(id string, at time.Time, status string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -552,16 +604,66 @@ func (s *Store) Finish(id string, at time.Time, status string) error {
 		return err
 	}
 	for i := range jobs {
-		if jobs[i].ID == id {
-			jobs[i].LastRun, jobs[i].LastStatus = at, status
+		if jobs[i].ID != id {
+			continue
+		}
+		j := &jobs[i]
+		j.LastRun, j.LastStatus = at, status
+		j.ClaimedAt, j.LeaseUntil = time.Time{}, time.Time{}
+		sch, serr := ParseSchedule(j.Schedule)
+		recurring := true // an unparseable job was parked, never a one-shot to drop
+		if serr == nil {
+			_, recurring = sch.Next(at)
+		}
+		failed := strings.HasPrefix(status, "error")
+		switch {
+		case !recurring && failed && j.Attempts < MaxAttempts:
+			j.NextRun = at.Add(retryBackoff(j.Attempts))
+			return s.save(jobs)
+		case !recurring:
+			return s.save(append(jobs[:i], jobs[i+1:]...))
+		case !failed:
+			j.Attempts = 0
+		}
+		return s.save(jobs)
+	}
+	return nil // the job was removed while it ran
+}
+
+// Release ends a claim without recording an outcome: the run never really
+// happened (the process is shutting down, or the job never got a slot), so
+// the job is due again at once and no attempt is counted against it.
+func (s *Store) Release(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := s.lockFile()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	jobs, err := s.load()
+	if err != nil {
+		return err
+	}
+	for i := range jobs {
+		if jobs[i].ID == id && !jobs[i].ClaimedAt.IsZero() {
+			jobs[i].ClaimedAt, jobs[i].LeaseUntil = time.Time{}, time.Time{}
+			if jobs[i].Attempts > 0 {
+				jobs[i].Attempts--
+			}
+			if sch, err := ParseSchedule(jobs[i].Schedule); err == nil {
+				if _, ok := sch.Next(s.now()); !ok {
+					jobs[i].NextRun = s.now() // a one-shot is due again at once
+				}
+			}
 			return s.save(jobs)
 		}
 	}
-	return nil // one-shot jobs are already gone
+	return nil
 }
 
-// Exists reports whether a job with the ID is stored. A claimed one-shot is
-// not: claiming deleted it. An unreadable file reads as absent.
+// Exists reports whether a job with the ID is stored, claimed or not.
+// An unreadable file reads as absent.
 func (s *Store) Exists(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
