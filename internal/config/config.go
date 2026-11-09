@@ -81,7 +81,7 @@ func Write(path string, cfg *Config) error {
 var ProfileStrengths = []string{"code", "cheap"}
 
 type Profile struct {
-	Type      string `json:"type,omitempty"`        // "openai" (default), "anthropic" or "deepseek"
+	Type      string `json:"type,omitempty"`        // "openai" (default), "anthropic", "deepseek" or "muse"
 	BaseURL   string `json:"base_url,omitempty"`    // default depends on type
 	APIKey    string `json:"api_key,omitempty"`     // prefer api_key_env: keep secrets out of files
 	APIKeyEnv string `json:"api_key_env,omitempty"` // name of the environment variable holding the key
@@ -521,6 +521,9 @@ func (c *Config) validate(path string) error {
 				warnings = append(warnings, fmt.Sprintf("profile %q reaches its model over plain http to %s: the key and the whole conversation cross the network readable by anyone on the way. Use https", name, u.Hostname()))
 			}
 		}
+		if p := c.Profiles[name]; p.Type == provider.TypeMuse && p.ReasoningEffort == "max" && strings.HasSuffix(p.Model, "-contributor") {
+			warnings = append(warnings, fmt.Sprintf("profile %q asks for reasoning_effort \"max\" on %s, which Meta does not offer in Contributor mode: the service will refuse it. Use \"xhigh\" or a standard model", name, p.Model))
+		}
 		if p := c.Profiles[name]; (p.Type == "" || p.Type == provider.TypeOpenAI) && strings.Contains(p.BaseURL, "api.deepseek.com") {
 			warnings = append(warnings, fmt.Sprintf("profile %q reaches DeepSeek as a plain openai profile, which drops the reasoning DeepSeek needs back once tools are used: set \"type\": \"deepseek\"", name))
 		}
@@ -645,7 +648,7 @@ func (c *Config) MCPServerNames() []string {
 // Overrides are the values from flags and environment variables that win over
 // the file. Empty means "not set".
 type Overrides struct {
-	// Type forces the provider type ("openai", "anthropic", "deepseek"), so a deployment can pick
+	// Type forces the provider type ("openai", "anthropic", "deepseek", "muse"), so a deployment can pick
 	// one with an environment variable and no config file.
 	Type    string
 	Profile string
@@ -676,8 +679,8 @@ type Resolved struct {
 var calendarName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
 var (
-	defaultModel  = map[string]string{provider.TypeOpenAI: "gpt-4o-mini", provider.TypeAnthropic: "claude-sonnet-5-5", provider.TypeDeepSeek: "deepseek-flash"}
-	defaultKeyEnv = map[string]string{provider.TypeOpenAI: "OPENAI_API_KEY", provider.TypeAnthropic: "ANTHROPIC_API_KEY", provider.TypeDeepSeek: "DEEPSEEK_API_KEY"}
+	defaultModel  = map[string]string{provider.TypeOpenAI: "gpt-4o-mini", provider.TypeAnthropic: "claude-sonnet-5-5", provider.TypeDeepSeek: "deepseek-flash", provider.TypeMuse: "muse-spark-1.3"}
+	defaultKeyEnv = map[string]string{provider.TypeOpenAI: "OPENAI_API_KEY", provider.TypeAnthropic: "ANTHROPIC_API_KEY", provider.TypeDeepSeek: "DEEPSEEK_API_KEY", provider.TypeMuse: "MODEL_API_KEY"}
 )
 
 // DefaultKeyEnvs are the variables each provider's key is read from when a profile does not name one.
@@ -720,7 +723,7 @@ func (c *Config) Resolve(o Overrides, getenv func(string) string) (Resolved, err
 		typ = provider.TypeOpenAI
 	}
 	if _, known := defaultKeyEnv[typ]; !known {
-		return Resolved{}, fmt.Errorf("profile %q: unknown type %q (use %q, %q or %q)", name, typ, provider.TypeOpenAI, provider.TypeAnthropic, provider.TypeDeepSeek)
+		return Resolved{}, fmt.Errorf("profile %q: unknown type %q (use %s)", name, typ, provider.TypesText())
 	}
 	if err := p.validateThinking(name, typ); err != nil {
 		return Resolved{}, err
@@ -742,6 +745,10 @@ func (c *Config) Resolve(o Overrides, getenv func(string) string) (Resolved, err
 		if p.Thinking != nil {
 			r.Thinking = map[bool]string{true: "enabled", false: "disabled"}[*p.Thinking]
 		}
+	}
+
+	if typ == provider.TypeMuse {
+		r.ReasoningEffort = p.ReasoningEffort // the Muse models see pictures, so images are sent unless the profile says not to
 	}
 
 	switch {
@@ -766,7 +773,7 @@ func (c *Config) Resolve(o Overrides, getenv func(string) string) (Resolved, err
 // CheckKey reports a missing API key. Self-hosted OpenAI-compatible servers
 // (Ollama, vLLM, ...) need none; the hosted APIs always do.
 func (r Resolved) CheckKey() error {
-	hosted := r.Type == provider.TypeAnthropic || strings.Contains(r.BaseURL, "api.openai.com") || strings.Contains(r.BaseURL, "api.deepseek.com")
+	hosted := r.Type == provider.TypeAnthropic || strings.Contains(r.BaseURL, "api.openai.com") || strings.Contains(r.BaseURL, "api.deepseek.com") || strings.Contains(r.BaseURL, "api.meta.ai")
 	if hosted && r.APIKey == "" {
 		if r.Withheld != "" {
 			return fmt.Errorf("profile %q points at %s, which is not where $%s belongs, so that key was not sent there. Name the variable this address takes in the profile's api_key_env, or set TALARIA_API_KEY", r.Name, r.BaseURL, r.Withheld)
@@ -782,11 +789,24 @@ func (r Resolved) Spec() provider.Spec {
 		Thinking: r.Thinking, ReasoningEffort: r.ReasoningEffort}
 }
 
-// validateThinking checks the DeepSeek-only settings.
+// museEfforts are the reasoning levels Meta Model API takes. It has no "none": the Muse models always reason.
+var museEfforts = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
+
+// validateThinking checks the settings only reasoning providers have: DeepSeek's thinking switch and effort,
+// and Muse's effort.
 func (p Profile) validateThinking(name, typ string) error {
+	if typ == provider.TypeMuse {
+		switch {
+		case p.Thinking != nil:
+			return fmt.Errorf("profile %q: the Muse models always reason, so there is no thinking setting to turn on or off: set reasoning_effort instead", name)
+		case p.ReasoningEffort == "" || slices.Contains(museEfforts, p.ReasoningEffort):
+			return nil
+		}
+		return fmt.Errorf("profile %q: reasoning_effort must be one of %s, not %q", name, strings.Join(museEfforts, ", "), p.ReasoningEffort)
+	}
 	if typ != provider.TypeDeepSeek {
 		if p.Thinking != nil || p.ReasoningEffort != "" {
-			return fmt.Errorf("profile %q: thinking and reasoning_effort only apply to type %q", name, provider.TypeDeepSeek)
+			return fmt.Errorf("profile %q: thinking and reasoning_effort only apply to types %q and %q", name, provider.TypeDeepSeek, provider.TypeMuse)
 		}
 		return nil
 	}
@@ -875,6 +895,11 @@ const Example = `{
       "type": "deepseek",
       "api_key_env": "DEEPSEEK_API_KEY",
       "model": "deepseek-flash"
+    },
+    "muse": {
+      "type": "muse",
+      "api_key_env": "MODEL_API_KEY",
+      "model": "muse-spark-1.3"
     },
     "local": {
       "type": "openai",

@@ -1150,7 +1150,7 @@ function newProfileForm() {
     h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key env var', for: 'prof-apikeyenv' }), h('input', { id: 'prof-apikeyenv', name: 'prof-apikeyenv', autocomplete: 'off', type: 'text', placeholder: 'OPENROUTER_API_KEY' })),
     h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key', for: 'prof-apikey' }), h('input', { id: 'prof-apikey', name: 'prof-apikey', autocomplete: 'off', type: 'password', placeholder: 'sk-…' })),
     strengthsRow([], S.settings.strengths),
-    h('div', { class: 'field-note', text: 'Pick provider type openai, anthropic or deepseek. Keys are stored in config.json.' }),
+    h('div', { class: 'field-note', text: 'Pick provider type openai, anthropic, deepseek or muse. Keys are stored in config.json.' }),
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn primary big', type: 'button', text: 'Add', onclick: saveProfile }),
       h('button', { class: 'btn big', type: 'button', text: 'Cancel', onclick: () => { settingsEditing = null; renderSettings(); } })));

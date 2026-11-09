@@ -24,6 +24,8 @@ func Presets() []Preset {
 			Hint: "Anthropic's own API. Paste a key from console.anthropic.com."},
 		{Label: "DeepSeek", Type: "deepseek", Model: "deepseek-chat", KeyEnv: "DEEPSEEK_API_KEY", NeedsKey: true,
 			Hint: "DeepSeek's own API, with its thinking settings. Paste a key from platform.deepseek.com."},
+		{Label: "Meta Muse", Type: "muse", Model: "muse-spark-1.3", KeyEnv: "MODEL_API_KEY", NeedsKey: true,
+			Hint: "Meta Model API. Paste a key from the API keys tab at dev.meta.ai (it starts with LLM_). Models: muse-spark-1.3, muse-wonder-1.0 for the hardest work, muse-ember-1.0 for cheap, fast jobs."},
 		{Label: "OpenRouter", Type: "openai", BaseURL: "https://openrouter.ai/api/v1", Model: "anthropic/claude-sonnet-4", KeyEnv: "OPENROUTER_API_KEY", NeedsKey: true,
 			Hint: "One key for many models. Set the model to any id from openrouter.ai/models."},
 		{Label: "Ollama", Type: "openai", BaseURL: "http://localhost:11434/v1", Model: "llama3.1",

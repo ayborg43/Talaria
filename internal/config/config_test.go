@@ -967,3 +967,59 @@ func TestPermissionsModeInConfig(t *testing.T) {
 		t.Fatalf("an unknown mode was accepted: %v", err)
 	}
 }
+
+func TestMuseProfile(t *testing.T) {
+	c, err := Load(write(t, `{"profiles":{"muse":{"type":"muse"},"hard":{"type":"muse","model":"muse-wonder-1.0","reasoning_effort":"xhigh"},"blind":{"type":"muse","vision":false}}}`, 0o600))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := c.Resolve(Overrides{Profile: "muse"}, env("MODEL_API_KEY", "LLM_1_k"))
+	if err != nil || r.Type != "muse" || r.BaseURL != "https://api.meta.ai/v1" || r.Model != "muse-spark-1.3" ||
+		r.APIKey != "LLM_1_k" || r.KeySource != "$MODEL_API_KEY" || r.ReasoningEffort != "" || r.Thinking != "" || r.NoVision {
+		t.Fatalf("defaults: %+v %v", r, err)
+	}
+	r, _ = c.Resolve(Overrides{Profile: "hard"}, env())
+	if r.Model != "muse-wonder-1.0" || r.Spec().ReasoningEffort != "xhigh" {
+		t.Fatalf("%+v", r)
+	}
+	if err := r.CheckKey(); err == nil || !strings.Contains(err.Error(), "MODEL_API_KEY") {
+		t.Fatalf("the hosted service needs its key, and says which: %v", err)
+	}
+	if r, _ = c.Resolve(Overrides{Profile: "blind"}, env()); !r.NoVision {
+		t.Fatal("vision: false was not honoured")
+	}
+	// The key belongs to Meta's address only: a muse profile pointed elsewhere is not handed it.
+	other := &Config{Profiles: map[string]Profile{"p": {Type: "muse", BaseURL: "https://proxy.example/v1"}}}
+	if r, _ := other.Resolve(Overrides{}, env("MODEL_API_KEY", "LLM_1_k")); r.APIKey != "" || r.Withheld != "MODEL_API_KEY" {
+		t.Fatalf("%+v", r)
+	}
+	// TALARIA_PROVIDER=muse with the key variable is enough: no config file.
+	r, err = (&Config{}).Resolve(Overrides{Type: "muse"}, env("MODEL_API_KEY", "LLM_1_k"))
+	if err != nil || r.Type != "muse" || r.APIKey != "LLM_1_k" || r.Model != "muse-spark-1.3" {
+		t.Fatalf("%+v %v", r, err)
+	}
+}
+
+func TestMuseSettingsAreValidated(t *testing.T) {
+	for name, tc := range map[string]struct {
+		p    Profile
+		want string
+	}{
+		"none is not a level": {Profile{Type: "muse", ReasoningEffort: "none"}, "minimal, low, medium, high, xhigh, max"},
+		"no thinking switch":  {Profile{Type: "muse", Thinking: new(bool)}, "always reason"},
+	} {
+		_, err := (&Config{Profiles: map[string]Profile{"p": tc.p}}).Resolve(Overrides{}, env())
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	found := false
+	for _, pr := range Presets() {
+		if pr.Type == "muse" {
+			found = pr.KeyEnv == "MODEL_API_KEY" && pr.Model == "muse-spark-1.3" && pr.NeedsKey
+		}
+	}
+	if !found {
+		t.Fatal("Settings does not offer Muse as a one-click provider")
+	}
+}

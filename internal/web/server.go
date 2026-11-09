@@ -859,9 +859,9 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch in.Type {
-	case "", provider.TypeOpenAI, provider.TypeAnthropic, provider.TypeDeepSeek:
+	case "", provider.TypeOpenAI, provider.TypeAnthropic, provider.TypeDeepSeek, provider.TypeMuse:
 	default:
-		fail(w, http.StatusBadRequest, fmt.Sprintf("unknown profile type %q (use %q, %q or %q)", in.Type, provider.TypeOpenAI, provider.TypeAnthropic, provider.TypeDeepSeek))
+		fail(w, http.StatusBadRequest, fmt.Sprintf("unknown profile type %q (use %s)", in.Type, provider.TypesText()))
 		return
 	}
 	for _, b := range in.BestFor {

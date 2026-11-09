@@ -36,6 +36,7 @@ var tokenPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{30,}`),                                         // GitHub
 	regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{40,}`),                                       // GitHub fine-grained
 	regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9\-]{10,}`),                                      // Slack
+	regexp.MustCompile(`\bLLM_\d{6,}_[A-Za-z0-9._\-]{16,}`),                                    // Meta Model API
 	regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`),                                                 // AWS access key ID
 	regexp.MustCompile(`\bAIza[0-9A-Za-z_\-]{35}\b`),                                           // Google API key
 	regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}`),   // JWT

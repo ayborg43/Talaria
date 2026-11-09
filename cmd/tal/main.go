@@ -599,6 +599,9 @@ func showConfig(path string, overrides config.Overrides) error {
 	if r.MaxTokens > 0 {
 		fmt.Printf("  max tokens: %d\n", r.MaxTokens)
 	}
+	if r.Type == provider.TypeMuse {
+		fmt.Printf("  reasoning effort: %s, images: %s\n", config.First(r.ReasoningEffort, "service default"), map[bool]string{true: "not sent", false: "sent"}[r.NoVision])
+	}
 	if r.Type == provider.TypeDeepSeek {
 		fmt.Printf("  thinking: %s, reasoning effort: %s, images: %s\n", config.First(r.Thinking, "service default (on)"), config.First(r.ReasoningEffort, "service default"), map[bool]string{true: "not sent", false: "sent"}[r.NoVision])
 	}
@@ -755,7 +758,7 @@ func gatewayBackends(cfg *config.Config, def config.Resolved, defProvider provid
 	}
 	// traits says what a resolved profile can do, so the router can pick it.
 	traits := func(name string, r config.Resolved) (vision, reasoning bool, best []string) {
-		return !r.NoVision, r.Type == provider.TypeDeepSeek, cfg.Profiles[name].BestFor
+		return !r.NoVision, provider.Reasons(r.Type), cfg.Profiles[name].BestFor
 	}
 	build := func(name, effort string) (chat.Backend, error) {
 		r, err := cfg.Resolve(config.Overrides{Profile: name}, getenv)
@@ -766,7 +769,7 @@ func gatewayBackends(cfg *config.Config, def config.Resolved, defProvider provid
 			return chat.Backend{}, err
 		}
 		spec := r.Spec()
-		if effort != "" && r.Type == provider.TypeDeepSeek {
+		if effort != "" && provider.Reasons(r.Type) {
 			spec.ReasoningEffort = effort
 		}
 		p, err := provider.New(spec)
@@ -780,7 +783,7 @@ func gatewayBackends(cfg *config.Config, def config.Resolved, defProvider provid
 	// startup overrides; profiles edited in Settings rebuild from config.
 	cache := map[string]chat.Backend{
 		def.Name: {Provider: defProvider, Model: def.Model, Desc: describe(def),
-			Vision: !def.NoVision, Reasoning: def.Type == provider.TypeDeepSeek, Best: cfg.Profiles[def.Name].BestFor},
+			Vision: !def.NoVision, Reasoning: provider.Reasons(def.Type), Best: cfg.Profiles[def.Name].BestFor},
 	}
 
 	return &chat.Backends{

@@ -17,13 +17,14 @@ export OPENAI_API_KEY=sk-...         # or ANTHROPIC_API_KEY with -profile (see b
 
 ## Models and profiles
 
-Three provider types:
+Four provider types:
 
 | `type` | Talks to | Default base URL |
 |---|---|---|
 | `openai` | any OpenAI-compatible `/chat/completions` API: OpenAI, OpenRouter, Ollama, vLLM, LM Studio | `https://api.openai.com/v1` |
 | `anthropic` | the native Anthropic Messages API | `https://api.anthropic.com` |
 | `deepseek` | [DeepSeek](https://api-docs.deepseek.com): OpenAI-compatible, plus its thinking mode | `https://api.deepseek.com` |
+| `muse` | [Meta Model API](https://dev.meta.ai/docs/overview): the Muse models, OpenAI-compatible, plus a reasoning effort | `https://api.meta.ai/v1` |
 
 With no config file, Talaria uses `openai` and reads `OPENAI_API_KEY`, as before. To keep several
 setups and switch between them, create a config file:
@@ -41,6 +42,7 @@ setups and switch between them, create a config file:
     "openai": {"type": "openai", "api_key_env": "OPENAI_API_KEY", "model": "gpt-4o-mini"},
     "claude": {"type": "anthropic", "api_key_env": "ANTHROPIC_API_KEY", "model": "claude-sonnet-5-5", "max_tokens": 8192},
     "deepseek": {"type": "deepseek", "api_key_env": "DEEPSEEK_API_KEY", "model": "deepseek-flash"},
+    "muse": {"type": "muse", "api_key_env": "MODEL_API_KEY", "model": "muse-spark-1.3"},
     "local":  {"type": "openai", "base_url": "http://localhost:11434/v1", "model": "llama3.1"}
   },
   "telegram": {"token_env": "TALARIA_TELEGRAM_TOKEN", "allowed_users": [123456789]},
@@ -51,7 +53,7 @@ setups and switch between them, create a config file:
 - **Keys:** name the environment variable that holds the key (`api_key_env`) rather than pasting it in.
   An inline `api_key` works but Talaria warns if the file is readable by other users.
 - **Precedence**, highest first: flags, environment, the selected profile, built-in defaults.
-  Flags and variables: `-profile` / `TALARIA_PROFILE`, `-model` / `TALARIA_MODEL`, `-base-url` / `TALARIA_BASE_URL`, `TALARIA_API_KEY`, and `TALARIA_PROVIDER` (`openai`, `anthropic` or `deepseek`: with it and the provider's usual key variable, no config file is needed).
+  Flags and variables: `-profile` / `TALARIA_PROFILE`, `-model` / `TALARIA_MODEL`, `-base-url` / `TALARIA_BASE_URL`, `TALARIA_API_KEY`, and `TALARIA_PROVIDER` (`openai`, `anthropic`, `deepseek` or `muse`: with it and the provider's usual key variable, no config file is needed).
 - **Profile choice:** `-profile`, else `default_profile`, else the only profile if there is just one.
 - **Fallback:** `fallback_profile` names a second profile, tried when the first is down (rate-limited, overloaded,
   unreachable). Refused keys and billing errors never fall back: another model would refuse them too.
@@ -90,6 +92,32 @@ A `deepseek` profile defaults to the base URL above, the key in `$DEEPSEEK_API_K
   tools in that conversation may be refused, because those earlier messages have no reasoning to send back. Start a fresh chat
   (`/new`) on the DeepSeek profile instead. Moving away from it is fine.
 - `tal config show` prints the settings a `deepseek` profile resolves to.
+
+### Meta Muse
+
+```bash
+export MODEL_API_KEY=LLM_...        # from the API keys tab at dev.meta.ai
+./tal -profile muse                 # with the profile above; `tal config init` writes one
+```
+
+In the web app: **Settings → AI models → Add an AI profile → Meta Muse**, paste the key, Add. It works at once, with no restart.
+
+A `muse` profile defaults to the address above, the key in `$MODEL_API_KEY` and the model `muse-spark-1.3`. The others at the
+time of writing are `muse-wonder-1.0` (the most capable, for long and hard work) and `muse-ember-1.0` (cheaper, for routine
+jobs and helpers); check Meta's model list, as the names change. One optional setting, for this type only:
+
+| Field | Meaning |
+|---|---|
+| `reasoning_effort` | `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"`. Unset leaves it to the service |
+
+- The Muse models always reason, so there is no thinking switch and no `"none"`. More effort is slower and costs more,
+  since reasoning is billed as output. `"max"` is not offered on the `-contributor` models, and Talaria warns if a profile asks for it.
+- Talaria uses the Chat Completions endpoint, where the model's reasoning stays with the service and is not carried from one
+  step to the next. Meta's Responses API does carry it, and Talaria does not speak that yet.
+- Images are sent (the models read them); set `"vision": false` on a profile to stop that.
+- The key is sent only to `api.meta.ai`: a `muse` profile pointed at another address is not given `$MODEL_API_KEY` unless it names
+  the variable itself. Keys of this shape (`LLM_<number>_<secret>`) are scrubbed from tool output, history and the log even if
+  Talaria was never told them.
 
 Provider details worth knowing:
 

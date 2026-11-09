@@ -23,7 +23,7 @@ func TestPresetsAreValidStartingPoints(t *testing.T) {
 		}
 		seen[p.Label] = true
 		switch p.Type {
-		case provider.TypeOpenAI, provider.TypeAnthropic, provider.TypeDeepSeek:
+		case provider.TypeOpenAI, provider.TypeAnthropic, provider.TypeDeepSeek, provider.TypeMuse:
 		default:
 			t.Errorf("%s: unknown type %q", p.Label, p.Type)
 		}
