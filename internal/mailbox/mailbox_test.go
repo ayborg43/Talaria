@@ -564,3 +564,32 @@ func TestTheParserReadsWhatARealServerSends(t *testing.T) {
 		t.Errorf("%d responses read, want 16", len(got))
 	}
 }
+
+// Google shows an app password as four groups of four, and a copy can carry spaces of several kinds with it. The
+// server wants the sixteen letters alone; any other password is sent exactly as given.
+func TestAGoogleAppPasswordIsSentWithoutTheSpacesItWasCopiedWith(t *testing.T) {
+	for name, pasted := range map[string]string{
+		"spaces":       "abcd efgh ijkl mnop",
+		"non-breaking": "abcd efgh ijkl mnop",
+		"padded":       "  abcd efgh ijkl mnop \n",
+		"zero-width":   "abcd​efgh ijkl mnop",
+		"already":      "abcdefghijklmnop",
+	} {
+		f, s := seeded(t)
+		f.with(func() { f.pass = "abcdefghijklmnop" })
+		s.Password = pasted
+		if _, err := s.List(context.Background(), Query{}); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// A password that is not that shape is never altered, spaces and all.
+	f, s := seeded(t)
+	f.with(func() { f.pass = "my pass phrase 12" })
+	s.Password = "my pass phrase 12"
+	if _, err := s.List(context.Background(), Query{}); err != nil {
+		t.Errorf("a password with spaces was altered: %v", err)
+	}
+	if got := (&Service{Password: "abcd efgh ijkl mn0p"}).secret(); got != "abcd efgh ijkl mn0p" {
+		t.Errorf("a password with a digit was cleaned: %q", got)
+	}
+}

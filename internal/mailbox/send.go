@@ -184,7 +184,7 @@ func (s *Service) Send(ctx context.Context, o Outgoing) (string, error) {
 	if addr := addressOnly(from); addr != "" {
 		from = addr
 	}
-	if err := send(ctx, server, s.login(), s.Password, from, rcpts, msg); err != nil {
+	if err := send(ctx, server, s.login(), s.secret(), from, rcpts, msg); err != nil {
 		return "", s.scrubErr(err)
 	}
 	out := fmt.Sprintf("Sent %q to %s.\n", o.Subject, strings.Join(o.To, ", "))
@@ -198,7 +198,11 @@ func scrubText(s *Service, err error) string {
 	if s.Password == "" {
 		return err.Error()
 	}
-	return strings.ReplaceAll(err.Error(), s.Password, "<password>")
+	msg := strings.ReplaceAll(err.Error(), s.Password, "<password>")
+	if sec := s.secret(); sec != s.Password {
+		msg = strings.ReplaceAll(msg, sec, "<password>")
+	}
+	return msg
 }
 
 // addressOnly takes the address out of "Name <a@b>".

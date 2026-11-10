@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/mail"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -61,6 +62,26 @@ func (s *Service) now() time.Time {
 	return time.Now()
 }
 
+// googleAppPassword is what Google shows: sixteen lower-case letters in four groups.
+var googleAppPassword = regexp.MustCompile(`^[a-z]{16}$`)
+
+// secret is the password as the mail server should receive it. Google shows an app password in four groups of four
+// ("abcd efgh ijkl mnop") and a copy can carry ordinary, non-breaking or zero-width spaces along; the server wants the
+// sixteen letters alone, so a password that is exactly that once the spaces are gone is sent without them. Any other
+// password is sent exactly as it was given: a password may be anything.
+func (s *Service) secret() string {
+	if t := strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\t', '\n', '\r', '\u00a0', '\u200b', '\u202f', '\ufeff':
+			return -1
+		}
+		return r
+	}, s.Password); googleAppPassword.MatchString(t) {
+		return t
+	}
+	return s.Password
+}
+
 func (s *Service) login() string {
 	if s.User != "" {
 		return s.User
@@ -75,7 +96,11 @@ func (s *Service) scrubErr(err error) error {
 	if err == nil || s.Password == "" {
 		return err
 	}
-	return &scrubbedError{msg: strings.ReplaceAll(err.Error(), s.Password, "<password>"), err: err}
+	msg := strings.ReplaceAll(err.Error(), s.Password, "<password>")
+	if sec := s.secret(); sec != s.Password {
+		msg = strings.ReplaceAll(msg, sec, "<password>") // the cleaned form is a secret too
+	}
+	return &scrubbedError{msg: msg, err: err}
 }
 
 type scrubbedError struct {
@@ -134,7 +159,7 @@ func (s *Service) session(ctx context.Context, fn func(c *client) error) (err er
 				return errors.New("the mail server does not allow password sign-in on this connection")
 			}
 		}
-		if _, lerr := c.run("LOGIN", str(s.login()), str(s.Password)); lerr != nil {
+		if _, lerr := c.run("LOGIN", str(s.login()), str(s.secret())); lerr != nil {
 			var r *refused
 			if errors.As(lerr, &r) {
 				return errors.New("the mail server refused the sign-in: check the address and the app password (a normal account password usually does not work), and that IMAP is turned on for the account")
