@@ -199,6 +199,12 @@ type Summary struct {
 	Subject string
 	Unread  bool
 	Size    int
+
+	// What triage reads: who it went to, and the marks that say a program sent it.
+	To, Cc            string
+	Bulk              bool // a mailing list or bulk sender (List-Unsubscribe, List-Id, Precedence)
+	Auto              bool // sent by a program (Auto-Submitted, or a no-reply sender)
+	Flagged, Answered bool
 }
 
 func ascii(s string) bool { return quotable(s) }
@@ -311,17 +317,25 @@ func (s *Service) Search(ctx context.Context, q Query) (list []Summary, total in
 		if len(uids) == 0 {
 			return nil
 		}
-		fr, err := c.run("UID FETCH", raw(uidList(uids)), raw("(UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)])"))
+		fr, err := c.run("UID FETCH", raw(uidList(uids)), raw("(UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT LIST-UNSUBSCRIBE LIST-ID PRECEDENCE AUTO-SUBMITTED)])"))
 		if err != nil {
 			return err
 		}
 		for _, f := range fr.fetches {
-			sum := Summary{UID: num(f["UID"]), Unread: !hasFlag(f["FLAGS"], `\Seen`), Size: int(num(f["RFC822.SIZE"]))}
+			sum := Summary{UID: num(f["UID"]), Unread: !hasFlag(f["FLAGS"], `\Seen`), Size: int(num(f["RFC822.SIZE"])),
+				Flagged: hasFlag(f["FLAGS"], `\Flagged`), Answered: hasFlag(f["FLAGS"], `\Answered`)}
 			sum.Date = parseInternalDate(str1(f["INTERNALDATE"]), s.zone())
 			head := str1(f["BODY"])
 			if m, merr := mail.ReadMessage(strings.NewReader(strings.TrimRight(head, "\r\n") + "\r\n\r\n")); merr == nil {
 				sum.From = plainLine(Address(m.Header.Get("From")), 120)
 				sum.Subject = plainLine(decodeHeader(m.Header.Get("Subject")), 140)
+				sum.To, sum.Cc = plainLine(m.Header.Get("To"), 300), plainLine(m.Header.Get("Cc"), 300)
+				prec := strings.ToLower(m.Header.Get("Precedence"))
+				sum.Bulk = m.Header.Get("List-Unsubscribe") != "" || m.Header.Get("List-Id") != "" || prec == "bulk" || prec == "list" || prec == "junk"
+				if as := strings.ToLower(strings.TrimSpace(m.Header.Get("Auto-Submitted"))); as != "" && as != "no" {
+					sum.Auto = true
+				}
+				sum.Auto = sum.Auto || noReply(sum.From)
 			}
 			if sum.UID != 0 {
 				list = append(list, sum)

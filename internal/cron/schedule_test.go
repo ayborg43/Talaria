@@ -103,3 +103,21 @@ func TestParseErrors(t *testing.T) {
 		t.Errorf("short interval should explain the minimum, got %v", err)
 	}
 }
+
+func TestCronTZReadsTheFieldsInThatZone(t *testing.T) {
+	lagos, _ := time.LoadLocation("Africa/Lagos") // UTC+1 all year
+	sch, err := ParseSchedule("CRON_TZ=Africa/Lagos 30 7 * * *")
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	next, ok := sch.Next(after)
+	if !ok || !next.Equal(time.Date(2026, 11, 10, 6, 30, 0, 0, time.UTC)) {
+		t.Fatalf("next = %v, want 07:30 in Lagos (06:30 UTC) the next day", next.In(lagos))
+	}
+	for _, bad := range []string{"CRON_TZ=Nowhere/Land 30 7 * * *", "CRON_TZ=Africa/Lagos @every 5m", "CRON_TZ=Africa/Lagos"} {
+		if _, err := ParseSchedule(bad); err == nil {
+			t.Errorf("%q was accepted", bad)
+		}
+	}
+}

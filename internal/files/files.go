@@ -47,6 +47,7 @@ var kinds = map[string]string{
 	"image/jpeg":      ".jpg",
 	"image/gif":       ".gif",
 	"image/webp":      ".webp",
+	MIMEMade:          ".html", // only ever made here (SaveMade): Detect never reports it, so an upload cannot be a page
 }
 
 // ClampRetention keeps the admin's hours inside 1..168, defaulting to 12.
@@ -187,7 +188,7 @@ func Detect(data []byte) string {
 		return "application/pdf"
 	}
 	mime := http.DetectContentType(data)
-	if _, ok := kinds[mime]; ok {
+	if _, ok := kinds[mime]; ok && mime != MIMEMade {
 		return mime
 	}
 	return ""
@@ -196,17 +197,30 @@ func Detect(data []byte) string {
 // Save stores data under a random id and returns its record. Data that is
 // not a PDF or a supported image is refused.
 func (s *Store) Save(name string, data []byte, origin string) (File, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(data) == 0 {
-		return File{}, errors.New("the file is empty")
-	}
 	if len(data) > MaxBytes {
 		return File{}, fmt.Errorf("the file is too big (%d MB at most)", MaxBytes>>20)
 	}
 	mime := Detect(data)
-	if mime == "" {
+	if mime == "" && len(data) > 0 {
 		return File{}, errors.New("only PDF files and PNG, JPEG, GIF or WebP images can be kept")
+	}
+	return s.keep(name, data, mime, origin)
+}
+
+// SaveMade keeps a page made by Make (RenderDoc, RenderPage, RenderSlides or RenderDashboard). It is the only
+// way a page gets into the store: the bytes of an upload are never trusted to be one.
+func (s *Store) SaveMade(name string, page []byte) (File, error) {
+	if len(page) > maxMakeBytes {
+		return File{}, errors.New("the page is too big")
+	}
+	return s.keep(name, page, MIMEMade, OriginGenerated)
+}
+
+func (s *Store) keep(name string, data []byte, mime, origin string) (File, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(data) == 0 {
+		return File{}, errors.New("the file is empty")
 	}
 	if origin != OriginGenerated {
 		origin = OriginUpload

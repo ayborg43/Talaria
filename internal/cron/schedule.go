@@ -39,8 +39,23 @@ var (
 //	"@hourly" "@daily" "@weekly" "@monthly" "@yearly"
 //	"@every 90m"              repeat at a fixed interval (at least 1m)
 //	"@at 2026-10-21T09:00:00+01:00"   run once (RFC 3339)
+//	"CRON_TZ=Africa/Lagos 30 7 * * *"  a cron expression read in that time zone, daylight saving included
 func ParseSchedule(spec string) (Schedule, error) {
 	spec = strings.Join(strings.Fields(spec), " ")
+	if name, rest, ok := strings.Cut(spec, " "); ok && strings.HasPrefix(name, "CRON_TZ=") {
+		loc, err := time.LoadLocation(strings.TrimPrefix(name, "CRON_TZ="))
+		if err != nil {
+			return nil, fmt.Errorf("%q is not a time zone name (such as Africa/Lagos)", strings.TrimPrefix(name, "CRON_TZ="))
+		}
+		if strings.HasPrefix(rest, "@every ") || strings.HasPrefix(rest, "@at ") {
+			return nil, fmt.Errorf("CRON_TZ= goes with a cron expression, not %q", strings.Fields(rest)[0])
+		}
+		inner, err := ParseSchedule(rest)
+		if err != nil {
+			return nil, err
+		}
+		return zoned{inner, loc}, nil
+	}
 	switch {
 	case spec == "":
 		return nil, fmt.Errorf("schedule is empty")
@@ -90,6 +105,14 @@ func ParseSchedule(spec string) (Schedule, error) {
 	}
 	return &e, nil
 }
+
+// zoned reads another schedule's fields in a time zone of its own.
+type zoned struct {
+	inner Schedule
+	loc   *time.Location
+}
+
+func (z zoned) Next(after time.Time) (time.Time, bool) { return z.inner.Next(after.In(z.loc)) }
 
 type every time.Duration
 

@@ -68,7 +68,9 @@ func (s *Server) profilePost(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Profile *memory.Profile `json:"profile"`
-		Note    *struct {
+		// Onboarded marks the first-day introduction as done (or declined) without touching the rest of the profile.
+		Onboarded *bool `json:"onboarded"`
+		Note      *struct {
 			Target string `json:"target"` // user or memory
 			Index  *int   `json:"index"`  // nil adds a note
 			Old    string `json:"old"`
@@ -80,8 +82,14 @@ func (s *Server) profilePost(w http.ResponseWriter, r *http.Request) {
 	}
 	var err error
 	switch {
+	case in.Onboarded != nil:
+		p := s.Notes.Profile()
+		p.Onboarded = *in.Onboarded
+		err = s.Notes.SetProfile(p)
 	case in.Profile != nil:
-		err = s.Notes.SetProfile(*in.Profile)
+		p := *in.Profile
+		p.Onboarded = s.Notes.Profile().Onboarded // the page's forms do not carry it, and must not undo it
+		err = s.Notes.SetProfile(p)
 	case in.Note != nil && in.Note.Index == nil:
 		err = s.Notes.Add(memory.Target(in.Note.Target), in.Note.Text)
 	case in.Note != nil:

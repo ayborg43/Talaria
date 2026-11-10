@@ -19,6 +19,9 @@ type Profile struct {
 	// Theme is how the app looks: "" or "light" (the default), "dark", or "auto" to follow the device.
 	// It is for the page alone and is never put in the prompt.
 	Theme string `json:"theme,omitempty"`
+	// Onboarded is set once the user has been through the first-day introduction (or waved it away), so the
+	// app stops offering it. It is for the page alone and is never put in the prompt.
+	Onboarded bool `json:"onboarded,omitempty"`
 }
 
 const (

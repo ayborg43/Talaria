@@ -48,6 +48,7 @@ func RegisterTools(r *tool.Registry, b Binding) {
 		Run:     b.makePDF,
 		RunRich: b.withDocument(b.makePDF),
 	})
+	registerMake(r, b)
 	r.Register(tool.Tool{
 		Name: "files_view",
 		Description: "Show a kept image to the model: the picture is attached to the result, so a profile that can see images describes what is in it. " +

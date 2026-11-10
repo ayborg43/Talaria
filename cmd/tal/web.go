@@ -248,7 +248,7 @@ func webJobs(rt *app.Runtime, zone *time.Location) []web.JobInfo {
 	if jobs, err := rt.Cron.List(); err == nil {
 		slices.SortFunc(jobs, func(a, b cron.Job) int { return a.NextRun.Compare(b.NextRun) })
 		for _, j := range jobs {
-			if j.Gateway != "web" || j.ChatID != web.ChatID || j.Kind != "" {
+			if j.Gateway != "web" || j.ChatID != web.ChatID || j.Kind != "" || j.Name == briefName { // the brief has its own switch
 				continue
 			}
 			out = append(out, web.JobInfo{ID: j.ID, Kind: "TIME", Title: tidy(j.Name, 80, "(reminder)"), Sub: "Next " + j.NextRun.In(zone).Format("Mon 2 Jan 15:04"), State: "Waiting"})

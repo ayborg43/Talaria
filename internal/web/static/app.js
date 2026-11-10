@@ -490,6 +490,7 @@ function renderChrome() {
   $('#stop').hidden = !(run && !hasText);
   $('#send').disabled = !hasText;
   $('#quick').hidden = run || hasText;
+  if (typeof renderWelcome === 'function') renderWelcome(); // more.js may not have loaded yet on the first paint
   document.title = n ? `(${n}) Talaria` : 'Talaria';
   if (S.tab === 'agents') { const sig = n + '|' + S.agents.length; if (sig !== S.agentsSig) { S.agentsSig = sig; renderAgentsPage(); } }
 }
@@ -795,7 +796,7 @@ async function openConversation(id) {
 $('#chats').addEventListener('click', openSheet);
 $('#new-chat').addEventListener('click', newConversation);
 $('#sheet').addEventListener('click', (e) => { if (e.target.closest('.scrim')) closeSheet(); });
-for (const q of ["What's on today?", 'Summarise my inbox', 'What are you watching for me?']) {
+for (const q of ['Give me my morning brief', 'What needs me?', "What's on today?", 'What are you watching for me?']) {
   $('#quick').append(h('button', { type: 'button', text: q, onclick: () => sendText(q) }));
 }
 // dictation, where the phone offers it
@@ -1036,8 +1037,8 @@ let settingsEditing = null;
 async function loadSettings() {
   try {
     // The profile and the notification list are extras: Settings opens without them, and does not wait on them in turn.
-    const [st, c, me, notices] = await Promise.all([api('/api/settings'), api('/api/control'), api('/api/profile').catch(() => null), api('/api/notices').catch(() => null)]);
-    S.settings = st; ctl = c; S.paused = c.paused; S.me = me; S.notices = notices;
+    const [st, c, me, notices, brief] = await Promise.all([api('/api/settings'), api('/api/control'), api('/api/profile').catch(() => null), api('/api/notices').catch(() => null), api('/api/brief').catch(() => null)]);
+    S.settings = st; ctl = c; S.paused = c.paused; S.me = me; S.notices = notices; S.brief = brief;
   } catch (e) { if (!(e instanceof AuthError)) toast(e.message); return; }
   renderSettings();
 }
@@ -1430,6 +1431,7 @@ function uptime(sec) {
 }
 
 const SETTINGS_PAGES = [
+  { id: 'setup', title: 'Setup', icon: 'check', sub: 'What Talaria needs, and what is ready.' },
   { id: 'you', title: 'You', icon: 'user', sub: 'Your name, the tone you like, and what it remembers.' },
   { id: 'models', title: 'AI models', icon: 'cpu', sub: 'Which models work for you, and when each is used.' },
   { id: 'permissions', title: 'Permissions', icon: 'lock', sub: 'When Talaria has to ask you first.' },
@@ -1454,6 +1456,7 @@ function settingsSummary(id) {
       return on.length ? on.join(', ') : 'Nothing connected yet';
     }
     case 'notifications': return { on: 'On for this device', off: 'Off', denied: 'Blocked in the browser', unsupported: 'Not supported here', 'needs-install': 'Add the app to your Home Screen first' }[S.push] || '';
+    case 'setup': { const t = setupItems(); const open = t.filter((x) => !x.optional && x.state !== 'ready').length; return open ? open + ' to do' : 'Everything it needs is ready'; }
     case 'about': return 'Talaria ' + (c.version || S.version || '');
     case 'you': {
       const me = S.me || {}, n = ((me.user || {}).entries || []).length + ((me.memory || {}).entries || []).length;
@@ -1568,7 +1571,7 @@ function paneAbout() {
   return out;
 }
 
-const PANES = { you: paneYou, models: paneModels, permissions: panePermissions, connections: paneConnections, notifications: paneNotifications, about: paneAbout };
+const PANES = { setup: paneSetup, you: paneYou, models: paneModels, permissions: panePermissions, connections: paneConnections, notifications: paneNotifications, about: paneAbout };
 const wideScreen = () => window.matchMedia('(min-width: 900px)').matches;
 window.matchMedia('(min-width: 900px)').addEventListener?.('change', () => { if (S.tab === 'settings') renderSettings(); });
 $('#settings-back').addEventListener('click', () => { location.hash = '#settings'; });

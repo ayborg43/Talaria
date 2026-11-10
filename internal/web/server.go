@@ -90,6 +90,10 @@ type Sources struct {
 	// Tasks lists the background tasks that have ended lately, and RetryTask starts one of them again as it was.
 	Tasks     func() []TaskInfo
 	RetryTask func(id string) error
+	// Brief says whether the morning brief is on and when, and SetBrief turns it on or off at a time of day
+	// ("07:30", in Zone). Nil leaves the brief out of the app.
+	Brief    func() BriefInfo
+	SetBrief func(enabled bool, at string) error
 	// Zone is the time zone the person lives in.
 	Zone *time.Location
 }
@@ -203,6 +207,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/notices", s.authed(s.noticesGet))
 	mux.HandleFunc("POST /api/notices", s.authed(s.noticesPost))
 	mux.HandleFunc("POST /api/tasks", s.authed(s.taskAction))
+	mux.HandleFunc("POST /api/setup/check", s.authed(s.setupCheck))
+	mux.HandleFunc("GET /api/brief", s.authed(s.briefGet))
+	mux.HandleFunc("POST /api/brief", s.authed(s.briefPost))
 	mux.HandleFunc("GET /api/computer", s.authed(s.computerGet))
 	mux.HandleFunc("POST /api/computer/run", s.authed(s.computerRun))
 	mux.HandleFunc("GET /api/computer/files", s.authed(s.computerFiles))
@@ -394,7 +401,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"messages": msgs, "seq": seq, "epoch": epoch, "running": running, "agents": s.Hub.Workers(), "model": s.activeModel(), "version": s.Version, "paused": paused, "zone": s.zone().String(), "telegram": s.Telegram}
 	if s.Notes != nil { // the name and avatar the page shows; the tone is for the agent alone
 		p := s.Notes.Profile()
-		out["profile"] = map[string]string{"name": p.Name, "avatar": p.Avatar, "theme": p.Theme}
+		out["profile"] = map[string]any{"name": p.Name, "avatar": p.Avatar, "theme": p.Theme, "onboarded": p.Onboarded}
 	}
 	if s.Convos != nil { // a side chat says what it was opened beside, so the page can say where "back" goes
 		out["side"] = s.Convos.SideOf()
@@ -1454,6 +1461,11 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 		// nothing served this way can run as a page.
 		disposition = "inline"
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; object-src 'self'; frame-ancestors 'self'")
+		if f.MIME == files.MIMEMade {
+			// A page the agent made: it runs as an origin of its own with no script, no network, no forms and no
+			// way to read this app, whatever its markup says.
+			w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'")
+		}
 		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 	}
 	w.Header().Set("Content-Disposition", disposition+"; filename="+strconv.Quote(f.Name))

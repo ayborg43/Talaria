@@ -121,6 +121,7 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 	if rt.cfg.Mail != nil {
 		mailbox.RegisterTools(tools, rt.cfg.Mail)
 		mailbox.RegisterThreadTools(tools, rt.cfg.Mail)
+		mailbox.RegisterTriage(tools, rt.cfg.Mail)
 		var resolve mailbox.FileResolver
 		var save mailbox.FileSaver
 		if rt.cfg.Files != nil {

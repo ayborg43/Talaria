@@ -617,6 +617,12 @@ The agent gets three reading tools: `email_list` (by days back, unread, sender, 
 reply answers the latest message. `email_draft` saves a message, or a threaded reply, in your Drafts folder without sending it: you
 finish and send it from your own mail program. A draft leaves nothing, so it does not ask.
 
+- **What needs you, and what can wait.** `email_triage` sorts the last day or two of mail into two lists, each message with a one-line reason
+  ("A person wrote to you directly and asks a question", "You are only copied", "A newsletter or mailing list", "From a program, but it says
+  'security alert'"). The rules read only the listing: who it went to (To against Cc), whether a program or a list sent it (`Auto-Submitted`,
+  `List-Unsubscribe`, `List-Id`, `Precedence`, no-reply senders), whether you flagged or answered it, and what the subject asks or warns of.
+  No model is called and no message body is read, so it is cheap and gives the same answer every time; where it is unsure and the message
+  is unread it errs toward "needs you". The agent is told the reasons come from headers and subjects only and to open a message before acting.
 - **Reading is enforced, not just promised.** The mail client can send eight commands (sign in, list folders, open a folder,
   search, fetch, capability, sign out, and APPEND, which files the Sent copy of an approved send or a draft), and none of them can delete,
   move or mark a mailbox. Folders are opened with `EXAMINE`, which the server itself
@@ -714,6 +720,26 @@ holds live login cookies, so keep Dokploy access tight and back up the data volu
     so `TOOL_CALL_ARGS` is always `{}`.
   - The key is as good as the password for talking to the agent, so treat it as one. It needs https like the rest. There
     are no CORS headers: it is meant for apps, not for a page on another site.
+- **A morning brief.** Settings → You → **Morning brief** turns on one message a day, at a time you pick in your time zone (`TALARIA_TIMEZONE`),
+  written fresh each time from today's calendar, `email_triage` and your goals and watches, and posted into the chat (and as a notification).
+  It is an ordinary scheduled job of the web chat named "Morning brief", so it pauses with **Pause all**, shows its last result and next run
+  in Settings, and is moved or removed by changing the setting. A source that is not connected is named as missing, never guessed. **Brief me
+  now** (or the chip above the message box) runs the same prompt on request. Schedules also accept `CRON_TZ=Africa/Lagos 30 7 * * *`, a cron
+  expression read in that zone, daylight saving included.
+- **Setup and the first day.** Settings → **Setup** lists what Talaria depends on (a model, email, calendar, the brief, notifications on this
+  device, Telegram), each **Ready**, **Not checked** or **Needs setup**, with where to fix it. **Check again** signs in to your mailbox and
+  reads your calendars just now, so Ready means it answered; it sends nothing to the model. Until it has been done or waved away, an empty
+  chat offers a welcome: **Introduce yourself** has the agent read your recent mail and this week's calendar (if connected; otherwise it says
+  what it cannot see) and answer in three short paragraphs with **Sounds right** and **Something's off** to tap; **Set things up** opens the list.
+- **Make.** Ask for a document, a web page, a slide deck or a dashboard: `files_make_doc` (Markdown), `files_make_page` (HTML and CSS),
+  `files_make_slides` and `files_make_dashboard` (headline numbers, bar and line charts drawn as inline SVG, small tables, from data the agent
+  already has; it draws what it is given and works out nothing). Each comes out as **one self-contained HTML file**: no script, no outside
+  address, no font to fetch, so it opens anywhere offline. It appears as a card in the chat with **View** (in the app) and **Save**, and is kept
+  like any download until the retention runs out. Decks are one full-screen slide each, moved with the arrow keys, and print one to a page.
+  Because the agent writes them, they are held to a hard line: Markdown is escaped before anything is turned back into a tag; a page loses
+  scripts, frames, forms, event handlers, `javascript:` links and anything that would fetch; and every made page is served under a policy
+  with `sandbox`, `default-src 'none'` and no script or network, in a frame with scripts, forms and popups switched off, so it cannot reach
+  the app or the network whatever it contains. An upload can never be one: only Make can put a page in the store. Pages are capped at about 600 KB.
 - **Results look like what they are.** A mail listing is a list you can tap, a message has Draft a reply and Whole thread, a page
   the agent opened has **Take control**, a goal shows its plan with what is done, a spending import shows its categories as bars
   with a field to set a savings goal, and a made or filled PDF has View and Save. The raw result is one tap away under each.

@@ -396,6 +396,7 @@ func runGateway(c *cli) error {
 			}
 			return out
 		}
+		srv.Sources.Brief, srv.Sources.SetBrief = webBrief(c.rt.Cron, zone), setBrief(c.rt.Cron, zone)
 		srv.Sources.RetryTask = func(id string) error {
 			_, err := cron.RetryChatTask(c.rt.Cron, s.sched, s.name, web.ChatID, id)
 			return err

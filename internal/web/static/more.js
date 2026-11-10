@@ -266,22 +266,26 @@ async function openDoc(id, f) {
     try { meta = ((await api('/api/files')).files || []).find((x) => x.id === id) || meta; } catch (e) { if (e instanceof AuthError) return; }
   }
   if (!meta || !meta.mime) { toast('That file is no longer kept: it may have expired.'); return; }
-  const src = '/api/files/' + id, isPDF = meta.mime === 'application/pdf';
-  const body = openPanel(meta.name || 'Document', (isPDF ? 'PDF' : 'Image') + (meta.size ? ' · ' + fmtSize(meta.size) : ''));
+  const src = '/api/files/' + id, isPDF = meta.mime === 'application/pdf', isPage = meta.mime === 'text/html';
+  const body = openPanel(meta.name || 'Document', (isPDF ? 'PDF' : isPage ? 'Page' : 'Image') + (meta.size ? ' · ' + fmtSize(meta.size) : ''));
   body.className = 'panel-body doc';
   let page = 1, zoom = 100;
   const view = h('div', { class: 'docview' });
   const draw = () => {
-    if (isPDF) view.replaceChildren(h('iframe', { class: 'docframe', title: meta.name || 'Document', src: src + '?inline=1#page=' + page + '&zoom=' + zoom }));
+    // A page the agent made is shown with every script, form and popup switched off. allow-same-origin is only so
+    // the browser will frame it at all: the server's own policy (sandbox, no script, no network) still gives the
+    // page an origin of its own, and with no script allowed there is nothing that could use the app's.
+    if (isPage) view.replaceChildren(h('iframe', { class: 'docframe', title: meta.name || 'Page', sandbox: 'allow-same-origin', referrerpolicy: 'no-referrer', src: src + '?inline=1' }));
+    else if (isPDF) view.replaceChildren(h('iframe', { class: 'docframe', title: meta.name || 'Document', src: src + '?inline=1#page=' + page + '&zoom=' + zoom }));
     else { const im = h('img', { class: 'docimg', alt: meta.name || 'Image', src: src + '?inline=1' }); im.style.width = zoom + '%'; view.replaceChildren(im); }
-    label.textContent = (isPDF ? 'Page ' + page + ' · ' : '') + zoom + '%';
+    label.textContent = isPage ? '' : (isPDF ? 'Page ' + page + ' · ' : '') + zoom + '%';
   };
   const label = h('span', { class: 'doclabel mono' });
   const btn = (name, label, fn) => h('button', { type: 'button', class: 'key', 'aria-label': label, title: label, onclick: () => { fn(); draw(); } }, icon(name));
   const bar = h('div', { class: 'toolbar' },
     isPDF ? btn('left', 'Previous page', () => { page = Math.max(1, page - 1); }) : null,
     isPDF ? btn('right', 'Next page', () => { page++; }) : null,
-    btn('minus', 'Zoom out', () => { zoom = Math.max(25, zoom - 25); }), btn('plus', 'Zoom in', () => { zoom = Math.min(400, zoom + 25); }), label, h('span', { class: 'grow' }),
+    isPage ? null : btn('minus', 'Zoom out', () => { zoom = Math.max(25, zoom - 25); }), isPage ? null : btn('plus', 'Zoom in', () => { zoom = Math.min(400, zoom + 25); }), label, h('span', { class: 'grow' }),
     h('a', { class: 'key go', href: src + '?inline=1', target: '_blank', rel: 'noopener', text: 'Open' }),
     h('a', { class: 'key go', href: src, download: '', text: 'Save' }));
   if (navigator.share && window.File) {
@@ -325,10 +329,35 @@ async function openDoc(id, f) {
 // fields), and the card is drawn from that. A result with no record (an older conversation, a tool that gives
 // none) is read out of the text instead, by the readers at the end of this section, into the same shape.
 function docCard(d) {
-  return h('div', { class: 'rich doc' }, h('span', { class: 'tag', text: /image/.test(d.mime || '') ? 'IMG' : 'PDF' }),
+  return h('div', { class: 'rich doc' }, h('span', { class: 'tag', text: /image/.test(d.mime || '') ? 'IMG' : d.mime === 'text/html' ? 'PAGE' : 'PDF' }),
     h('span', { class: 'grow' }, h('span', { class: 't', text: d.name || 'Document' }), h('span', { class: 's', text: d.size ? fmtSize(d.size) : 'Kept in Documents' })),
     h('button', { class: 'btn small', type: 'button', text: 'View', onclick: () => openDoc(d.id) }),
     h('a', { class: 'btn small', href: '/api/files/' + d.id, download: '', text: 'Save' }));
+}
+function mailTriageCard(d) {
+  const needs = d.needs || [], wait = d.wait || [];
+  if (!needs.length && !wait.length) return null;
+  const rows = (items, tint) => {
+    const box = h('div', { class: 'rich rows' });
+    items.slice(0, 10).forEach((r, i) => {
+      const from = r.from || '(unknown)', name = from.replace(/\s*<.*>$/, '') || from;
+      const av = h('span', { class: 'avatar', text: (name.trim()[0] || '?').toUpperCase() });
+      av.style.background = TINTS[(i + tint) % 4][0]; av.style.color = TINTS[(i + tint) % 4][1];
+      box.append(h('button', { class: 'row', type: 'button', onclick: () => sendText('Read message ' + r.id + ' and tell me what it says.') }, av,
+        h('span', { class: 'grow' }, h('span', { class: 't', text: name + ' · ' + (r.subject || '(no subject)') }), h('span', { class: 's', text: r.why || '' })),
+        r.unread ? h('span', { class: 'pill info', text: 'NEW' }) : null));
+    });
+    if (items.length > 10) box.append(h('div', { class: 'field-note', text: '+' + (items.length - 10) + ' more.' }));
+    return box;
+  };
+  const card = h('div', { class: 'rich triage' });
+  card.append(h('div', { class: 'triage-h' }, h('b', { text: 'Needs you' }), h('span', { class: 'pill ' + (needs.length ? 'brass' : 'ok'), text: String(needs.length) })));
+  card.append(needs.length ? rows(needs, 0) : h('div', { class: 'field-note', text: 'Nothing needs you.' }));
+  if (wait.length) {
+    const more = h('details', { class: 'triage-wait' }, h('summary', null, 'Can wait ', h('span', { class: 'pill', text: String(wait.length) })), rows(wait, 2));
+    card.append(more);
+  }
+  return card;
 }
 function mailListCard(d) {
   const items = d.items || [];
@@ -400,7 +429,7 @@ function spendingCard(d) {
   } })));
   return card;
 }
-const CARDS = { mail_list: mailListCard, mail: mailCard, page: pageCard, plan: planCard, spending: spendingCard, document: (d) => (d.id ? docCard(d) : null) };
+const CARDS = { mail_triage: mailTriageCard, mail_list: mailListCard, mail: mailCard, page: pageCard, plan: planCard, spending: spendingCard, document: (d) => (d.id ? docCard(d) : null) };
 
 // The readers: the same records, taken from a result's text when no record came with it.
 function readArtifact(tool, text) {
@@ -542,7 +571,7 @@ function tasksCard() {
 async function saveMe(body, done) {
   try { S.me = await api('/api/profile', { method: 'POST', body }); if (done) toast(done); }
   catch (e) { failed(e); return false; }
-  if (body.profile) { S.profile = { name: S.me.profile.name || '', avatar: S.me.profile.avatar || '', theme: S.me.profile.theme || '' }; applyTheme(S.profile.theme); S.blocks.clear(); $('#thread').replaceChildren(); renderChat(); }
+  if (body.profile) { S.profile = { name: S.me.profile.name || '', avatar: S.me.profile.avatar || '', theme: S.me.profile.theme || '', onboarded: !!S.me.profile.onboarded }; applyTheme(S.profile.theme); S.blocks.clear(); $('#thread').replaceChildren(); renderChat(); }
   renderSettings();
   return true;
 }
@@ -599,6 +628,7 @@ function paneYou() {
       h('div', { class: 'field' }, h('label', { class: 'field-label', for: 'me-tone', text: 'Tone' }), tone), presets,
       h('div', { class: 'field-note', text: 'The name and tone are given to the agent with its notes, from the next conversation on.' }),
       h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: () => saveMe({ profile: { name: name.value, avatar: avatar.value, tone: tone.value, theme: p.theme || '' } }, 'Saved.') }))),
+    briefCard(),
     themeCard(p),
     notesCard('user', 'What it knows about you', 'The agent writes these as it learns; you can correct or remove any of them.', me.user),
     notesCard('memory', 'Its own notes', 'What it has noted about its work and this setup.', me.memory),
@@ -629,4 +659,93 @@ function noticeCards() {
     list.append(rows, h('div', { class: 'btn-row' }, h('button', { class: 'btn small', type: 'button', text: 'Clear the list', onclick: () => set({ clear: true }) })));
   }
   return [kinds, list];
+}
+
+
+// ---------- setup, the morning brief and the first day ----------
+// The checklist is read from what Settings already knows, plus a live check of the mailbox and calendars when
+// asked: "Ready" for those means it answered just now, not only that a setting is saved.
+function setupItems() {
+  const s = S.settings || {}, checks = S.checks || {}, out = [];
+  const add = (id, title, state, detail, go, optional) => out.push({ id, title, state, detail, go, optional });
+  const profiles = s.profiles || [];
+  const usable = profiles.filter((p) => p.available);
+  const cur = usable.find((p) => p.active) || usable.find((p) => p.default) || usable[0];
+  if (usable.length || s.has_default_key) add('model', 'A model that answers', 'ready', 'Using ' + ((cur && cur.model) || S.model || 'a model') + '.', 'models');
+  else if (S.model) add('model', 'A model that answers', 'unchecked', 'Using ' + S.model + '. Its key comes from the server environment, which this page cannot see.', 'models');
+  else add('model', 'A model that answers', 'todo', 'No model is set up yet.', 'models');
+  const em = s.email || {}, ec = checks.email;
+  add('email', 'Your email', ec ? (ec.ok ? 'ready' : 'todo') : em.available ? 'unchecked' : 'todo', ec ? ec.detail : em.available ? (em.status || 'Set up. Press Check again to try it.') : 'Not connected: it cannot read your mail, sort it or write the brief from it.', 'connections');
+  const own = (s.calendars || []).filter((x) => !x.builtin), cc = checks.calendar;
+  add('calendar', 'Your calendar', cc ? (cc.ok ? 'ready' : 'todo') : own.length ? 'unchecked' : 'todo', cc ? cc.detail : own.length ? 'Set up. Press Check again to try it.' : 'Only its own calendar is there. Add yours to see your day in the brief.', 'connections');
+  const brief = S.brief || {};
+  if (brief.available) add('brief', 'Morning brief', brief.enabled ? 'ready' : 'todo', brief.enabled ? 'Arrives at ' + brief.at + ' every day.' : 'Off. Turn it on under You to get one message each morning.', 'you');
+  add('push', 'Notifications on this device', S.push === 'on' ? 'ready' : S.push === 'unsupported' ? 'unchecked' : 'todo', S.push === 'on' ? 'On.' : S.push === 'needs-install' ? 'Add Talaria to your Home Screen first.' : S.push === 'denied' ? 'Blocked in the browser.' : 'Off: it cannot reach you when the app is closed.', 'notifications', true);
+  const tg = (s.chats || []).find((c) => c.service === 'telegram');
+  add('telegram', 'Telegram', tg && tg.connected ? 'ready' : 'todo', tg && tg.connected ? 'Connected.' : 'Not connected. Optional: lets it message you away from the app.', 'connections', true);
+  return out;
+}
+const SETUP_LABEL = { ready: 'READY', unchecked: 'NOT CHECKED', todo: 'NEEDS SETUP' };
+function paneSetup() {
+  const items = setupItems();
+  const open = items.filter((x) => !x.optional && x.state !== 'ready').length;
+  const recheck = h('button', { class: 'btn', type: 'button', text: 'Check again' });
+  recheck.addEventListener('click', async () => {
+    recheck.disabled = true; recheck.textContent = 'Checking…';
+    try { S.checks = await api('/api/setup/check', { method: 'POST', body: {} }); await loadSettings(); }
+    catch (e) { failed(e); }
+    renderSettings();
+  });
+  const rows = h('div', { class: 'rows' });
+  for (const it of items) {
+    rows.append(h('a', { class: 'row setup-row', href: '#settings/' + it.go },
+      h('span', { class: 'pill ' + (it.state === 'ready' ? 'ok' : it.state === 'todo' ? 'bad' : 'info'), text: SETUP_LABEL[it.state] }),
+      h('span', { class: 'grow' }, h('span', { class: 't', text: it.title + (it.optional ? ' (optional)' : '') }), h('span', { class: 's', text: it.detail })), icon('chev')));
+  }
+  return [h('div', { class: 'card' }, h('h2', null, 'What it depends on'),
+    h('div', { class: 'field-note', text: open ? open + (open === 1 ? ' thing is' : ' things are') + ' not ready yet.' : 'Everything it needs is ready.' }), rows,
+    h('div', { class: 'btn-row' }, recheck)),
+    h('div', { class: 'field-note', text: 'Check again signs in to your mailbox and reads your calendars just now. It does not send a message to the model, so it costs nothing.' })];
+}
+function briefCard() {
+  const b = S.brief;
+  if (!b || !b.available) return null;
+  const at = h('input', { id: 'brief-at', type: 'time', value: b.at || '07:30', step: '300' });
+  const on = h('input', { type: 'checkbox', checked: !!b.enabled });
+  const save = async () => {
+    try { S.brief = await api('/api/brief', { method: 'POST', body: { enabled: on.checked, at: at.value || '07:30' } }); toast(S.brief.enabled ? 'The brief will arrive at ' + S.brief.at + '.' : 'The morning brief is off.'); }
+    catch (e) { failed(e); }
+    renderSettings();
+  };
+  const next = b.enabled && b.next ? 'Next: ' + fmtWhen(new Date(b.next)) + (b.status && b.status !== 'ok' ? ' · last run: ' + b.status : '') : '';
+  return h('div', { class: 'card' }, h('h2', null, 'Morning brief'),
+    h('label', { class: 'opt' + (b.enabled ? ' on' : '') }, on, h('span', { class: 'grow' }, h('b', { text: 'Send me a brief each morning' }),
+      h('span', { class: 's', text: 'What is on today, what needs you in your mail and why, what can wait, and anything it is tracking. It is written fresh each morning from your calendar and mail.' }))),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', for: 'brief-at', text: 'Time, in your time zone' }), at),
+    next ? h('div', { class: 'field-note', text: next }) : null,
+    h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: save }), h('button', { class: 'btn', type: 'button', text: 'Brief me now', onclick: () => { location.hash = '#chat'; sendText('Give me my morning brief'); } })));
+}
+// The first day: until it has been done or waved away, an empty chat offers to set up and to be introduced.
+const ONBOARD_PROMPT = `This is my first time here. Introduce yourself in three short paragraphs, plain text:
+1. Who I seem to be, from my recent mail and this week's calendar if they are connected. If they are not, say what you cannot see rather than guessing, and where to connect them (Settings, then Connections).
+2. Three concrete things you can do for me, picked from what you can actually reach.
+3. Ask me to correct anything that is off.
+Then call choice_present with the options "Sounds right" and "Something's off". Do not claim to know anything you did not read.`;
+async function markOnboarded() {
+  try { S.me = await api('/api/profile', { method: 'POST', body: { onboarded: true } }); } catch (e) { if (e instanceof AuthError) return; }
+  S.profile = { ...S.profile, onboarded: true };
+  renderWelcome();
+}
+function renderWelcome() {
+  const el = $('#welcome'); if (!el) return;
+  const show = S.profile && S.profile.onboarded === false && S.order.length === 0 && !working() && S.tab === 'chat';
+  if (el.hidden === !show && (!show || el.firstChild)) return;
+  el.hidden = !show;
+  if (!show) { el.replaceChildren(); return; }
+  el.replaceChildren(h('div', { class: 'card welcome-card' }, h('h2', null, 'Welcome' + (S.profile.name ? ', ' + S.profile.name : '')),
+    h('p', { class: 'field-note', text: 'It can read your mail and calendar, keep working on a computer of its own, and ask before it sends, pays or deletes anything. Two ways to begin:' }),
+    h('div', { class: 'btn-row' },
+      h('button', { class: 'btn primary', type: 'button', text: 'Introduce yourself', onclick: async () => { await markOnboarded(); sendText(ONBOARD_PROMPT); } }),
+      h('button', { class: 'btn', type: 'button', text: 'Set things up', onclick: async () => { await markOnboarded(); location.hash = '#settings/setup'; } }),
+      h('button', { class: 'btn small', type: 'button', text: 'Not now', onclick: markOnboarded }))));
 }
