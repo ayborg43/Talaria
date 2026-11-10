@@ -373,7 +373,10 @@ func TestTimeoutKillsBackgroundJobsToo(t *testing.T) {
 
 	for name, env := range map[string]Env{"local": Local{}, "docker": dock, "ssh": ssh} {
 		start := time.Now()
-		res, err := env.Shell(context.Background(), "sleep 30 & echo $!; wait", 500*time.Millisecond)
+		// A whole second: the far side counts whole seconds, and its own timer
+		// must fire before the client's (the timeout plus the shortened grace),
+		// or this would test the client's kill of a local process group instead.
+		res, err := env.Shell(context.Background(), "sleep 30 & echo $!; wait", time.Second)
 		if err != nil || !res.TimedOut {
 			t.Fatalf("%s: %+v %v", name, res, err)
 		}

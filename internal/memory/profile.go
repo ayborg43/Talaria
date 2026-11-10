@@ -16,6 +16,9 @@ type Profile struct {
 	Name   string `json:"name,omitempty"`   // what to call the user
 	Tone   string `json:"tone,omitempty"`   // how replies should sound, in the user's words
 	Avatar string `json:"avatar,omitempty"` // an emoji or initials, shown beside their messages
+	// Theme is how the app looks: "" or "light" (the default), "dark", or "auto" to follow the device.
+	// It is for the page alone and is never put in the prompt.
+	Theme string `json:"theme,omitempty"`
 }
 
 const (
@@ -50,6 +53,11 @@ func (n *Notes) SetProfile(p Profile) error {
 		return fmt.Errorf("the tone is longer than %d characters", maxProfileTone)
 	case len([]rune(p.Avatar)) > maxProfileAvatar*4: // an emoji is several code points
 		return errors.New("the avatar is one emoji or a couple of initials")
+	}
+	switch p.Theme {
+	case "", "light", "dark", "auto":
+	default:
+		return errors.New("the theme is light, dark or auto")
 	}
 	if err := os.MkdirAll(n.Dir, 0o700); err != nil {
 		return err

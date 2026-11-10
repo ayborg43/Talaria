@@ -730,7 +730,7 @@ holds live login cookies, so keep Dokploy access tight and back up the data volu
   goals and watches, and **Drop** (goals), **Delete** (watches) or **Delete** (reminders; they cannot be paused, only removed). Earlier these were
   only reachable by typing `goals pause ID`-style commands in a chat; the buttons act on the web chat's own jobs only, and a goal that is dropped
   keeps its record, exactly as with the chat command.
-- **Light and dark** follow your phone. **Offline,** the app opens and says so; nothing from your conversation, mail or calendar is stored
+- **Light by default.** Settings → You → Appearance switches to dark, or to matching your device; the choice is kept with your profile on the server, so it follows you to every device. **Offline,** the app opens and says so; nothing from your conversation, mail or calendar is stored
   on the phone, only the app itself.
 - **What it is not.** One person, one password: there are no accounts, and no passkeys yet. It does not stream voice, and the dictation button appears only where the browser offers speech recognition.
 

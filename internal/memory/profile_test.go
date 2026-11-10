@@ -47,3 +47,20 @@ func TestEditAtChangesOnlyTheEntryItWasShown(t *testing.T) {
 		t.Fatalf("entries %q used %d limit %d err %v", entries, used, limit, err)
 	}
 }
+
+// The theme is the page's business: it is kept with the profile, checked, and never put in the prompt.
+func TestTheThemeIsKeptButNotToldToTheAgent(t *testing.T) {
+	n := &Notes{Dir: t.TempDir()}
+	if n.Profile().Theme != "" {
+		t.Fatal("a new profile has a theme: light is the default, and is not written down")
+	}
+	if err := n.SetProfile(Profile{Name: "Ayo", Theme: "dark"}); err != nil {
+		t.Fatal(err)
+	}
+	if n.Profile().Theme != "dark" || strings.Contains(n.Prompt(), "dark") {
+		t.Fatalf("theme %q, prompt %q", n.Profile().Theme, n.Prompt())
+	}
+	if err := n.SetProfile(Profile{Theme: "neon"}); err == nil {
+		t.Fatal("an unknown theme was accepted")
+	}
+}

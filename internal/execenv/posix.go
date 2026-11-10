@@ -10,6 +10,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -36,7 +37,25 @@ var (
 	// Standard error is merged into standard output here, on the far side:
 	// docker exec and ssh carry the two as separate streams and lose their
 	// relative order, but one stream keeps it.
-	shellScript = prelude + `if command -v timeout >/dev/null 2>&1; then exec timeout -s KILL "$2" sh -c "$1" 2>&1; fi
+	//
+	// Where setsid exists the command runs in a group of its own, and a
+	// watchdog kills the whole group when the time is up. That is the only way
+	// that does not depend on how timeout treats the jobs a command left
+	// behind: uutils' timeout (the default on Ubuntu 26.04) kills the shell and
+	// leaves them running, holding the output open. The watchdog is silenced
+	// so it cannot hold it open either. Without setsid, timeout alone is the
+	// best there is.
+	shellScript = prelude + `if command -v setsid >/dev/null 2>&1; then
+  setsid sh -c "$1" 2>&1 &
+  pid=$!
+  ( sleep "$2" & s=$!; trap 'kill $s 2>/dev/null; exit 0' TERM
+    wait $s && kill -s KILL -- "-$pid" 2>/dev/null ) >/dev/null 2>&1 &
+  dog=$!
+  wait $pid 2>/dev/null; code=$?
+  kill $dog 2>/dev/null
+  exit $code
+fi
+if command -v timeout >/dev/null 2>&1; then exec timeout -s KILL "$2" sh -c "$1" 2>&1; fi
 exec sh -c "$1" 2>&1`
 	// args: path, byte limit.
 	readScript = prelude + `p=$1
@@ -180,6 +199,11 @@ func (e *posixEnv) run(ctx context.Context, script string, args []string, stdin 
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		r.code = ee.ExitCode()
+		// A timeout that kills its whole group kills itself too, and then the
+		// status is a signal, not an exit. Report it as a shell would: 128+signal.
+		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			r.code = 128 + int(ws.Signal())
+		}
 		return r, nil
 	}
 	return r, err

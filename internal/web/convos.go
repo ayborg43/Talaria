@@ -278,6 +278,27 @@ func (c *Convos) SetArchived(id string, archived bool) error {
 	return nil
 }
 
+// Delete removes a conversation for good, archived or not. The main
+// conversation stays. It reports whether the removed one was the open one, in
+// which case the caller shows another.
+func (c *Convos) Delete(id string) (wasActive bool, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.items[id]; !ok {
+		return false, errUnknownConversation
+	}
+	if id == c.main {
+		return false, errorString("the main conversation stays: make another one main first, then delete this one")
+	}
+	delete(c.items, id)
+	c.order = without(c.order, id)
+	if wasActive = id == c.active; wasActive {
+		c.active = c.main
+	}
+	c.saveLocked()
+	return wasActive, nil
+}
+
 // ActiveID is the conversation the page shows.
 func (c *Convos) ActiveID() string {
 	c.mu.Lock()

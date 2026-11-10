@@ -468,10 +468,18 @@ function conversationsCard(chats, archived) {
       const title = prompt('Name this conversation', c.title || '');
       if (title && title.trim()) change({ rename: c.id, title: title.trim() });
     } }));
-    if (archived) acts.append(h('button', { class: 'btn small', type: 'button', text: 'Restore', onclick: () => change({ unarchive: c.id }, 'Restored.') }));
-    else if (!c.main) {
+    const del = () => {
+      if (!confirm('Delete "' + (c.title || 'New chat') + '"? This cannot be undone.')) return;
+      // Deleting the open one drops back to the main conversation, so the page has to reload it.
+      change({ delete: c.id }, 'Deleted.').then(() => { if (c.active) { closeSheet(); loadState().then(() => { S.pinned = true; toBottom(); }); } });
+    };
+    if (archived) {
+      acts.append(h('button', { class: 'btn small', type: 'button', text: 'Restore', onclick: () => change({ unarchive: c.id }, 'Restored.') }));
+      acts.append(h('button', { class: 'btn small danger', type: 'button', text: 'Delete', onclick: del }));
+    } else if (!c.main) {
       acts.append(h('button', { class: 'btn small', type: 'button', text: 'Archive', onclick: () => change({ archive: c.id }, 'Archived. Nothing was deleted.') }));
       acts.append(h('button', { class: 'btn small', type: 'button', text: 'Make main', onclick: () => change({ main: c.id }) }));
+      acts.append(h('button', { class: 'btn small danger', type: 'button', text: 'Delete', onclick: del }));
     }
     rows.append(h('div', { class: 'row convo', 'aria-current': c.active ? 'true' : null },
       h('button', { class: 'rowbtn', type: 'button', onclick: () => (archived ? change({ unarchive: c.id }).then(() => openConversation(c.id)) : openConversation(c.id)) },
@@ -534,9 +542,31 @@ function tasksCard() {
 async function saveMe(body, done) {
   try { S.me = await api('/api/profile', { method: 'POST', body }); if (done) toast(done); }
   catch (e) { failed(e); return false; }
-  if (body.profile) { S.profile = { name: S.me.profile.name || '', avatar: S.me.profile.avatar || '' }; S.blocks.clear(); $('#thread').replaceChildren(); renderChat(); }
+  if (body.profile) { S.profile = { name: S.me.profile.name || '', avatar: S.me.profile.avatar || '', theme: S.me.profile.theme || '' }; applyTheme(S.profile.theme); S.blocks.clear(); $('#thread').replaceChildren(); renderChat(); }
   renderSettings();
   return true;
+}
+// Light is how the app looks unless you choose otherwise. The choice is kept on the server with your profile,
+// not on the phone, so it follows you to every device you sign in on.
+const THEME_COLOR = { light: '#F6F3EC', dark: '#100E0A' };
+function applyTheme(theme) {
+  const t = theme === 'dark' || theme === 'auto' ? theme : 'light';
+  const root = document.documentElement;
+  if (t === 'light') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', t);
+  const dark = t === 'dark' || (t === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const bar = document.querySelector('meta[name="theme-color"]');
+  if (bar) bar.setAttribute('content', dark ? THEME_COLOR.dark : THEME_COLOR.light);
+}
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => applyTheme(document.documentElement.getAttribute('data-theme') || 'light'));
+function themeCard(p) {
+  const cur = p.theme === 'dark' || p.theme === 'auto' ? p.theme : 'light';
+  const opt = (id, title, text) => h('label', { class: 'opt' + (cur === id ? ' on' : '') },
+    h('input', { type: 'radio', name: 'theme', value: id, checked: cur === id, onchange: () => saveMe({ profile: { name: p.name || '', avatar: p.avatar || '', tone: p.tone || '', theme: id } }) }),
+    h('span', { class: 'grow' }, h('b', { text: title }), h('span', { class: 's', text })));
+  return h('div', { class: 'card' }, h('h2', null, 'Appearance'),
+    opt('light', 'Light', 'Warm paper and ink. The default.'),
+    opt('dark', 'Dark', 'Always dark, whatever the device is set to.'),
+    opt('auto', 'Match my device', 'Light by day and dark by night, if that is how your phone is set.'));
 }
 const TONES = ['Warm and brief', 'Plain and direct', 'Formal', 'Playful', 'Detailed, with reasons'];
 function notesCard(target, title, hint, view) {
@@ -568,7 +598,8 @@ function paneYou() {
       h('div', { class: 'field' }, h('label', { class: 'field-label', for: 'me-avatar', text: 'Avatar, shown beside what you write' }), avatar),
       h('div', { class: 'field' }, h('label', { class: 'field-label', for: 'me-tone', text: 'Tone' }), tone), presets,
       h('div', { class: 'field-note', text: 'The name and tone are given to the agent with its notes, from the next conversation on.' }),
-      h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: () => saveMe({ profile: { name: name.value, avatar: avatar.value, tone: tone.value } }, 'Saved.') }))),
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: () => saveMe({ profile: { name: name.value, avatar: avatar.value, tone: tone.value, theme: p.theme || '' } }, 'Saved.') }))),
+    themeCard(p),
     notesCard('user', 'What it knows about you', 'The agent writes these as it learns; you can correct or remove any of them.', me.user),
     notesCard('memory', 'Its own notes', 'What it has noted about its work and this setup.', me.memory),
   ];

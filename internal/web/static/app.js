@@ -821,7 +821,7 @@ async function loadState() {
   setAgents(d.agents);
   S.epoch = d.epoch; S.seq = d.seq; S.running = d.running; S.model = d.model; S.paused = d.paused; S.version = d.version;
   S.telegram = !!d.telegram; renderTg();
-  S.zone = d.zone || S.zone; S.profile = d.profile || {}; S.side = d.side || '';
+  S.zone = d.zone || S.zone; S.profile = d.profile || {}; S.side = d.side || ''; applyTheme(S.profile.theme);
   if (!S.order.length) S.pinned = true; // a conversation that starts again starts at its bottom
   // Nothing is torn down: messages that are unchanged keep their elements, so the reader's place survives a reconnect.
   renderChat(); renderQueue();

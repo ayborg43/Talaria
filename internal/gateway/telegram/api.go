@@ -183,6 +183,13 @@ func (a *API) GetMe(ctx context.Context) (User, error) {
 	return u, err
 }
 
+// DeleteWebhook turns off a webhook set earlier. Telegram refuses getUpdates
+// with a 409 while one is active, so polling clears it first. Updates waiting
+// for delivery are kept.
+func (a *API) DeleteWebhook(ctx context.Context) error {
+	return a.call(ctx, "deleteWebhook", map[string]any{"drop_pending_updates": false}, nil)
+}
+
 // GetUpdates long-polls for up to timeoutSec seconds.
 func (a *API) GetUpdates(ctx context.Context, offset, timeoutSec int) ([]Update, error) {
 	var ups []Update

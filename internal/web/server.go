@@ -394,7 +394,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"messages": msgs, "seq": seq, "epoch": epoch, "running": running, "agents": s.Hub.Workers(), "model": s.activeModel(), "version": s.Version, "paused": paused, "zone": s.zone().String(), "telegram": s.Telegram}
 	if s.Notes != nil { // the name and avatar the page shows; the tone is for the agent alone
 		p := s.Notes.Profile()
-		out["profile"] = map[string]string{"name": p.Name, "avatar": p.Avatar}
+		out["profile"] = map[string]string{"name": p.Name, "avatar": p.Avatar, "theme": p.Theme}
 	}
 	if s.Convos != nil { // a side chat says what it was opened beside, so the page can say where "back" goes
 		out["side"] = s.Convos.SideOf()

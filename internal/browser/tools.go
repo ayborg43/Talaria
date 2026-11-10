@@ -48,6 +48,9 @@ func Register(r *tool.Registry, m *Manager, owner string) {
 		r.Register(tl)
 	}
 	obj := func(props string, required ...string) json.RawMessage {
+		if required == nil {
+			required = []string{} // marshals as [], not null, which providers reject
+		}
 		req, _ := json.Marshal(required)
 		return json.RawMessage(`{"type":"object","properties":{` + props + `},"required":` + string(req) + `}`)
 	}

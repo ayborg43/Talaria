@@ -116,9 +116,37 @@ func (r *Registry) Specs() []provider.ToolSpec {
 	specs := make([]provider.ToolSpec, 0, len(r.order))
 	for _, name := range r.order {
 		t := r.tools[name]
-		specs = append(specs, provider.ToolSpec{Name: t.Name, Description: t.Description, Parameters: t.Schema})
+		specs = append(specs, provider.ToolSpec{Name: t.Name, Description: t.Description, Parameters: cleanSchema(t.Schema)})
 	}
 	return specs
+}
+
+// cleanSchema drops "required" and "properties" keys whose value is null.
+// Some providers (OpenAI among them) reject the whole request when a tool's
+// schema says "required": null, and a tool from an MCP server can send that.
+func cleanSchema(s json.RawMessage) json.RawMessage {
+	if !strings.Contains(string(s), "null") {
+		return s
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(s, &m) != nil || m == nil {
+		return s
+	}
+	changed := false
+	for _, k := range []string{"required", "properties"} {
+		if v, ok := m[k]; ok && string(v) == "null" {
+			delete(m, k)
+			changed = true
+		}
+	}
+	if !changed {
+		return s
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return s
+	}
+	return out
 }
 
 // RemovePrefix removes every tool whose name starts with prefix, in place.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -376,5 +377,45 @@ func TestTheSecondScriptKeepsThePagesRules(t *testing.T) {
 	// A picture of the browser is asked for only while its screen is open: the timer is the panel's, and closing stops it.
 	if !strings.Contains(js, "clearTimeout(PANEL.timer)") || !strings.Contains(js, "document.hidden") {
 		t.Error("the browser picture would keep being fetched after its screen closed")
+	}
+}
+
+// Light is the default: the page is dark only where the stylesheet is told to be, by a choice kept with the profile.
+func TestLightIsTheDefaultAndDarkIsAChoice(t *testing.T) {
+	read := func(name string) string {
+		b, err := os.ReadFile(filepath.Join("static", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	css, html := read("app.css"), read("index.html")
+	// A device set to dark must not turn the page dark by itself: every dark rule sits behind the attribute.
+	for _, m := range regexp.MustCompile(`@media \(prefers-color-scheme:dark\)\{([^@]|@supports[^@])*`).FindAllString(css, -1) {
+		if strings.Contains(m, ":root{") {
+			t.Fatalf("a dark rule applies without the user's choice: %.120s", m)
+		}
+	}
+	if !strings.Contains(css, ":root[data-theme=dark]{") || !strings.Contains(css, ":root[data-theme=auto]{") {
+		t.Fatal("the dark theme cannot be chosen")
+	}
+	if strings.Contains(html, "prefers-color-scheme") || !strings.Contains(html, `<meta name="color-scheme" content="light">`) {
+		t.Fatal("the page itself asks to follow the device")
+	}
+
+	r := newRig(t)
+	r.srv.Notes = &memory.Notes{Dir: t.TempDir()}
+	r.login()
+	if _, body := r.do("GET", "/api/state", nil); !strings.Contains(string(body), `"theme":""`) {
+		t.Fatalf("a new profile starts with no theme, which is light: %s", body)
+	}
+	if resp, body := r.do("POST", "/api/profile", map[string]any{"profile": map[string]string{"theme": "dark"}}); resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+	if _, body := r.do("GET", "/api/state", nil); !strings.Contains(string(body), `"theme":"dark"`) {
+		t.Fatalf("the choice did not reach the page: %s", body)
+	}
+	if resp, _ := r.do("POST", "/api/profile", map[string]any{"profile": map[string]string{"theme": "neon"}}); resp.StatusCode != 400 {
+		t.Fatalf("an unknown theme answered %d", resp.StatusCode)
 	}
 }

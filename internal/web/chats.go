@@ -119,8 +119,9 @@ func (s *Server) switchChat(w http.ResponseWriter, r *http.Request) {
 		Title     string `json:"title"`
 		Archive   string `json:"archive"`
 		Unarchive string `json:"unarchive"`
-		Side      bool   `json:"side"` // a blank conversation beside the open one
-		Main      string `json:"main"` // make this conversation the main one
+		Delete    string `json:"delete"` // remove this conversation for good
+		Side      bool   `json:"side"`   // a blank conversation beside the open one
+		Main      string `json:"main"`   // make this conversation the main one
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -139,6 +140,20 @@ func (s *Server) switchChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "chats": s.Convos.List()})
+		return
+	case in.Delete != "":
+		wasActive, err := s.Convos.Delete(in.Delete)
+		if err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if wasActive { // the page was showing it: go back to the main conversation
+			if err := s.showConversation(s.Convos.MainID()); err != nil {
+				fail(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "active": wasActive, "chats": s.Convos.List()})
 		return
 	case in.Archive != "" || in.Unarchive != "":
 		id, archived := in.Archive, true

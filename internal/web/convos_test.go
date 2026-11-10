@@ -205,3 +205,37 @@ func TestSideChatsHangFromTheConversationTheyWereOpenedBeside(t *testing.T) {
 		}
 	}
 }
+
+func TestAConversationCanBeDeleted(t *testing.T) {
+	c := testConvos(t)
+	main := c.New() // the first one kept becomes the main conversation
+	old := c.New()
+	open := c.New()
+	if c.MainID() != main {
+		t.Fatalf("main is %q, want %q", c.MainID(), main)
+	}
+	if _, err := c.Delete(main); err == nil {
+		t.Fatal("the main conversation was deleted")
+	}
+	if _, err := c.Delete("nope"); err == nil {
+		t.Fatal("a missing conversation was deleted")
+	}
+	if err := c.SetArchived(old, true); err != nil {
+		t.Fatal(err)
+	}
+	if was, err := c.Delete(old); err != nil || was { // an archived one goes too
+		t.Fatalf("delete archived: %v active=%v", err, was)
+	}
+	if len(c.ListArchived()) != 0 {
+		t.Fatalf("deleted conversation still archived: %+v", c.ListArchived())
+	}
+	if was, err := c.Delete(open); err != nil || !was {
+		t.Fatalf("delete open: %v active=%v", err, was)
+	}
+	if c.ActiveID() != main {
+		t.Fatalf("after deleting the open conversation %q is open, want main %q", c.ActiveID(), main)
+	}
+	if _, ok := c.Get(open); ok {
+		t.Fatal("deleted conversation can still be loaded")
+	}
+}

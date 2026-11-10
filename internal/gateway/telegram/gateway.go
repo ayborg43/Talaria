@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -114,11 +115,24 @@ func (g *Gateway) Run(ctx context.Context) error {
 	}
 
 	offset, backoff := loadOffset(g.OffsetPath, g.logf), time.Second
+	cleared := false
 	for ctx.Err() == nil {
 		updates, err := g.API.GetUpdates(ctx, offset, g.PollTimeout)
 		if err != nil {
 			if ctx.Err() != nil {
 				break
+			}
+			// A webhook left on the bot (from a past setup or another tool) blocks polling
+			// for good, so remove it once and try again straight away.
+			var ae *APIError
+			if !cleared && errors.As(err, &ae) && ae.Code == 409 && strings.Contains(ae.Description, "webhook") {
+				cleared = true
+				if derr := g.API.DeleteWebhook(ctx); derr != nil {
+					g.logf("could not remove the bot's webhook: %v", derr)
+				} else {
+					g.logf("removed a webhook that was blocking polling")
+					continue
+				}
 			}
 			g.logf("poll failed (retrying in %s): %v", backoff, err)
 			select {

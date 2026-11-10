@@ -6,8 +6,8 @@
    Every neutral leans to the same warm hue, so cards, lines and text read as one material.
 
    Tokens are roles, not swatches, and each is given twice: as OKLCH, where lightness steps are even and can be
-   tuned by eye, and before it as the same colour in hex for a browser that cannot read OKLCH. The dark theme is
-   composed, not inverted: surfaces rise in lightness with elevation, tints become deep rather than pale, and text
+   tuned by eye, and before it as the same colour in hex for a browser that cannot read OKLCH. Light is the
+   default; the dark theme is a choice, and is composed, not inverted: surfaces rise in lightness with elevation, tints become deep rather than pale, and text
    colours are lifted until they pass on them. Text on its surface is at least 4.5:1 in both; a field's edge is 3:1.
 
      surfaces   --bg page  --tab bars and sheets  --card raised  --sunk wells  --field inputs  --bubble what you said
@@ -113,8 +113,9 @@
   --toast:oklch(21% 0.012 84);
   --on-toast:oklch(96.6% 0.012 84);
 }}
-@media (prefers-color-scheme:dark){
-:root{
+/* Light is the theme unless the user picks otherwise (Settings, You): dark always, or whatever the device is set to.
+   The dark tokens are written twice because a selector and a media query cannot share one block. */
+:root[data-theme=dark]{
   color-scheme:dark;
   --bg:#100E0A;
   --card:#1C1914;
@@ -160,7 +161,96 @@
   --shadow:0 1px 0 rgba(255,255,255,.03) inset,0 8px 24px rgba(0,0,0,.28);
   --lift:0 14px 36px rgba(0,0,0,.5);
 }
-@supports (color:oklch(0% 0 0)){:root{
+@supports (color:oklch(0% 0 0)){:root[data-theme=dark]{
+  --bg:oklch(16.5% 0.008 84);
+  --card:oklch(21.5% 0.01 84);
+  --tab:oklch(19% 0.009 84);
+  --sunk:oklch(25% 0.012 84);
+  --line:oklch(31% 0.014 84);
+  --line2:oklch(27% 0.012 84);
+  --btn-line:oklch(40% 0.018 84);
+  --ink:oklch(94.5% 0.012 84);
+  --ink2:oklch(85% 0.014 84);
+  --muted:oklch(72% 0.016 84);
+  --faint:oklch(66% 0.016 84);
+  --bubble:oklch(27.5% 0.016 84);
+  --bubble-line:oklch(35% 0.02 84);
+  --field:oklch(23.5% 0.01 84);
+  --field-line:oklch(56% 0.02 84);
+  --brass:oklch(80.5% 0.145 82);
+  --brass-text:oklch(83% 0.125 84);
+  --brass-tint:oklch(34% 0.06 82);
+  --brass-soft:oklch(25.5% 0.035 82);
+  --brass-line:oklch(47% 0.085 82);
+  --on-brass:oklch(20% 0.03 80);
+  --tab-on:oklch(30% 0.05 82);
+  --info:oklch(77% 0.11 262);
+  --info-tint:oklch(30% 0.05 262);
+  --info-soft:oklch(25% 0.035 262);
+  --info-line:oklch(41% 0.07 262);
+  --info-ink:oklch(84% 0.07 262);
+  --ok:oklch(77% 0.13 155);
+  --ok-tint:oklch(29% 0.05 155);
+  --ok-line:oklch(41% 0.07 155);
+  --bad:oklch(75% 0.14 28);
+  --bad-tint:oklch(30% 0.06 28);
+  --bad-line:oklch(43% 0.09 28);
+  --coral:oklch(72% 0.16 30);
+  --on-coral:oklch(20% 0.04 30);
+  --bar:oklch(33% 0.016 84);
+  --ring:oklch(27% 0.012 84);
+  --logo:oklch(12% 0.008 84);
+  --toast:oklch(93% 0.012 84);
+  --on-toast:oklch(20% 0.012 84);
+}}
+@media (prefers-color-scheme:dark){
+:root[data-theme=auto]{
+  color-scheme:dark;
+  --bg:#100E0A;
+  --card:#1C1914;
+  --tab:#16140F;
+  --sunk:#24211B;
+  --line:#343028;
+  --line2:#292620;
+  --btn-line:#4C473D;
+  --ink:#F1ECE4;
+  --ink2:#D2CDC4;
+  --muted:#A9A49A;
+  --faint:#979287;
+  --bubble:#2B271F;
+  --bubble-line:#3F3A2F;
+  --field:#201E19;
+  --field-line:#7A7467;
+  --brass:#EEB53E;
+  --brass-text:#EEC060;
+  --brass-tint:#47340D;
+  --brass-soft:#2B210E;
+  --brass-line:#725518;
+  --on-brass:#1D1406;
+  --tab-on:#3A2B0D;
+  --info:#8EB4FB;
+  --info-tint:#202E47;
+  --info-soft:#182233;
+  --info-line:#354A70;
+  --info-ink:#B2CBF9;
+  --ok:#68CD8F;
+  --ok-tint:#143320;
+  --ok-line:#275639;
+  --bad:#FA897B;
+  --bad-tint:#47211C;
+  --bad-line:#7A3A33;
+  --coral:#F87966;
+  --on-coral:#250E0B;
+  --bar:#39352C;
+  --ring:#292620;
+  --logo:#070603;
+  --toast:#ECE7DF;
+  --on-toast:#191610;
+  --scrim:rgba(0,0,0,.6);
+  --shadow:0 1px 0 rgba(255,255,255,.03) inset,0 8px 24px rgba(0,0,0,.28);
+  --lift:0 14px 36px rgba(0,0,0,.5);
+}
+@supports (color:oklch(0% 0 0)){:root[data-theme=auto]{
   --bg:oklch(16.5% 0.008 84);
   --card:oklch(21.5% 0.01 84);
   --tab:oklch(19% 0.009 84);
@@ -707,10 +797,7 @@ html{caret-color:var(--brass-text);accent-color:var(--brass);scrollbar-color:var
 .bar{padding-top:calc(env(safe-area-inset-top) + 6px);padding-bottom:6px}
 .quick{display:none}
 }
-@media (prefers-color-scheme:dark){
-.shot{background:var(--sunk)}
-.docview{background:var(--sunk)}
-}
+.shot,.docview{background:var(--sunk)}
 .panel-body.doc>.toolbar{flex-wrap:wrap}
 .card h2{flex-wrap:wrap}
 .card h2 small{flex:none}

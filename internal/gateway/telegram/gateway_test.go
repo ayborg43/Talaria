@@ -37,6 +37,9 @@ type fakeTelegram struct {
 	failEdits  atomic.Int32 // answer this many edits with a 429 first
 	editCalls  atomic.Int32 // edits received, including refused ones
 	retryAfter int
+
+	webhook        atomic.Bool  // a webhook is set: getUpdates is refused with a 409 until deleteWebhook
+	webhookDeleted atomic.Int32 // deleteWebhook requests received
 }
 
 // event is one message the bot sent or edited.
@@ -80,7 +83,16 @@ func (f *fakeTelegram) serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch method {
+	case "deleteWebhook":
+		f.webhookDeleted.Add(1)
+		f.webhook.Store(false)
+		reply(true)
 	case "getUpdates":
+		if f.webhook.Load() {
+			json.NewEncoder(w).Encode(map[string]any{"ok": false, "error_code": 409,
+				"description": "Conflict: can't use getUpdates method while webhook is active; use deleteWebhook to delete the webhook first"})
+			return
+		}
 		f.polling.Add(1)
 		defer f.polling.Add(-1)
 		f.mu.Lock()
@@ -427,5 +439,18 @@ func TestAPIErrorsNeverLeakToken(t *testing.T) {
 	api.Base = srv2.URL
 	if _, err := api.GetMe(context.Background()); err == nil || !strings.Contains(err.Error(), "Unauthorized") {
 		t.Fatalf("bad token should surface Telegram's message, got %v", err)
+	}
+}
+
+// A webhook left on the bot refuses every poll with a 409; the gateway removes it and carries on.
+func TestAWebhookBlockingPollingIsRemoved(t *testing.T) {
+	f := newFake(t)
+	f.webhook.Store(true)
+	var calls atomic.Int32
+	start(t, f, []int64{7}, echoAgent(&scripted{replies: []provider.Message{{Role: "assistant", Content: "hi there"}}}, &calls))
+	f.updates <- []Update{userMsg(1, 7, 7, "private", "hello")}
+	f.waitFor("a reply after the webhook was removed", func() bool { return f.sawText("hi there") })
+	if f.webhookDeleted.Load() != 1 {
+		t.Fatalf("deleteWebhook called %d times, want 1", f.webhookDeleted.Load())
 	}
 }
