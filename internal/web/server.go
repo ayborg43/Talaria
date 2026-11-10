@@ -722,6 +722,7 @@ type settingsUpdateRequest struct {
 	Delete              bool                   `json:"_delete,omitempty"`
 	UseProfile          string                 `json:"use_profile,omitempty"`           // switch this chat to a profile, saving nothing
 	TestProfile         string                 `json:"test_profile,omitempty"`          // send one tiny prompt through a profile, saving nothing
+	ListModels          string                 `json:"list_models,omitempty"`           // ask a profile's provider which models its key can use, saving nothing
 	BestFor             []string               `json:"best_for,omitempty"`              // what the profile is good at, for the router
 	Email               *emailUpdate           `json:"email,omitempty"`                 // replace the mailbox settings
 	Calendar            *calendarUpdate        `json:"calendar,omitempty"`              // add, edit or delete a feed
@@ -773,6 +774,25 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "model": be.Model, "reply": firstLine(msg.Content)})
+		return
+	}
+	if in.ListModels != "" {
+		// The provider's own answer to "which models can this key use": what to look at when a model's name is refused.
+		res, err := s.Cfg.Resolve(config.Overrides{Profile: strings.TrimSpace(in.ListModels)}, s.GetenvOrEmpty)
+		if err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := res.CheckKey(); err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		models, err := provider.ListModels(r.Context(), res.Spec())
+		if err != nil {
+			fail(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "models": models, "model": res.Model, "listed": slices.Contains(models, res.Model)})
 		return
 	}
 	if in.TestEmail {

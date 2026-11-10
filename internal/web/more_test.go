@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -444,5 +446,48 @@ func TestSavingAProfileWithNoUsableKeySaysSo(t *testing.T) {
 	_, body = r.do("POST", "/api/settings", map[string]any{"name": "from-env", "type": "muse", "api_key_env": "MODEL_API_KEY"})
 	if strings.Contains(string(body), "warning") {
 		t.Fatalf("%s", body)
+	}
+}
+
+// Settings can ask a profile's provider which models its key can use, and says whether the profile's own is among them.
+func TestSettingsListsTheModelsAKeyCanUse(t *testing.T) {
+	models := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/v1/models" || req.Header.Get("Authorization") != "Bearer LLM_1607358788850350_abcdefghijklmnopqrstuv" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte(`{"data":[{"id":"muse-spark-1.2"},{"id":"muse-ember-1.0"}]}`))
+	}))
+	defer models.Close()
+	r := newRig(t)
+	r.srv.Cfg = &config.Config{Profiles: map[string]config.Profile{
+		"meta-muse": {Type: "muse", BaseURL: models.URL + "/v1", Model: "muse-spark-1.3", APIKey: "LLM_1607358788850350_abcdefghijklmnopqrstuv"},
+		"keyless":   {Type: "muse"},
+	}}
+	r.srv.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	r.srv.Getenv = func(string) string { return "" }
+	r.login()
+	resp, body := r.do("POST", "/api/settings", map[string]string{"list_models": "meta-muse"})
+	var got struct {
+		Models []string
+		Model  string
+		Listed bool
+	}
+	decode(t, body, &got)
+	if resp.StatusCode != 200 || strings.Join(got.Models, ",") != "muse-ember-1.0,muse-spark-1.2" || got.Model != "muse-spark-1.3" || got.Listed {
+		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+	if strings.Contains(string(body), "LLM_1607") {
+		t.Fatal("the key came back with the list")
+	}
+	// Picking one is an ordinary edit of the profile's model.
+	if resp, _ := r.do("POST", "/api/settings", map[string]string{"name": "meta-muse", "model": "muse-spark-1.2"}); resp.StatusCode != 200 || r.srv.Cfg.Profiles["meta-muse"].Model != "muse-spark-1.2" {
+		t.Fatalf("%d %+v", resp.StatusCode, r.srv.Cfg.Profiles["meta-muse"])
+	}
+	if resp, body := r.do("POST", "/api/settings", map[string]string{"list_models": "keyless"}); resp.StatusCode != 400 || !strings.Contains(string(body), "MODEL_API_KEY") {
+		t.Fatalf("a profile with no key: %d %s", resp.StatusCode, body)
+	}
+	if resp, _ := r.do("POST", "/api/settings", map[string]string{"list_models": "nope"}); resp.StatusCode != 400 {
+		t.Fatalf("an unknown profile: %d", resp.StatusCode)
 	}
 }

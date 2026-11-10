@@ -61,3 +61,24 @@ func TestMuseDefaultsAndTheListOfTypes(t *testing.T) {
 		t.Fatalf("the list of types names muse: %v", err)
 	}
 }
+
+// The provider is asked which models a key can use, with the key, and the answer is tidied.
+func TestListModelsAsksTheProviderWithTheKey(t *testing.T) {
+	var path, auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, auth = r.URL.Path, r.Header.Get("Authorization")
+		if auth != "Bearer LLM_1_k" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		io.WriteString(w, `{"object":"list","data":[{"id":"muse-spark-1.2"},{"id":"muse-ember-1.0"},{"id":"muse-spark-1.2"},{"id":""},{"id":"bad\nid"}]}`)
+	}))
+	defer srv.Close()
+	got, err := ListModels(context.Background(), Spec{Type: TypeMuse, BaseURL: srv.URL + "/v1", APIKey: "LLM_1_k"})
+	if err != nil || path != "/v1/models" || strings.Join(got, ",") != "muse-ember-1.0,muse-spark-1.2" {
+		t.Fatalf("%v %q %v", got, path, err)
+	}
+	if _, err := ListModels(context.Background(), Spec{Type: TypeMuse, BaseURL: srv.URL + "/v1", APIKey: "wrong"}); err == nil || strings.Contains(err.Error(), "wrong") {
+		t.Fatalf("a refused key: %v", err)
+	}
+}

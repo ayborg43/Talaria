@@ -1044,7 +1044,7 @@ async function loadSettings() {
 
 function profileNameCard(p) {
   const saved = p.has_key ? h('span', { class: 'pill info', text: 'key set via ' + (p.key_source || p.api_key_env || 'config') }) : h('span', { class: 'pill', text: 'no key' });
-  const card = h('div', { class: 'card' });
+  const card = h('div', { class: 'card', 'data-profile': p.name });
   const head = h('div', { class: 'row' });
   head.append(h('span', { class: 'grow', text: p.name }), saved);
   if (p.active) head.append(h('span', { class: 'pill ok', text: 'IN USE' }));
@@ -1064,6 +1064,7 @@ function profileNameCard(p) {
     if (!p.available) test.disabled = true;
     btns.append(test);
   }
+  if (p.has_key || !p.type || p.base_url) btns.append(h('button', { class: 'btn', type: 'button', text: 'Models', onclick: () => pickModel(p, card) }));
   btns.append(h('button', { class: 'btn', type: 'button', text: 'Edit', onclick: () => editProfile(p.name) }));
   btns.append(h('button', { class: 'btn danger', type: 'button', text: 'Delete', onclick: () => deleteProfile(p.name) }));
   card.append(btns);
@@ -1076,8 +1077,35 @@ async function testProfile(name) {
   try {
     const d = await api('/api/settings', { method: 'POST', body: { test_profile: name } });
     toast(name + ' answers (' + d.model + ', ' + ((Date.now() - t0) / 1000).toFixed(1) + 's): ' + d.reply);
-  } catch (e) { if (!(e instanceof AuthError)) toast('Test failed: ' + e.message); return; }
+  } catch (e) {
+    if (e instanceof AuthError) return;
+    toast('Test failed: ' + e.message);
+    // A model the service does not know is the commonest failure, and the service can say which it does know.
+    if (/model/i.test(e.message)) { const p = (S.settings.profiles || []).find((x) => x.name === name); const card = p && $(`[data-profile="${CSS.escape(name)}"]`); if (card) pickModel(p, card); }
+    return;
+  }
   loadSettings();
+}
+
+// Models asks the provider which models this profile's key can use, and lists them under the profile: tap one to
+// use it. It is the answer to "the requested model was not found".
+async function pickModel(p, card) {
+  let box = card.querySelector('.models');
+  if (!box) { box = h('div', { class: 'models' }); card.append(box); }
+  box.replaceChildren(h('div', { class: 'field-note', text: 'Asking which models this key can use…' }));
+  let d;
+  try { d = await api('/api/settings', { method: 'POST', body: { list_models: p.name } }); }
+  catch (e) { if (!(e instanceof AuthError)) box.replaceChildren(h('div', { class: 'note', text: 'Could not list the models: ' + e.message })); return; }
+  const use = async (id) => {
+    try { await api('/api/settings', { method: 'POST', body: { name: p.name, model: id } }); toast(p.name + ' now uses ' + id + '.'); }
+    catch (e) { if (!(e instanceof AuthError)) toast(e.message); return; }
+    loadSettings();
+  };
+  const note = !d.models.length ? 'The provider listed no models for this key.'
+    : d.listed ? 'This key can use these. The profile uses ' + d.model + '.'
+      : 'This key cannot use ' + d.model + ', which is why it is refused. Pick one it can use:';
+  box.replaceChildren(h('div', { class: d.listed ? 'field-note' : 'note', text: note }),
+    h('div', { class: 'presets' }, d.models.map((id) => h('button', { type: 'button', class: id === d.model ? 'on' : '', text: id, onclick: () => use(id) }))));
 }
 
 async function useProfile(name) {

@@ -113,6 +113,10 @@ jobs and helpers); check Meta's model list, as the names change. One optional se
 |---|---|
 | `reasoning_effort` | `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"`. Unset leaves it to the service |
 
+- **"The requested model was not found."** The key is fine but cannot use that model: the name is wrong, or the account or
+  country has no access to it (Meta says availability varies by country). In Settings → AI models, **Models** on the profile
+  asks Meta which models this key can use and lists them; tap one to switch the profile to it. A failed **Test** that
+  mentions the model opens the same list. It works for every provider, not only this one.
 - The Muse models always reason, so there is no thinking switch and no `"none"`. More effort is slower and costs more,
   since reasoning is billed as output. `"max"` is not offered on the `-contributor` models, and Talaria warns if a profile asks for it.
 - Talaria uses the Chat Completions endpoint, where the model's reasoning stays with the service and is not carried from one

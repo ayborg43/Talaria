@@ -803,3 +803,5 @@ html{caret-color:var(--brass-text);accent-color:var(--brass);scrollbar-color:var
 .card h2 small{flex:none}
 /* a sheet is already a surface: what it holds sits on it directly, not in a card of its own */
 .sheet .card{border:0;border-radius:0;background:none;box-shadow:none;padding:2px 4px}
+.models{margin-top:10px;padding-top:10px;border-top:1px solid var(--line2)}
+.models .presets button{font-family:var(--mono);font-size:12.5px}
