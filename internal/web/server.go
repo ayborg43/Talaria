@@ -915,7 +915,16 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 	if s.Engine != nil && s.Engine.Backends != nil && s.Engine.Backends.Forget != nil {
 		s.Engine.Backends.Forget() // added and changed profiles work at once, with no restart
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	out := map[string]any{"ok": true}
+	if !in.Delete {
+		// A profile saved with no key it can use is said so now, not when a message later falls back to another model.
+		if r, err := s.Cfg.Resolve(config.Overrides{Profile: in.Name}, s.GetenvOrEmpty); err != nil {
+			out["warning"] = err.Error()
+		} else if err := r.CheckKey(); err != nil {
+			out["warning"] = fmt.Sprintf("Saved, but it cannot be used yet: no key was pasted, and $%s is not set on the server. Paste the key in the API key field, or set that variable where Talaria runs and restart it.", r.KeyEnv)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // writeConfig saves the config file, reporting failure.

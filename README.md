@@ -101,6 +101,9 @@ export MODEL_API_KEY=LLM_...        # from the API keys tab at dev.meta.ai
 ```
 
 In the web app: **Settings → AI models → Add an AI profile → Meta Muse**, paste the key, Add. It works at once, with no restart.
+If you leave the key field empty, the profile reads the key from `$MODEL_API_KEY` on the server, and Settings says so at once
+when that variable is not set. On Docker, a variable only reaches Talaria if the compose file names it: `MODEL_API_KEY` is
+named there, so setting it in Dokploy's Environment tab and redeploying is enough.
 
 A `muse` profile defaults to the address above, the key in `$MODEL_API_KEY` and the model `muse-spark-1.3`. The others at the
 time of writing are `muse-wonder-1.0` (the most capable, for long and hard work) and `muse-ember-1.0` (cheaper, for routine
@@ -1200,8 +1203,8 @@ ID, deploy once with the token and no IDs, message the bot `/whoami` (`!whoami` 
 1. Create a project, then a **Compose** service from this repository (`ayborg43/Talaria`, branch `main`, compose path
    `./docker-compose.yml`). Choose plain Compose, not Stack: Stack mode does not support `build`.
 2. In the **Environment** tab, enter the variables from [.env.example](.env.example). Dokploy saves them to a `.env` file next to the
-   compose file, which the compose file reads. The minimum is `TALARIA_PROVIDER` (`openai`, `anthropic` or `deepseek`), that
-   provider's key (`DEEPSEEK_API_KEY`, `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`), the bot token, and
+   compose file, which the compose file reads. The minimum is `TALARIA_PROVIDER` (`openai`, `anthropic`, `deepseek` or `muse`), that
+   provider's key (`DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` or `MODEL_API_KEY`), the bot token, and
    `TALARIA_DISCORD_ALLOWED_USERS` (or the Telegram pair). Deploy fails at once, with a message, if `TALARIA_PROVIDER` is missing.
 3. Deploy. There is no domain and no port to add: the gateway makes outbound connections only. It shows as healthy when its own
    health endpoint answers. A webhook from the repository can redeploy on each push.

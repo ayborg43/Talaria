@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"talaria/internal/config"
 	"talaria/internal/execenv"
 	"talaria/internal/files"
 	"talaria/internal/memory"
@@ -417,5 +418,31 @@ func TestLightIsTheDefaultAndDarkIsAChoice(t *testing.T) {
 	}
 	if resp, _ := r.do("POST", "/api/profile", map[string]any{"profile": map[string]string{"theme": "neon"}}); resp.StatusCode != 400 {
 		t.Fatalf("an unknown theme answered %d", resp.StatusCode)
+	}
+}
+
+// A profile saved with no key it can use says so at once, and one with a pasted key does not.
+func TestSavingAProfileWithNoUsableKeySaysSo(t *testing.T) {
+	r := newRig(t)
+	r.srv.Cfg = &config.Config{}
+	r.srv.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	r.srv.Getenv = func(string) string { return "" }
+	r.login()
+	_, body := r.do("POST", "/api/settings", map[string]any{"name": "meta-muse", "type": "muse", "model": "muse-spark-1.3", "api_key_env": "MODEL_API_KEY"})
+	if !strings.Contains(string(body), "$MODEL_API_KEY is not set on the server") {
+		t.Fatalf("no warning: %s", body)
+	}
+	_, body = r.do("POST", "/api/settings", map[string]any{"name": "meta-muse", "api_key": "LLM_1607358788850350_abcdefghijklmnopqrstuv"})
+	if strings.Contains(string(body), "warning") {
+		t.Fatalf("a pasted key is a usable key: %s", body)
+	}
+	if got := r.srv.Cfg.Profiles["meta-muse"]; got.APIKey == "" || got.APIKeyEnv != "MODEL_API_KEY" {
+		t.Fatalf("the pasted key was not kept beside the variable's name: %+v", got)
+	}
+	// With the variable set where Talaria runs, nothing needs pasting.
+	r.srv.Getenv = func(k string) string { return map[string]string{"MODEL_API_KEY": "LLM_1_fromtheenvironment"}[k] }
+	_, body = r.do("POST", "/api/settings", map[string]any{"name": "from-env", "type": "muse", "api_key_env": "MODEL_API_KEY"})
+	if strings.Contains(string(body), "warning") {
+		t.Fatalf("%s", body)
 	}
 }

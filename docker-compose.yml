@@ -12,12 +12,14 @@ services:
     restart: unless-stopped
     stop_grace_period: 30s
     environment:
-      # Which model: openai, anthropic or deepseek, and its key (name below follows the provider).
-      TALARIA_PROVIDER: ${TALARIA_PROVIDER:?set TALARIA_PROVIDER to openai, anthropic or deepseek}
+      # Which model: openai, anthropic, deepseek or muse, and its key (name below follows the provider).
+      # Only the variables listed here reach the container: one set in Dokploy but missing below is never seen.
+      TALARIA_PROVIDER: ${TALARIA_PROVIDER:?set TALARIA_PROVIDER to openai, anthropic, deepseek or muse}
       TALARIA_MODEL: ${TALARIA_MODEL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}   # Meta Model API (the Muse models)
       # Who may talk to it: a bot token and, REQUIRED for it to serve anyone, the user IDs allowed in.
       TALARIA_DISCORD_TOKEN: ${TALARIA_DISCORD_TOKEN:-}
       TALARIA_DISCORD_ALLOWED_USERS: ${TALARIA_DISCORD_ALLOWED_USERS:-}
@@ -35,6 +37,8 @@ services:
       TALARIA_WEB_PASSWORD: ${TALARIA_WEB_PASSWORD:-}
       TALARIA_WEB_PUBLIC_URL: ${TALARIA_WEB_PUBLIC_URL:-}
       TALARIA_WEB_LISTEN: ${TALARIA_WEB_LISTEN:-}
+      # Optional: lets an app that speaks AG-UI hold the web conversation, with this key (24 characters or more).
+      TALARIA_AGUI_KEY: ${TALARIA_AGUI_KEY:-}
       # Optional: opens the saved-logins vault without anyone present, and extra settings as JSON.
       TALARIA_VAULT_PASSPHRASE: ${TALARIA_VAULT_PASSPHRASE:-}
       TALARIA_CONFIG_JSON: ${TALARIA_CONFIG_JSON:-}

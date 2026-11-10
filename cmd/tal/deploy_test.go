@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"talaria/internal/config"
 )
 
 // runEntrypoint runs the container's entrypoint with a stand-in `tal` that reports what it was given.
@@ -135,10 +137,18 @@ func TestTheComposeFileAndTheExampleAgree(t *testing.T) {
 		t.Error("nothing needs a fixed container name or a published port")
 	}
 	// Every default key variable the program recognises is passed through, so a provider chosen by name finds its key.
-	for _, name := range []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"} {
-		if !strings.Contains(string(compose), name+":") {
-			t.Errorf("%s", name)
+	// The list is the program's own, so a provider added later cannot be left out here again: a key set in
+	// Dokploy but not named in the compose file never reaches the container, and the profile reads as having none.
+	for _, name := range config.DefaultKeyEnvs() {
+		if !regexp.MustCompile(`(?m)^\s+` + name + `: \$\{` + name + `:-\}`).Match(compose) {
+			t.Errorf("the compose file does not pass %s to the container", name)
 		}
+		if !strings.Contains(string(example), name) {
+			t.Errorf(".env.example does not mention %s", name)
+		}
+	}
+	if !strings.Contains(string(compose), "TALARIA_AGUI_KEY: ${TALARIA_AGUI_KEY:-}") {
+		t.Error("the compose file does not pass TALARIA_AGUI_KEY to the container")
 	}
 }
 

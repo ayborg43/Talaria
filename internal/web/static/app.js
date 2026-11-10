@@ -89,7 +89,7 @@ function toast(text) {
   if (!t) { t = h('div', { id: 'toast', class: 'toast', role: 'status' }); document.body.append(t); }
   t.textContent = text; t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 3500);
+  toastTimer = setTimeout(() => t.classList.remove('show'), Math.min(12000, Math.max(3500, text.length * 60))); // a long message stays long enough to read
 }
 
 // ---------- state ----------
@@ -1170,8 +1170,9 @@ async function saveProfile() {
     best_for: $$('#settings-pane input[name="best-for"]:checked').map((el) => el.value),
   };
   try {
-    await api('/api/settings', { method: 'POST', body });
+    const d = await api('/api/settings', { method: 'POST', body });
     settingsEditing = null;
+    if (d && d.warning) toast(d.warning);
     loadSettings();
   } catch (e) { if (!(e instanceof AuthError)) toast(e.message); }
 }
