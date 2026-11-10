@@ -876,3 +876,9 @@ html{caret-color:var(--brass-text);accent-color:var(--brass);scrollbar-color:var
 .live-pill{align-self:center}.live-pill[hidden]{display:none}
 .typed.secret{letter-spacing:.12em}
 .handoff-bar.busy{background:var(--sunk);border-color:var(--line)}
+
+/* rules: one setting per kind of action */
+.rule-row{align-items:flex-start;gap:10px;flex-wrap:wrap}
+.rule-row .s{white-space:normal;overflow:visible}
+.rule-select{flex:none;min-width:150px;padding:8px 10px;border-radius:12px;border:1px solid var(--line);background:var(--field);color:var(--ink);font:inherit;font-size:14px}
+@media (max-width:480px){.rule-select{width:100%}}

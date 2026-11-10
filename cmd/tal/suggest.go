@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"talaria/internal/app"
 	"talaria/internal/cron"
 	"talaria/internal/idea"
 	"talaria/internal/web"
@@ -50,4 +51,14 @@ func webSuggestions(ideas *idea.Store, jobs *cron.Store, ctl func() cron.Control
 	}
 	hide := func(id string) error { return ideas.Dismiss("web", web.ChatID, id) }
 	return list, start, hide
+}
+
+// applyRules is how the Rules page puts a change in force without a restart: the running policy is replaced, and the
+// next tool call of every chat obeys it. It is nil when there is no policy to change.
+func applyRules(rt *app.Runtime) func(map[string]string) error {
+	gd := rt.Guard()
+	if gd == nil || gd.Policy == nil {
+		return nil
+	}
+	return gd.Policy.SetRules
 }

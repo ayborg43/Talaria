@@ -11,10 +11,10 @@ import (
 
 // What the user answered when asked to take over the browser.
 const (
-	HandoffDone    = "done"    // they finished what only they could do
-	HandoffSkip    = "skip"    // they chose not to
-	HandoffReplied = "replied" // they wrote in the chat instead
-	HandoffTimeout = "timeout" // nobody answered in time
+	HandoffDone    = tool.HandoffDone    // they finished what only they could do
+	HandoffSkip    = tool.HandoffSkip    // they chose not to
+	HandoffReplied = tool.HandoffReplied // they wrote in the chat instead
+	HandoffTimeout = tool.HandoffTimeout // nobody answered in time
 )
 
 // Handoff asks the user to take over the agent's tab for something only a person can do, and waits until they

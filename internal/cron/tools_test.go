@@ -32,9 +32,17 @@ func TestCronTools(t *testing.T) {
 	if err != nil || !strings.Contains(out, "standup") {
 		t.Fatalf("add: %q %v", out, err)
 	}
+	// What it says back is what was saved, so the agent can tell the user and the user can correct it.
+	for _, want := range []string{"0 9 * * mon-fri", "repeats", `"post standup notes"`, "cannot use tools that need approval", "what you saved"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the read-back lacks %q: %s", want, out)
+		}
+	}
 	// One-off reminder via delay.
-	if _, err := mine("cron_add", `{"delay":"90m","prompt":"stretch","allow_risky":true}`); err != nil {
+	if once, err := mine("cron_add", `{"delay":"90m","prompt":"stretch","allow_risky":true}`); err != nil {
 		t.Fatal(err)
+	} else if !strings.Contains(once, "runs once") || !strings.Contains(once, "MAY use tools that need approval") {
+		t.Fatalf("a one-off with risky tools allowed read back as: %s", once)
 	}
 	jobs, _ := s.List()
 	if len(jobs) != 2 || jobs[0].ChatID != 7 || jobs[0].AllowRisky || !jobs[1].AllowRisky {

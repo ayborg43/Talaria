@@ -1048,8 +1048,8 @@ let settingsEditing = null;
 async function loadSettings() {
   try {
     // The profile and the notification list are extras: Settings opens without them, and does not wait on them in turn.
-    const [st, c, me, notices, brief] = await Promise.all([api('/api/settings'), api('/api/control'), api('/api/profile').catch(() => null), api('/api/notices').catch(() => null), api('/api/brief').catch(() => null)]);
-    S.settings = st; ctl = c; S.paused = c.paused; S.me = me; S.notices = notices; S.brief = brief;
+    const [st, c, me, notices, brief, rules] = await Promise.all([api('/api/settings'), api('/api/control'), api('/api/profile').catch(() => null), api('/api/notices').catch(() => null), api('/api/brief').catch(() => null), api('/api/rules').catch(() => null)]);
+    S.settings = st; ctl = c; S.paused = c.paused; S.me = me; S.notices = notices; S.brief = brief; S.rules = rules;
   } catch (e) { if (!(e instanceof AuthError)) toast(e.message); return; }
   renderSettings();
 }
@@ -1509,6 +1509,7 @@ function panePermissions(s) {
     opt('strict', 'Before anything risky', 'It also asks before running commands, writing files, changing schedules, and sending anything out after it has read mail or the web.'))];
   if (s.permissions_env) out[0].append(h('div', { class: 'field-note', text: 'TALARIA_PERMISSIONS is set on the server, and it wins over this choice.' }));
   else if (s.permissions !== s.permissions_running) out[0].append(h('div', { class: 'field-note', text: 'Saved. It applies after Talaria restarts: it is still working the old way for now.' }));
+  const rc = rulesCard(); if (rc) out.push(rc);
   out.push(h('div', { class: 'card' }, h('h2', null, 'What counts'),
     h('ul', { class: 'steps' },
       h('li', { text: 'Deleting: removing files or folders, git clean and force-pushes, dropping databases, deleting skills, schedules or goals.' }),

@@ -747,6 +747,20 @@ holds live login cookies, so keep Dokploy access tight and back up the data volu
   that failed, with Retry and Dismiss), **Working now**, and **Ready for review**, finished background work you check off with **Done**. That
   moves it to **Resolved** under **History**, on every device (the list of checked-off ids is a small file, `web_reviewed.json`). **Up next** is
   what runs on its own, and **History** holds what finished lately, Resolved, the answered requests and the activity chart.
+- **Rules for each kind of action.** Settings, Permissions has a rule for each kind of thing the agent can do that matters: send email, change your
+  calendar, post on X, run commands, write and delete files, click and type in web pages, schedule and start work, and use connected apps. Each is
+  **Default** (how Talaria always behaved), **Just do it** (no asking, even when you are away; a risky one asks twice before you can choose it),
+  **Ask me first** (every time), **I'll do it myself**, or **Never**. A change is saved in the config file and applies to the next thing any chat,
+  background task or scheduled job does, with no restart. **I'll do it myself** does not do the action: the agent shows you what to do in a card
+  (**Needs you**, with **I did it** and **Skip**, notified like any request for you), waits, and is told what you said, so it never does it twice;
+  where nobody can be asked (a scheduled job, Telegram) it is told to say what you must do. Rules written by hand in the config file are listed
+  and left alone; a kind whose tools have different hand-written rules shows as **Mixed**. In the config file the values are `allow`, `ask`,
+  `handoff` and `deny`. A rule never overrides the built-in checks: the guard against acting on what a web page or mail said, and
+  the approval for using a saved login, still apply to everything that is not set to "Just do it".
+- **Scheduling reads back what it saved.** After a reminder or scheduled job is saved, the agent is given exactly what was stored (the schedule,
+  the next run, its instruction, whether it may use tools that ask) and tells you in a sentence, so a wrong time or wording is caught at once.
+- **Quiet hours.** Settings, Notifications has quiet hours (for example 22:00 to 07:00, in your time zone, and they may run past midnight): replies,
+  reminders and finished work wait in the list instead of buzzing, and anything that needs your OK or your hands still comes through.
 - **Signing in to sites, by hand, in one tap.** When a page needs a person (a password, a code sent to your phone, a captcha) the agent calls
   `browser_handoff` with a reason such as "Sign in to x.com" instead of describing it in the chat. A card appears with **Open browser** (the
   Tasks tab gets a badge, and you get a notification if the app is closed), and the agent waits, up to 20 minutes. **Open browser** goes straight

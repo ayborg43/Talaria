@@ -272,3 +272,59 @@ func TestCallRunsAToolWithoutAskingAndRefusesOneThatNeedsApproval(t *testing.T) 
 		t.Fatal("the permission rules apply to a poll as to any call")
 	}
 }
+
+// A call whose rule says the user does it themselves is never run: the user is asked, and the agent is told what they said.
+func TestAHandoffRuleAsksTheUserToDoItAndNeverRunsIt(t *testing.T) {
+	var ran bool
+	reg := tool.NewRegistry()
+	reg.Register(tool.Tool{Name: "email_send", Description: "x", Schema: json.RawMessage(`{"type":"object"}`),
+		Describe: func(json.RawMessage) string { return "Send a message to ana@example.com" },
+		Run:      func(context.Context, json.RawMessage) (string, error) { ran = true; return "sent", nil }})
+	gate := handoffGate{}
+	for outcome, want := range map[string]string{
+		tool.HandoffDone: "did this themselves", tool.HandoffSkip: "chose not to", tool.HandoffReplied: "wrote in the chat", tool.HandoffTimeout: "Nobody answered",
+	} {
+		var asked string
+		a := &Agent{Tools: reg, Gate: gate, Handoff: func(_ context.Context, reason, url string) (string, error) {
+			asked = reason + "|" + url
+			return outcome, nil
+		}}
+		got, err := a.Call(context.Background(), "email_send", json.RawMessage(`{}`))
+		if err != nil {
+			t.Fatalf("%s: %v", outcome, err)
+		}
+		if !strings.Contains(got, want) {
+			t.Errorf("%s: the agent was told %q", outcome, got)
+		}
+		if asked != "Do this yourself: Send a message to ana@example.com|" {
+			t.Errorf("the user was asked %q", asked)
+		}
+	}
+	if ran {
+		t.Fatal("a handed-off call ran")
+	}
+	// nobody to ask: the agent is told to say what the user must do, and still nothing runs
+	a := &Agent{Tools: reg, Gate: gate}
+	if _, err := a.Call(context.Background(), "email_send", json.RawMessage(`{}`)); err == nil || !strings.Contains(err.Error(), "ana@example.com") || ran {
+		t.Fatalf("with nobody to ask: %v (ran %v)", err, ran)
+	}
+}
+
+type handoffGate struct{}
+
+func (handoffGate) Verdict(string, bool) Verdict {
+	return Verdict{Action: HandOff, Via: "rule", Rule: "email_send = handoff"}
+}
+func (handoffGate) Scrub(s string) string { return s }
+func (handoffGate) Record(Entry)          {}
+
+func TestAHandoffShowsRawArgumentsAsReadableLines(t *testing.T) {
+	if got := plainArgs(`{"command":"touch /tmp/x","timeout":30}`); got != "command: touch /tmp/x\ntimeout: 30" {
+		t.Fatalf("%q", got)
+	}
+	for _, as := range []string{`not json`, `[1,2]`, `{}`, `"text"`} {
+		if got := plainArgs(as); got != as {
+			t.Errorf("%q was changed to %q", as, got)
+		}
+	}
+}

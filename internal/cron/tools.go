@@ -157,7 +157,7 @@ func RegisterTools(r *tool.Registry, s *Store, gateway string, chatID int64, tar
 			if err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("scheduled job %s (%s), first run %s%s", j.ID, j.Name, j.NextRun.Local().Format(timeFormat), targets.describe(j)), nil
+			return readBack(j) + targets.describe(j), nil
 		},
 	})
 
@@ -246,4 +246,20 @@ func Describe(j Job) string {
 		where += " [env: " + j.Environment + "]"
 	}
 	return fmt.Sprintf("%s | %s | %s | next %s | %s%s%s", j.ID, j.Name, j.Schedule, j.NextRun.Local().Format(timeFormat), last, risky, where)
+}
+
+// readBack is what a saved job says to the agent: exactly what was stored, so the agent can tell the user in a
+// sentence what it set up (what, when, where, and whether it may use tools that ask) and the user can correct it.
+func readBack(j Job) string {
+	risky := "It cannot use tools that need approval, because nobody is there to ask."
+	if j.AllowRisky {
+		risky = "It MAY use tools that need approval without asking."
+	}
+	when := "repeats"
+	if strings.HasPrefix(j.Schedule, "@at ") {
+		when = "runs once"
+	}
+	return fmt.Sprintf("scheduled job %s (%s), first run %s. Saved as: %s (%s). Its instruction: %q. The result comes to this chat. %s "+
+		"Tell the user in one or two plain sentences what you saved (what, when, where it arrives) so they can correct it.",
+		j.ID, j.Name, j.NextRun.Local().Format(timeFormat), j.Schedule, when, snippet(j.Prompt, 160), risky)
 }

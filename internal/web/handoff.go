@@ -35,7 +35,11 @@ func (h *Hub) Handoff(ctx context.Context, reason, url string) (string, error) {
 	m := h.add(&Message{Role: "handoff", Text: clip(reason), State: "pending", Token: token, URL: clip(url)})
 	id := m.ID
 	if h.Notifier != nil && h.awayLocked() {
-		go h.Notifier.Notify("Needs you in the browser", firstLine(reason), "approval", "/#chat")
+		title := "Needs you in the browser"
+		if url == "" { // not a page to take over: an action the user's rules say they do themselves
+			title = "Needs you"
+		}
+		go h.Notifier.Notify(title, firstLine(reason), "approval", "/#chat")
 	}
 	h.mu.Unlock()
 

@@ -356,7 +356,8 @@ func runGateway(c *cli) error {
 		}
 		push := &web.Pusher{Path: filepath.Join(c.home, "web_push.json"), Subject: subject, Logf: logf}
 		// Every notification is written down for the app's own list; the push service gets the kinds that are not muted.
-		notices := &web.Notices{Path: filepath.Join(c.home, "web_notices.json"), Next: push}
+		qzone, _ := calendarZone(c.cfg, c.getenv)
+		notices := &web.Notices{Path: filepath.Join(c.home, "web_notices.json"), Next: push, Zone: qzone}
 		webHub.Notifier = notices
 		s := &service{name: "web", allowed: allowed, markdown: true, sink: webHub}
 		eng := &chat.Engine{
@@ -381,6 +382,7 @@ func runGateway(c *cli) error {
 			Sources: webSources(c.rt, zone, webLinks(c.cfg, c.rt, model, c.getenv, webSet.PublicURL)), Logf: logf, TrustProxy: webSet.Secure,
 			ConfigPath: config.Path(c.home, c.getenv),
 			Cfg:        c.cfg,
+			ApplyRules: applyRules(c.rt),
 			Mailbox:    c.rt.Mail(), Calendars: c.rt.Calendars(), X: c.rt.X(), Getenv: c.getenv,
 			Notes: c.rt.Notes(), Notices: notices, Env: c.rt.Env(), Browsers: c.rt.Browsers,
 			ReceiptsPath: filepath.Join(c.home, "computer_receipts.json"),

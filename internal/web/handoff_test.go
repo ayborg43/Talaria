@@ -147,3 +147,23 @@ func TestTheHandoffEndpointOnlyAcceptsDoneOrSkip(t *testing.T) {
 		t.Fatalf("%q", o)
 	}
 }
+
+// A handoff with no page to take over is an action the user's rules say they do themselves: it asks as "Needs you".
+func TestAnActionHandoffHasNoPageAndNotifiesAsNeedsYou(t *testing.T) {
+	n := noticeLog{got: make(chan string, 1)}
+	h := &Hub{Notifier: n}
+	go h.Handoff(context.Background(), "Do this yourself: Send a message to ana@example.com", "")
+	m := waitPending(t, h)
+	if m.URL != "" || !strings.HasPrefix(m.Text, "Do this yourself") {
+		t.Fatalf("%+v", m)
+	}
+	select {
+	case got := <-n.got:
+		if !strings.HasPrefix(got, "approval:Needs you:Do this yourself") {
+			t.Fatalf("notified %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("nobody was told")
+	}
+	h.ResolveHandoff(m.Token, "skip")
+}

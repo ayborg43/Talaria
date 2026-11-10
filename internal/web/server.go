@@ -134,6 +134,10 @@ type Server struct {
 	// TrustProxy says the address of a request is the last one a front proxy put in X-Forwarded-For.
 	TrustProxy bool
 
+	// ApplyRules puts a new set of permission rules in force while Talaria runs, and says if one is wrong. Nil
+	// means the rules are only read at start, and a change needs a restart.
+	ApplyRules func(rules map[string]string) error
+
 	ConfigPath string
 	Cfg        *config.Config
 	// Mailbox and Calendars are the live services Settings manages; nil when
@@ -219,6 +223,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/tasks", s.authed(s.taskAction))
 	mux.HandleFunc("POST /api/setup/check", s.authed(s.setupCheck))
 	mux.HandleFunc("POST /api/handoff", s.authed(s.handoffPost))
+	mux.HandleFunc("GET /api/rules", s.authed(s.rulesGet))
+	mux.HandleFunc("POST /api/rules", s.authed(s.rulesPost))
 	mux.HandleFunc("GET /api/suggestions", s.authed(s.suggestionsGet))
 	mux.HandleFunc("POST /api/suggestions", s.authed(s.suggestionsPost))
 	mux.HandleFunc("GET /api/brief", s.authed(s.briefGet))
@@ -972,6 +978,15 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// saveConfigQuiet saves the config file and returns the error, for a handler that answers in its own way.
+func (s *Server) saveConfigQuiet() error {
+	if err := config.Write(s.ConfigPath, s.Cfg); err != nil {
+		s.logf("web: settings save: %v", err)
+		return err
+	}
+	return nil
 }
 
 // writeConfig saves the config file, reporting failure.

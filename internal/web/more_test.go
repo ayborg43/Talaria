@@ -375,7 +375,7 @@ func TestTheSecondScriptKeepsThePagesRules(t *testing.T) {
 	if !strings.Contains(sw, "'/more.js'") {
 		t.Error("the service worker does not keep more.js, so the app would not open offline")
 	}
-	for _, want := range []string{"function openComputer", "function openDoc", "function richResult", "function conversationsCard", "function paneYou", "function handoffCard", "function handoffBar", "function readyCard", "function loadMake", "function channelForm", "URL.revokeObjectURL"} {
+	for _, want := range []string{"function openComputer", "function openDoc", "function richResult", "function conversationsCard", "function paneYou", "function handoffCard", "function handoffBar", "function rulesCard", "function readyCard", "function loadMake", "function channelForm", "URL.revokeObjectURL"} {
 		if !strings.Contains(js, want) {
 			t.Errorf("more.js lost %q", want)
 		}
@@ -549,5 +549,23 @@ func TestAMissingCardIsLeftOutNotWrittenAsTheWordNull(t *testing.T) {
 	}
 	if !strings.Contains(string(m), "body.replaceChildren(...[handoffBar(), busyBar, picker,") || !strings.Contains(string(m), ".filter(Boolean));") {
 		t.Error("the browser panel no longer filters out a missing bar")
+	}
+}
+
+// The Rules page edits permissions with one choice per kind of action, confirms before a risky "just do it", and
+// the page never writes a rule itself: the server does, and the running policy is replaced at once.
+func TestTheRulesCardAsksTwiceBeforeAnUnattendedRiskyAction(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("static", "more.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(b)
+	for _, want := range []string{"/api/rules", "c.risky", "confirm(", "handoff: 'I’ll do it myself'", "Mixed (set by hand)"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("the rules card lacks %q", want)
+		}
+	}
+	if !strings.Contains(js, "quiet_from") {
+		t.Error("quiet hours are not on the notifications page")
 	}
 }

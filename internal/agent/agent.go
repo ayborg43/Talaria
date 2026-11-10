@@ -37,6 +37,8 @@ const (
 	Allow = tool.Allow // run it
 	Ask   = tool.Ask   // run it if the user approves
 	Deny  = tool.Deny  // do not run it
+	// HandOff does not run it: the user is asked to do it themselves.
+	HandOff = tool.Handoff
 )
 
 // Labelled names a tool as a subagent's call to it appears in an approval
@@ -477,6 +479,8 @@ func (a *Agent) executeAs(ctx context.Context, call provider.ToolCall, approved 
 	switch verdict.Action {
 	case Deny:
 		return execResult{text: "error: the permission rules do not allow this tool"}
+	case HandOff:
+		return a.handOff(ctx, call, &entry)
 	case Ask:
 		if !flagged {
 			entry.Via = "prompt"
@@ -617,4 +621,66 @@ func (a *Agent) executeTool(ctx context.Context, t tool.Tool, args string) (tool
 		}
 		return tool.Result{}, fmt.Errorf("timed out after %s", timeout)
 	}
+}
+
+// handOff is a call whose rule says the user does it themselves: nothing is run. If the front end can ask, the user
+// gets a card saying what to do and the agent waits until they say they did it, skipped it, or wrote in the chat;
+// where nobody can be asked (a scheduled job, a chat service with no page) the agent is told to say what the user
+// must do.
+func (a *Agent) handOff(ctx context.Context, call provider.ToolCall, entry *Entry) execResult {
+	entry.Via = "rule"
+	shown := call.Arguments
+	if t, ok := a.Tools.Get(call.Name); ok && t.Describe != nil {
+		if d := t.Describe([]byte(call.Arguments)); d != "" {
+			shown = d
+		}
+	}
+	shown = plainArgs(strings.TrimSpace(shown))
+	if len(shown) > 600 {
+		shown = shown[:600] + "…"
+	}
+	if a.Handoff == nil {
+		entry.Status = "handed off"
+		return execResult{text: "error: the user has set this kind of action to be done by them, not by you, and nobody can be asked here. Do not do it: tell them exactly what to do: " + shown}
+	}
+	metrics.Inc("talaria_approvals_total", "decision", "handoff")
+	entry.Status = "handed off"
+	outcome, err := a.Handoff(ctx, "Do this yourself: "+shown, "")
+	if err != nil {
+		return execResult{text: "error: " + err.Error()}
+	}
+	switch outcome {
+	case tool.HandoffDone:
+		return execResult{text: "The user says they did this themselves, as their rules require. It was not done by you: do not do it again, and check the result if it matters before going on."}
+	case tool.HandoffSkip:
+		return execResult{text: "The user chose not to do this. Do not ask again for the same thing: carry on without it, or say what you could not do."}
+	case tool.HandoffReplied:
+		return execResult{text: "The user wrote in the chat instead of doing it: their message comes next. The action was not done."}
+	}
+	return execResult{text: "Nobody answered in time, and the action was not done. Tell the user what is waiting, and ask again only if they come back."}
+}
+
+// plainArgs writes a call's raw JSON arguments as "name: value" lines, for a person to read: a tool with no
+// description of its own would otherwise show {"command": "..."}. Anything that is not a plain object is left as it is.
+func plainArgs(s string) string {
+	var m map[string]any
+	if json.Unmarshal([]byte(s), &m) != nil || len(m) == 0 {
+		return s
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		switch v := m[k].(type) {
+		case string:
+			fmt.Fprintf(&b, "%s: %s\n", k, v)
+		default:
+			raw, _ := json.Marshal(v)
+			fmt.Fprintf(&b, "%s: %s\n", k, raw)
+		}
+	}
+	return strings.TrimSpace(b.String())
 }

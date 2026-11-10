@@ -691,6 +691,16 @@ function noticeCards() {
     sw('When something needs your OK', 'A question that is waiting for your answer.', 'approvals'),
     sw('Replies and finished work', 'An answer, a reminder, or a background task that ended while the app was closed.', 'replies'),
     h('div', { class: 'field-note', text: 'A kind you turn off still appears in the list below: it only stops buzzing.' }));
+  // Quiet hours: replies and finished work are kept in the list and not pushed; a request for you always is.
+  const qf = h('input', { id: 'quiet-from', type: 'time', value: prefs.quiet_from || '22:00', step: '300' });
+  const qt = h('input', { id: 'quiet-to', type: 'time', value: prefs.quiet_to || '07:00', step: '300' });
+  const qon = h('input', { type: 'checkbox', checked: !!(prefs.quiet_from && prefs.quiet_to) });
+  const quiet = h('div', { class: 'card' }, h('h2', null, 'Quiet hours'),
+    h('label', { class: 'opt' + (qon.checked ? ' on' : '') }, qon, h('span', { class: 'grow' }, h('b', { text: 'Keep replies quiet at night' }),
+      h('span', { class: 's', text: 'Replies, reminders and finished work wait in the list below instead of buzzing. Anything that needs your OK or your hands still comes through.' }))),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', for: 'quiet-from', text: 'From' }), qf),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', for: 'quiet-to', text: 'Until' }), qt),
+    h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: () => set({ prefs: { ...prefs, quiet_from: qon.checked ? qf.value : '', quiet_to: qon.checked ? qt.value : '' } }) })));
   const list = h('div', { class: 'card' }, h('h2', null, 'Lately', h('small', { text: (n.items || []).length ? 'the last ' + n.items.length : '' })));
   if (!(n.items || []).length) list.append(h('div', { class: 'empty', text: 'Notifications are listed here, so one you swiped away is not lost.' }));
   else {
@@ -701,7 +711,7 @@ function noticeCards() {
     }
     list.append(rows, h('div', { class: 'btn-row' }, h('button', { class: 'btn small', type: 'button', text: 'Clear the list', onclick: () => set({ clear: true }) })));
   }
-  return [kinds, list];
+  return [kinds, quiet, list];
 }
 
 
@@ -1043,7 +1053,7 @@ async function loadSuggestions() {
 // The agent calls browser_handoff when a site needs a person: a sign-in, a code sent to a phone, a human check. A card
 // says why with a button that opens the tab, and while the tab is open a bar stays on it with the way back: when the
 // user taps "I'm done" the agent carries on at once, with no message to write.
-const HANDOFF_STATE = { done: ['ok', 'You finished it'], skipped: ['quiet', 'You skipped it'], replied: ['quiet', 'You answered in the chat'], expired: ['quiet', 'No longer waiting'] };
+const HANDOFF_STATE = { done: ['ok', 'You did it'], skipped: ['quiet', 'You skipped it'], replied: ['quiet', 'You answered in the chat'], expired: ['quiet', 'No longer waiting'] };
 async function answerHandoff(m, action, btns) {
   btns.forEach((b) => { b.disabled = true; });
   try { await api('/api/handoff', { method: 'POST', body: { token: m.token, action } }); return true; }
@@ -1052,32 +1062,74 @@ async function answerHandoff(m, action, btns) {
 function openHandoffTab(m) { COMPUTER.want = m && m.url ? hostOf(m.url) : ''; openComputer('browser'); }
 function handoffCard(m) {
   const pending = m.state === 'pending';
+  const browserPage = !!m.url; // a page to take over; without one it is an action the user's rules say they do themselves
   const host = m.url ? hostOf(m.url) : '';
   const card = h('div', { class: 'ask handoff' + (pending ? '' : ' done') });
-  card.append(h('div', { class: 'ask-head' }, h('span', { class: 'ask-icon' }, icon('eye')), h('span', { class: 'ask-title', text: 'Needs you in the browser' }), pending && h('span', { class: 'pill brass', text: 'WAITING' })));
+  card.append(h('div', { class: 'ask-head' }, h('span', { class: 'ask-icon' }, icon(browserPage ? 'eye' : 'shield')), h('span', { class: 'ask-title', text: browserPage ? 'Needs you in the browser' : 'Needs you' }), pending && h('span', { class: 'pill brass', text: 'WAITING' })));
   card.append(h('div', { class: 'ask-why', text: m.text + (host ? ' · ' + host : '') }));
   if (pending) {
-    card.append(h('div', { class: 'note', text: 'Open the page, do it yourself, then say you are done. What you type there is not shown to the agent.' }));
+    card.append(h('div', { class: 'note', text: browserPage ? 'Open the page, do it yourself, then say you are done. What you type there is not shown to the agent.' : 'Your rules say you do this kind of thing yourself. Do it, then tell the agent. Change the rule under Settings, Permissions.' }));
     const btns = [];
     const mk = (label, cls, fn) => { const b = h('button', { class: 'btn ' + cls, type: 'button', text: label, onclick: fn }); btns.push(b); return b; };
     card.append(h('div', { class: 'btn-row' },
       mk('Skip', '', () => answerHandoff(m, 'skip', btns)),
-      mk('Open browser', 'primary', () => openHandoffTab(m)),
-      mk('I’m done', '', async () => { if (await answerHandoff(m, 'done', btns)) { toast('Carrying on.'); } })));
+      browserPage ? mk('Open browser', 'primary', () => openHandoffTab(m)) : null,
+      mk(browserPage ? 'I’m done' : 'I did it', browserPage ? '' : 'primary', async () => { if (await answerHandoff(m, 'done', btns)) { toast('Carrying on.'); } })));
   } else {
     const v = HANDOFF_STATE[m.state] || ['quiet', m.state];
     card.append(h('div', { class: 'verdict ' + v[0] }, icon(v[0] === 'ok' ? 'check' : 'info'), v[1]));
-    if (m.state === 'done') card.append(h('div', { class: 'field-note', text: 'The sign-in stays in the agent’s browser, so it can use this site until the site ends it. To let it sign in again by itself, save the login under Settings, Connections.' }));
+    if (m.state === 'done' && browserPage) card.append(h('div', { class: 'field-note', text: 'The sign-in stays in the agent’s browser, so it can use this site until the site ends it. To let it sign in again by itself, save the login under Settings, Connections.' }));
   }
   return card;
 }
 // The bar kept on the browser panel while the agent waits: where it is, and the one tap that sends the user back.
 function handoffBar() {
-  const m = pendingHandoffs()[0];
+  const m = pendingHandoffs().find((x) => x.url); // only a request about a page belongs on the browser panel
   if (!m) return null;
   const btns = [];
   const done = h('button', { class: 'btn primary', type: 'button', text: 'I’m done, continue', onclick: async () => { if (await answerHandoff(m, 'done', btns)) { closePanel(); location.hash = '#chat'; toast('Carrying on.'); } } });
   const skip = h('button', { class: 'btn', type: 'button', text: 'Skip', onclick: async () => { if (await answerHandoff(m, 'skip', btns)) { closePanel(); location.hash = '#chat'; } } });
   btns.push(done, skip);
   return h('div', { class: 'handoff-bar' }, h('span', { class: 'grow' }, h('b', { text: 'The agent is waiting for you' }), h('span', { class: 's', text: m.text })), skip, done);
+}
+
+
+// ---------- rules: what the agent may do without asking ----------
+// One setting per kind of action. "Default" is how Talaria always behaved; the others are rules that apply to the next
+// thing the agent does, at once, with no restart. "I'll do it myself" makes the agent ask you to do it instead of
+// doing it, and wait.
+const MODE_LABEL = { default: 'Default', allow: 'Just do it', ask: 'Ask me first', handoff: 'I’ll do it myself', deny: 'Never' };
+const MODE_HELP = {
+  default: 'How Talaria behaves without a rule: it asks for what is risky and does the rest.',
+  allow: 'It does this without asking, every time, including when you are away.',
+  ask: 'It asks you first, every time, and waits for your answer.',
+  handoff: 'It does not do this. It asks you to, with what to do, and waits until you say you have.',
+  deny: 'It is never allowed to do this, whoever asks.',
+};
+function rulesCard() {
+  const r = S.rules;
+  if (!r || !(r.categories || []).length) return null;
+  const rows = h('div', { class: 'rows' });
+  for (const c of r.categories) {
+    const sel = h('select', { class: 'rule-select', 'aria-label': c.title });
+    for (const m of r.modes) sel.append(h('option', { value: m, text: MODE_LABEL[m] || m }));
+    if (c.mixed) { const o = h('option', { value: '', text: 'Mixed (set by hand)', disabled: '' }); sel.prepend(o); sel.value = ''; } else sel.value = c.mode;
+    const help = !c.mixed && c.mode === 'default' ? null : h('span', { class: 's', text: c.mixed ? 'Its tools have different rules in the config file. Pick a mode to make them all the same.' : MODE_HELP[c.mode] });
+    sel.addEventListener('change', async () => {
+      const mode = sel.value;
+      if (mode === 'allow' && c.risky && !confirm('"' + c.title + '" would happen without asking, even when you are away. Are you sure?')) { sel.value = c.mixed ? '' : c.mode; return; }
+      sel.disabled = true;
+      try {
+        const d = await api('/api/rules', { method: 'POST', body: { category: c.id, mode } });
+        S.rules = d.rules;
+        toast(d.restart_needed ? 'Saved. It applies after Talaria restarts.' : 'Saved. It applies from the next thing the agent does.');
+      } catch (e) { failed(e); }
+      renderSettings();
+    });
+    rows.append(h('div', { class: 'row rule-row' }, h('span', { class: 'grow' }, h('span', { class: 't', text: c.title }), h('span', { class: 's', text: c.detail }), help), sel));
+  }
+  const other = Object.entries(r.other || {});
+  return h('div', { class: 'card' }, h('h2', null, 'Rules for each kind of action'),
+    h('div', { class: 'field-note', text: 'These apply to every chat, background task and scheduled job. "Never" and "I’ll do it myself" cannot be undone by the agent, and a rule you set here is kept even after a restart.' }), rows,
+    other.length ? h('div', { class: 'field-note', text: 'Also set by hand in the config file: ' + other.map(([k, v]) => k + ' is ' + v).join('; ') + '.' }) : null);
 }

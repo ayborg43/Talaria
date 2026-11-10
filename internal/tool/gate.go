@@ -6,9 +6,18 @@ import "time"
 type Action int
 
 const (
-	Allow Action = iota // run it
-	Ask                 // run it if the user approves
-	Deny                // do not run it
+	Allow   Action = iota // run it
+	Ask                   // run it if the user approves
+	Deny                  // do not run it
+	Handoff               // do not run it: ask the user to do it themselves, and wait
+)
+
+// What the user answered when asked to do something themselves, or to take over the browser.
+const (
+	HandoffDone    = "done"    // they did it
+	HandoffSkip    = "skip"    // they chose not to
+	HandoffReplied = "replied" // they wrote in the chat instead
+	HandoffTimeout = "timeout" // nobody answered in time
 )
 
 // Verdict is a Gate's ruling on a call.

@@ -26,13 +26,19 @@ type Notice struct {
 type NoticePrefs struct {
 	Approvals bool `json:"approvals"`
 	Replies   bool `json:"replies"`
+	// QuietFrom and QuietTo ("22:00" and "07:00") are hours when replies and finished work stay quiet: they are
+	// kept in the list and not pushed. A request that needs you always comes through. Empty means no quiet hours.
+	QuietFrom string `json:"quiet_from,omitempty"`
+	QuietTo   string `json:"quiet_to,omitempty"`
 }
 
 type noticeFile struct {
 	// Mute holds the tags that are not pushed. Recording what is off, rather
 	// than what is on, makes a missing file mean "everything on".
-	Mute  map[string]bool `json:"mute,omitempty"`
-	Items []Notice        `json:"items,omitempty"`
+	Mute      map[string]bool `json:"mute,omitempty"`
+	Items     []Notice        `json:"items,omitempty"`
+	QuietFrom string          `json:"quiet_from,omitempty"`
+	QuietTo   string          `json:"quiet_to,omitempty"`
 }
 
 // Notices sits between the conversation and the push service: it writes every
@@ -42,6 +48,8 @@ type Notices struct {
 	Path string
 	Next Notifier // the push service; may be nil
 	Now  func() time.Time
+	// Zone is where quiet hours are read; nil is UTC.
+	Zone *time.Location
 
 	mu sync.Mutex
 }
@@ -76,11 +84,37 @@ func (n *Notices) Notify(title, body, tag, path string) {
 		f.Items = f.Items[len(f.Items)-maxNotices:]
 	}
 	n.save(f)
-	muted := f.Mute[tag]
+	muted := f.Mute[tag] || (tag != "approval" && n.quiet(f, now)) // a request that needs you is never kept quiet
 	n.mu.Unlock()
 	if n.Next != nil && !muted {
 		n.Next.Notify(title, body, tag, path)
 	}
+}
+
+// quiet says whether now falls in the quiet hours. They may run past midnight (22:00 to 07:00).
+func (n *Notices) quiet(f noticeFile, now time.Time) bool {
+	from, to := minutes(f.QuietFrom), minutes(f.QuietTo)
+	if from < 0 || to < 0 || from == to {
+		return false
+	}
+	loc := n.Zone
+	if loc == nil {
+		loc = time.UTC
+	}
+	t := now.In(loc)
+	cur := t.Hour()*60 + t.Minute()
+	if from < to {
+		return cur >= from && cur < to
+	}
+	return cur >= from || cur < to
+}
+
+// minutes reads "HH:MM" as minutes into the day, or -1 when it is not one.
+func minutes(s string) int {
+	if !ValidClock(s) {
+		return -1
+	}
+	return int(s[0]-'0')*600 + int(s[1]-'0')*60 + int(s[3]-'0')*10 + int(s[4]-'0')
 }
 
 // List returns the kept notifications, newest first, and the preferences.
@@ -92,7 +126,7 @@ func (n *Notices) List() ([]Notice, NoticePrefs) {
 	for i, it := range f.Items {
 		out[len(f.Items)-1-i] = it
 	}
-	return out, NoticePrefs{Approvals: !f.Mute["approval"], Replies: !f.Mute["reply"]}
+	return out, NoticePrefs{Approvals: !f.Mute["approval"], Replies: !f.Mute["reply"], QuietFrom: f.QuietFrom, QuietTo: f.QuietTo}
 }
 
 // SetPrefs changes which kinds are pushed.
@@ -106,6 +140,10 @@ func (n *Notices) SetPrefs(p NoticePrefs) {
 	}
 	if !p.Replies {
 		f.Mute["reply"] = true
+	}
+	f.QuietFrom, f.QuietTo = "", ""
+	if ValidClock(p.QuietFrom) && ValidClock(p.QuietTo) && p.QuietFrom != p.QuietTo {
+		f.QuietFrom, f.QuietTo = p.QuietFrom, p.QuietTo
 	}
 	n.save(f)
 }

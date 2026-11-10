@@ -85,6 +85,18 @@ func ParsePolicy(rules map[string]string, noRemember []string) (*Policy, error) 
 	for _, t := range noRemember {
 		p.noRemember[t] = true
 	}
+	parsed, err := parseRules(rules)
+	if err != nil {
+		return nil, err
+	}
+	p.rules = parsed
+	return p, nil
+}
+
+// parseRules reads rules as written in the config: each key a tool name (or a family ending in *) and each value
+// allow, ask, handoff or deny.
+func parseRules(rules map[string]string) ([]rule, error) {
+	var out []rule
 	names := make([]string, 0, len(rules))
 	for name := range rules {
 		names = append(names, name)
@@ -100,8 +112,10 @@ func ParsePolicy(rules map[string]string, noRemember []string) (*Policy, error) 
 			r.action = tool.Ask
 		case "deny":
 			r.action = tool.Deny
+		case "handoff":
+			r.action = tool.Handoff
 		default:
-			return nil, fmt.Errorf("rule %q: %q is not allow, ask or deny", name, verdict)
+			return nil, fmt.Errorf("rule %q: %q is not allow, ask, handoff or deny", name, verdict)
 		}
 		switch stars := strings.Count(name, "*"); {
 		case name == "" || strings.TrimSpace(name) != name:
@@ -114,9 +128,40 @@ func ParsePolicy(rules map[string]string, noRemember []string) (*Policy, error) 
 		if err := checkRuleName(name, r.prefix); err != nil {
 			return nil, err
 		}
-		p.rules = append(p.rules, r)
+		out = append(out, r)
 	}
-	return p, nil
+	return out, nil
+}
+
+// SetRules replaces the rules while Talaria runs, so a change made in Settings applies to the next call at once.
+// Nothing changes if any rule is wrong.
+func (p *Policy) SetRules(rules map[string]string) error {
+	parsed, err := parseRules(rules)
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
+	p.rules = parsed
+	p.mu.Unlock()
+	return nil
+}
+
+// Rules is the rules in force, as the config writes them.
+func (p *Policy) Rules() map[string]string {
+	out := map[string]string{}
+	if p == nil {
+		return out
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	for _, r := range p.rules {
+		name := r.pattern
+		if r.prefix {
+			name += "*"
+		}
+		out[name] = actionName(r.action)
+	}
+	return out
 }
 
 // checkRuleName rejects a rule for a tool that does not exist, so a typo can
@@ -191,6 +236,8 @@ func (p *Policy) match(tool string) (rule, bool) {
 	if p == nil {
 		return rule{}, false
 	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	best, found := rule{}, false
 	for _, r := range p.rules {
 		switch {
@@ -232,7 +279,12 @@ func (p *Policy) NeverRemember(tools ...string) {
 
 // Describe lists the rules, one per line.
 func (p *Policy) Describe() string {
-	if p == nil || len(p.rules) == 0 {
+	if p == nil {
+		return "no rules"
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if len(p.rules) == 0 {
 		return "no rules"
 	}
 	var b strings.Builder
@@ -247,5 +299,5 @@ func (p *Policy) Describe() string {
 }
 
 func actionName(a tool.Action) string {
-	return [...]string{"allow", "ask", "deny"}[a]
+	return [...]string{"allow", "ask", "deny", "handoff"}[a]
 }
