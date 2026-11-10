@@ -126,16 +126,25 @@ start();
 });
 
 // ---------- markdown (small, and safe: it only ever builds elements and text) ----------
-const INLINE = /(`[^`\n]+`|\*\*[^*\n]+\*\*|https?:\/\/[^\s<>]+[^\s<>.,;:!?')\]]|\/api\/files\/[0-9a-fA-F]+)/g;
+// A link written as [label](https://address) is shown as its label with the address it really goes to beside it, so a
+// label can never hide where a tap leads. Only http and https are links; a bare address is shown as itself.
+const INLINE = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s<>]+[^\s<>.,;:!?')\]]|\/api\/files\/[0-9a-fA-F]+)/g;
+function hostOf(url) { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } }
 function inline(text) {
   const out = []; let last = 0, m;
   INLINE.lastIndex = 0;
   while ((m = INLINE.exec(text))) {
     if (m.index > last) out.push(text.slice(last, m.index));
     const t = m[0];
+    let link;
     if (t.startsWith('`')) out.push(h('code', { text: t.slice(1, -1) }));
     else if (t.startsWith('**')) out.push(h('b', { text: t.slice(2, -2) }));
     else if (t.startsWith('/api/files/')) out.push(fileChip(t)); // a kept file, served by this server
+    else if (t.startsWith('[') && (link = /^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/.exec(t))) {
+      const host = hostOf(link[2]);
+      out.push(h('a', { href: link[2], target: '_blank', rel: 'noopener noreferrer', title: link[2], text: link[1] }));
+      if (host && !link[1].includes(host)) out.push(h('span', { class: 'host', text: ' ' + host })); // where it really goes
+    }
     else out.push(h('a', { href: t, target: '_blank', rel: 'noopener noreferrer', text: t })); // shows the address it goes to
     last = m.index + t.length;
   }

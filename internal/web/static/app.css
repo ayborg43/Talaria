@@ -867,3 +867,4 @@ html{caret-color:var(--brass-text);accent-color:var(--brass);scrollbar-color:var
 @media (min-width:900px){.suggest{max-width:860px;padding:0 32px 8px}}
 @media (max-width:420px){.suggest-card{flex-wrap:wrap}.suggest-card .acts{width:100%;justify-content:flex-end}}
 .sug-row .t{white-space:normal;overflow:visible;text-overflow:clip}
+.host{color:var(--muted);font-size:.85em}

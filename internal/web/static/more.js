@@ -664,8 +664,12 @@ function setupItems() {
   else add('model', 'A model that answers', 'todo', 'No model is set up yet.', 'models');
   const em = s.email || {}, ec = checks.email;
   add('email', 'Your email', ec ? (ec.ok ? 'ready' : 'todo') : em.available ? 'unchecked' : 'todo', ec ? ec.detail : em.available ? (em.status || 'Set up. Press Check again to try it.') : 'Not connected: it cannot read your mail, sort it or write the brief from it.', 'connections');
+  // A calendar may be set in Settings (listed in s.calendars) or by the server's environment (TALARIA_CALENDARS), which
+  // Settings cannot see: the server's own list of connections (ctl.links) names those too, with the calendars it reads.
   const own = (s.calendars || []).filter((x) => !x.builtin), cc = checks.calendar;
-  add('calendar', 'Your calendar', cc ? (cc.ok ? 'ready' : 'todo') : own.length ? 'unchecked' : 'todo', cc ? cc.detail : own.length ? 'Set up. Press Check again to try it.' : 'Only its own calendar is there. Add yours to see your day in the brief.', 'connections');
+  const linked = ((typeof ctl !== 'undefined' && ctl && ctl.links) || []).some((l) => l.name === 'Calendar' && l.detail);
+  const have = own.length > 0 || linked;
+  add('calendar', 'Your calendar', cc ? (cc.ok ? 'ready' : 'todo') : have ? 'unchecked' : 'todo', cc ? cc.detail : have ? 'Set up. Press Check again to try it.' : 'Only its own calendar is there. Add yours to see your day in the brief.', 'connections');
   const brief = S.brief || {};
   if (brief.available) add('brief', 'Morning brief', brief.enabled ? 'ready' : 'todo', brief.enabled ? 'Arrives at ' + brief.at + ' every day.' : 'Off. Turn it on under You to get one message each morning.', 'you');
   add('push', 'Notifications on this device', S.push === 'on' ? 'ready' : S.push === 'unsupported' ? 'unchecked' : 'todo', S.push === 'on' ? 'On.' : S.push === 'needs-install' ? 'Add Talaria to your Home Screen first.' : S.push === 'denied' ? 'Blocked in the browser.' : 'Off: it cannot reach you when the app is closed.', 'notifications', true);

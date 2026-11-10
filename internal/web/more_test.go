@@ -491,3 +491,41 @@ func TestSettingsListsTheModelsAKeyCanUse(t *testing.T) {
 		t.Fatalf("an unknown profile: %d", resp.StatusCode)
 	}
 }
+
+// A link written as [label](address) is a link, but never one that hides where it goes: only http and https count,
+// and the real host is shown beside a label that does not name it.
+func TestMarkdownLinksShowWhereTheyGoAndRunNothing(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("static", "app.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(b)
+	i := strings.Index(js, "const INLINE = ")
+	if i < 0 {
+		t.Fatal("the inline pattern is gone")
+	}
+	pattern := js[i : i+strings.Index(js[i:], "\n")]
+	if !strings.Contains(pattern, `\[[^\]\n]+\]\(https?:\/\/`) {
+		t.Error("[label](address) links are not recognised")
+	}
+	if strings.Contains(pattern, "javascript") || strings.Contains(pattern, "data:") {
+		t.Error("the link pattern names a scheme that runs code")
+	}
+	for _, want := range []string{"function hostOf", "class: 'host'", "rel: 'noopener noreferrer'"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("the link renderer lost %q", want)
+		}
+	}
+}
+
+// A calendar the server reads from its environment is not in Settings' list, so the checklist also asks the
+// server's own list of connections; otherwise it said "only its own calendar" beside a screen full of events.
+func TestTheChecklistSeesACalendarSetByTheEnvironment(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("static", "more.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if js := string(b); !strings.Contains(js, "ctl.links") || !strings.Contains(js, "l.name === 'Calendar'") {
+		t.Error("the setup checklist ignores the server's list of connections")
+	}
+}
