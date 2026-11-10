@@ -253,6 +253,9 @@ func (rt *Runtime) Close() {
 type AgentOptions struct {
 	// Approve is asked before tools that need approval run. Nil denies them.
 	Approve func(name, args string) bool
+	// Handoff lets the agent ask the user to take over its browser tab (see agent.Agent.Handoff). Only a chat
+	// that can show the tab sets it: a scheduled job has nobody to ask.
+	Handoff func(ctx context.Context, reason, url string) (string, error)
 	// ExtraSystem is appended to the system prompt (e.g. notes about the channel).
 	ExtraSystem string
 	// ChatID, when non-zero, gives the agent cron tools whose jobs deliver to that
@@ -411,6 +414,7 @@ func (rt *Runtime) NewAgent(o AgentOptions) *agent.Agent {
 		}
 	}
 	rt.follow(ag, rt.env) // after the agent exists: subagents follow its model, approval and environment
+	ag.Handoff = o.Handoff
 	rt.offerBrowser(ag, rt.env)
 	return ag
 }

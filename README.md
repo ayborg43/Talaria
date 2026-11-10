@@ -747,6 +747,22 @@ holds live login cookies, so keep Dokploy access tight and back up the data volu
   that failed, with Retry and Dismiss), **Working now**, and **Ready for review**, finished background work you check off with **Done**. That
   moves it to **Resolved** under **History**, on every device (the list of checked-off ids is a small file, `web_reviewed.json`). **Up next** is
   what runs on its own, and **History** holds what finished lately, Resolved, the answered requests and the activity chart.
+- **Signing in to sites, by hand, in one tap.** When a page needs a person (a password, a code sent to your phone, a captcha) the agent calls
+  `browser_handoff` with a reason such as "Sign in to x.com" instead of describing it in the chat. A card appears with **Open browser** (the
+  Tasks tab gets a badge, and you get a notification if the app is closed), and the agent waits, up to 20 minutes. **Open browser** goes straight
+  to that tab with a bar on it, **The agent is waiting for you**, so you sign in and tap **I'm done, continue**: you are back in the chat and the
+  agent carries on at once, reading the page again, with no message to write. **Skip** tells it not to try again; writing in the chat instead
+  also ends the wait, and the agent reads what you wrote. A page that asks for a password and has no saved login says to use it. It works for
+  any site, including social media and webmail: the sign-in stays in the agent's browser profile (kept in the data volume), so it can use the site
+  until the site ends the session. Scheduled jobs and background tasks cannot ask anyone, so they do not have the tool and stop and report.
+  Some sites refuse a sign-in from a server's address or from an automated browser whatever you do (Google and X sometimes do); for Gmail the
+  app password under Settings, Connections is the reliable route, and X can also be used through its API token.
+- **The browser view is live and typing is direct.** The page picture is a live view (a stream of pictures sent when the page changes, drawn by a
+  plain image, shown only while the panel is open, at most three at once) with a **LIVE** mark; if it cannot be had it falls back to a picture
+  about every second and a half. What you type in the box under it goes to the page as you type, only the part that changed. Tapping a password
+  field switches the box to a masked one (**Password** switches by hand), so your phone's password manager can fill it, and the value goes to
+  the page and nowhere else: it is not shown to the agent, logged or kept. While the agent is working in the tab and nobody has asked for you,
+  the panel says so and offers **Stop it**.
 - **Suggestions you start with a tap.** The agent can leave suggestions (`idea_add`, with a title, why, a source and a prompt), and the morning brief
   proposes up to three a day after it has written the brief, skipping any already open. The newest waits above the message box as **Suggested**, with
   **Start** and **Hide**; all of them are under **Up next** on the Tasks screen, each saying where it came from ("From mail #12", "From calendar

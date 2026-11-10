@@ -147,3 +147,60 @@ func (p *Page) GoBack(ctx context.Context) error {
 	}
 	return nil
 }
+
+// focusKindJS says what the page has focused: a password field, some other text field, or nothing that takes typing.
+const focusKindJS = `(() => {
+  const e = document.activeElement;
+  if (!e) return 'none';
+  const t = (e.tagName || '').toLowerCase();
+  if (t === 'input') {
+    const ty = (e.type || 'text').toLowerCase();
+    if (['checkbox', 'radio', 'button', 'submit', 'reset', 'image', 'file', 'range', 'color'].includes(ty)) return 'none';
+    return ty === 'password' ? 'password' : 'text';
+  }
+  return t === 'textarea' || e.isContentEditable ? 'text' : 'none';
+})()`
+
+// FocusKind says whether the page now has a password field, another text field, or nothing that takes typing in
+// focus ("password", "text" or "none"), so the app can offer the right kind of box to type into. It asks only
+// what kind of thing has focus, never what is in it.
+func (p *Page) FocusKind(ctx context.Context) string {
+	var kind string
+	if err := p.eval(ctx, focusKindJS, &kind); err != nil {
+		return "none"
+	}
+	switch kind {
+	case "password", "text":
+		return kind
+	}
+	return "none"
+}
+
+const selectFocusedJS = `(() => {
+  const e = document.activeElement;
+  if (e && typeof e.select === 'function') { e.select(); return true; }
+  if (e && e.isContentEditable) { document.execCommand('selectAll'); return true; }
+  return false;
+})()`
+
+// ReplaceText replaces what is in the focused field with text, for the user's own typing when a password manager
+// fills a field in one go or they change a word in the middle. Empty text clears it. Like InsertText it is never
+// returned, logged or shown to the model.
+func (p *Page) ReplaceText(ctx context.Context, text string) error {
+	if len(text) > 4000 {
+		return errors.New("that is too much to type at once")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.touch()
+	p.took()
+	var selected bool
+	if err := p.eval(ctx, selectFocusedJS, &selected); err != nil {
+		return err
+	}
+	if text == "" {
+		return p.key(ctx, "Backspace")
+	}
+	_, err := p.call(ctx, "Input.insertText", map[string]any{"text": text})
+	return err
+}

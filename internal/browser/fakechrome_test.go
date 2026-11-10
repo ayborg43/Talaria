@@ -352,6 +352,19 @@ func (s *fakeState) evaluate(expr string) any {
 			}
 		}
 		return val(map[string]any{"error": "no such option", "options": e.Options})
+	case expr == focusKindJS:
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		e := s.el(s.focus)
+		switch {
+		case e == nil:
+			return val("none")
+		case e.Type == "password":
+			return val("password")
+		case e.Tag == "input" && e.Type != "checkbox" || e.Tag == "textarea":
+			return val("text")
+		}
+		return val("none")
 	case expr == "location.href":
 		s.mu.Lock()
 		defer s.mu.Unlock()

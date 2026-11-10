@@ -61,8 +61,10 @@ function computerCard() {
       h('button', { class: 'btn', type: 'button', text: 'Files', onclick: () => openComputer('files') })));
 }
 
-// The browser: a picture of the tab the agent has open, taken about once a second while this is on screen and
-// never otherwise. Pointing at the picture clicks the page; what is typed here goes to the page and nowhere else.
+// The browser: a live view of the tab the agent has open, shown only while this is on screen. The server sends a picture
+// whenever the page changes and the browser draws it in a plain image; if that cannot be had, a picture is fetched about
+// every second and a half instead. Pointing at the picture clicks the page. What is typed here goes to the page as it is
+// typed, in a masked box for a password (which a password manager can fill), and nowhere else.
 async function showBrowser(body) {
   let d;
   try { d = await api('/api/browser'); } catch (e) { failed(e); body.replaceChildren(h('div', { class: 'card empty', text: e.message })); return; }
@@ -74,15 +76,18 @@ async function showBrowser(body) {
       h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'button', text: 'Look again', onclick: showComputer }))));
     return;
   }
+  if (COMPUTER.want) { const wanted = tabs.find((t) => hostOf(t.url) === COMPUTER.want); if (wanted) COMPUTER.tab = wanted.id; COMPUTER.want = ''; }
   if (!tabs.some((t) => t.id === COMPUTER.tab)) COMPUTER.tab = tabs[0].id;
   const W = d.width || 1280, H = d.height || 800;
   const addr = h('input', { type: 'text', class: 'addr', 'aria-label': 'Address', autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', enterkeyhint: 'go' });
   addr.value = (tabs.find((t) => t.id === COMPUTER.tab) || {}).url || '';
   const img = h('img', { class: 'shot', alt: 'The page the agent has open', draggable: 'false' });
   const stage = h('div', { class: 'stage' }, img);
-  let alive = true, busy = false, last = '';
+  const livePill = h('span', { class: 'pill ok live-pill', text: 'LIVE', hidden: '' });
+  let alive = true, busy = false, last = '', live = false;
+  // one picture, fetched now: the fallback when no live view can be had, and a refresh after a tap
   const shot = async () => {
-    if (!alive || busy || document.hidden) return;
+    if (!alive || busy || document.hidden || live) return;
     busy = true;
     try {
       const r = await fetch('/api/browser/shot?id=' + encodeURIComponent(COMPUTER.tab), { credentials: 'same-origin' });
@@ -98,14 +103,63 @@ async function showBrowser(body) {
     } catch { /* offline: the next one will try again */ }
     busy = false;
   };
-  const loop = () => { clearTimeout(PANEL.timer); if (!alive) return; PANEL.timer = setTimeout(async () => { await shot(); loop(); }, 1500); };
-  PANEL.onClose = () => { alive = false; if (last) URL.revokeObjectURL(last); };
-  const act = async (a) => {
+  const poll = () => { clearTimeout(PANEL.timer); if (!alive || live) return; PANEL.timer = setTimeout(async () => { await shot(); poll(); }, 1500); };
+  const startLive = () => {
+    if (!alive || document.hidden) return;
+    live = true; livePill.hidden = true;
+    img.src = '/api/browser/stream?id=' + encodeURIComponent(COMPUTER.tab) + '&t=' + Date.now();
+  };
+  const stopLive = () => { live = false; livePill.hidden = true; img.removeAttribute('src'); };
+  img.addEventListener('load', () => { if (live) livePill.hidden = false; });
+  img.addEventListener('error', () => { if (live) { live = false; livePill.hidden = true; shot(); poll(); } }); // no live view: fall back to pictures
+  // the address and whether the tab is still there, now and then: a live view carries no headers
+  const watch = async () => {
+    if (!alive || document.hidden) return;
     try {
-      const r = await api('/api/browser/act', { method: 'POST', body: { id: COMPUTER.tab, ...a } });
-      if (r && r.url && document.activeElement !== addr) addr.value = r.url;
-    } catch (e) { failed(e); }
-    await shot();
+      const t = ((await api('/api/browser')).tabs || []).find((x) => x.id === COMPUTER.tab);
+      if (!t) { alive = false; showComputer(); return; }
+      if (t.url && document.activeElement !== addr) addr.value = t.url;
+    } catch { /* the next one will try again */ }
+  };
+  const watcher = setInterval(watch, 3000);
+  const vis = () => { if (document.hidden) stopLive(); else if (alive) { startLive(); poll(); } };
+  document.addEventListener('visibilitychange', vis);
+  PANEL.onClose = () => { alive = false; stopLive(); clearInterval(watcher); document.removeEventListener('visibilitychange', vis); if (last) URL.revokeObjectURL(last); };
+
+  const post = (a) => api('/api/browser/act', { method: 'POST', body: { id: COMPUTER.tab, ...a } }).catch((e) => { if (!(e instanceof AuthError)) failed(e); return null; });
+  // Typing: what is in the box is sent to the page as it changes, as only the part that changed, in order. A password
+  // manager filling the box in one go arrives as a replacement. Nothing typed here is kept.
+  const typed = h('input', { type: 'text', class: 'typed', 'aria-label': 'Type into the page', placeholder: 'Type into the page…', autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', enterkeyhint: 'go' });
+  let prev = '', chain = Promise.resolve(), timer = 0;
+  const setMode = (kind) => {
+    typed.value = ''; prev = '';
+    typed.type = kind === 'password' ? 'password' : 'text';
+    typed.setAttribute('autocomplete', kind === 'password' ? 'current-password' : 'off');
+    typed.placeholder = kind === 'password' ? 'Password: your password manager can fill this' : 'Type into the page…';
+    modeBtn.textContent = kind === 'password' ? 'Show text' : 'Password';
+    typed.classList.toggle('secret', kind === 'password');
+    if (kind !== 'none') { try { typed.focus({ preventScroll: true }); } catch { /* a phone may want the box tapped */ } }
+  };
+  const modeBtn = h('button', { type: 'button', class: 'key', text: 'Password', title: 'Type a password into a masked box', onclick: () => setMode(typed.type === 'password' ? 'text' : 'password') });
+  const flush = () => {
+    const now = typed.value; if (now === prev) return;
+    let i = 0; while (i < prev.length && i < now.length && prev[i] === now[i]) i++;
+    const del = prev.length - i, add = now.slice(i); prev = now;
+    chain = chain.then(async () => {
+      if (del === 0) await post({ kind: 'type', text: add });
+      else if (del <= 3 && !add) for (let k = 0; k < del; k++) await post({ kind: 'key', key: 'Backspace' });
+      else await post({ kind: 'replace', text: now });
+      if (!live) shot();
+    });
+  };
+  typed.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(flush, 60); });
+  typed.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(timer); flush(); chain = chain.then(async () => { await post({ kind: 'key', key: 'Enter' }); if (!live) shot(); }); } });
+
+  const act = async (a) => {
+    const r = await post(a);
+    if (r && r.url && document.activeElement !== addr) addr.value = r.url;
+    if (r && a.kind === 'click') setMode(r.focus || 'none'); // a tap on a field opens the right box to type into
+    if (!live) await shot();
   };
   const point = (e) => { const b = img.getBoundingClientRect(); return { x: Math.round(((e.clientX - b.left) / b.width) * W), y: Math.round(((e.clientY - b.top) / b.height) * H) }; };
   img.addEventListener('click', (e) => act({ kind: 'click', ...point(e) }));
@@ -116,27 +170,28 @@ async function showBrowser(body) {
     wheelAt = Date.now();
     act({ kind: 'wheel', ...point(e), dy: Math.sign(e.deltaY) * 400 });
   }, { passive: false });
-  const typed = h('input', { type: 'text', class: 'typed', 'aria-label': 'Type into the page', placeholder: 'Type into the page…', autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false' });
-  const send = async () => { const v = typed.value; if (!v) return; typed.value = ''; await act({ kind: 'type', text: v }); };
-  typed.addEventListener('keydown', async (e) => { if (e.key === 'Enter') { e.preventDefault(); await send(); await act({ kind: 'key', key: 'Enter' }); } });
   const go = () => { if (addr.value.trim()) { addr.blur(); act({ kind: 'open', url: addr.value.trim() }); } };
   addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
   const key = (label, name) => h('button', { type: 'button', class: 'key', text: label, 'aria-label': name, onclick: () => act({ kind: 'key', key: name }) });
   const ikey = (name, label, fn) => h('button', { type: 'button', class: 'key', 'aria-label': label, title: label, onclick: fn }, icon(name));
   const picker = tabs.length > 1 ? h('div', { class: 'seg inner' }, tabs.map((t, i) => h('button', { type: 'button', 'aria-selected': String(t.id === COMPUTER.tab), text: 'Tab ' + (i + 1), onclick: () => { COMPUTER.tab = t.id; showComputer(); } }))) : null;
+  // While the agent is using the tab itself and nobody has asked for the user, a tap can collide with what it is doing.
+  const busyBar = working() && !pendingHandoffs().length
+    ? h('div', { class: 'handoff-bar busy' }, h('span', { class: 'grow' }, h('b', { text: 'The agent is using this tab' }), h('span', { class: 's', text: 'Your taps work, but may collide with what it is doing.' })),
+      h('button', { class: 'btn', type: 'button', text: 'Stop it', onclick: () => $('#stop').click() })) : null;
   body.className = 'panel-body browser';
-  body.replaceChildren(picker,
+  body.replaceChildren(...[handoffBar(), busyBar, picker,
     h('div', { class: 'toolbar' },
       ikey('back', 'Back a page', () => act({ kind: 'back' })),
-      addr, h('button', { type: 'button', class: 'key go', text: 'Go', onclick: go })),
+      addr, livePill, h('button', { type: 'button', class: 'key go', text: 'Go', onclick: go })),
     stage,
-    h('div', { class: 'toolbar' }, typed, h('button', { type: 'button', class: 'key go', text: 'Type', onclick: send })),
+    h('div', { class: 'toolbar' }, typed, modeBtn),
     h('div', { class: 'toolbar keys' }, key('Enter', 'Enter'), key('Tab', 'Tab'), key('Esc', 'Escape'), ikey('del', 'Backspace', () => act({ kind: 'key', key: 'Backspace' })),
       ikey('up', 'Up arrow', () => act({ kind: 'key', key: 'ArrowUp' })), ikey('down', 'Down arrow', () => act({ kind: 'key', key: 'ArrowDown' })),
-      ikey('refresh', 'Refresh the picture', shot),
+      ikey('refresh', 'Reload the view', () => { if (live) { stopLive(); startLive(); } else shot(); }),
       ikey('zoom', 'Make the picture bigger or smaller', () => stage.classList.toggle('zoomed'))),
-    h('div', { class: 'field-note', text: 'You are working the same tab the agent uses. It is told you took control, and reads the page again before it carries on. What you type here is not shown to it.' }));
-  await shot(); loop();
+    h('div', { class: 'field-note', text: 'You are working the same tab the agent uses. Tap a field, then type below: it goes straight to the page. It is told you took control, and reads the page again before it carries on. What you type here is not shown to it.' })].filter(Boolean));
+  startLive(); poll();
 }
 
 // The terminal: one command at a time, thirty seconds each, on the agent's computer and never on the server.
@@ -857,17 +912,18 @@ function resolvedCard() {
   return d;
 }
 function needsInputCard() {
-  const pend = pendingAsks(), bad = failedTasksRows();
-  const n = pend.length + bad.length;
+  const pend = pendingAsks(), bad = failedTasksRows(), hand = pendingHandoffs();
+  const n = pend.length + bad.length + hand.length;
   const card = h('div', { class: 'card wait' + (n ? ' has' : '') }, h('h2', null, 'Needs input', h('small', { text: n ? n + ' to look at' : '' })));
   if (!n) { card.append(h('div', { class: 'empty', text: 'Nothing is waiting for you.' }), h('div', { class: 'note center', text: ASK_POLICY[ctl && ctl.permissions] || ASK_POLICY.deletes_and_posts })); return card; }
   if (pend.length) card.append(h('div', { class: 'note', text: 'These are saved. Answer whenever you like: the work carries on from where it stopped.' }));
+  hand.forEach((m) => card.append(handoffCard(m)));
   pend.forEach((m) => card.append(askCard(m)));
   if (bad.length) card.append(h('div', { class: 'rows' }, bad));
   return card;
 }
 function tasksCounts() {
-  const needs = pendingAsks().length + doneTasks.filter((t) => t.failed && !t.reviewed).length;
+  const needs = pendingAsks().length + pendingHandoffs().length + doneTasks.filter((t) => t.failed && !t.reviewed).length;
   const ready = doneTasks.filter((t) => !t.failed && !t.reviewed).length;
   return { active: needs + S.agents.length + ready, next: standing.length + (S.suggestions || []).length };
 }
@@ -980,4 +1036,48 @@ function suggestionsCard() {
 async function loadSuggestions() {
   try { const d = await api('/api/suggestions'); S.suggestions = d.suggestions || []; S.suggestion = S.suggestions[0] || null; } catch (e) { if (e instanceof AuthError) return; }
   renderSuggest(); if (S.tab === 'agents') renderAgentsPage();
+}
+
+
+// ---------- taking over the browser, when the agent asks ----------
+// The agent calls browser_handoff when a site needs a person: a sign-in, a code sent to a phone, a human check. A card
+// says why with a button that opens the tab, and while the tab is open a bar stays on it with the way back: when the
+// user taps "I'm done" the agent carries on at once, with no message to write.
+const HANDOFF_STATE = { done: ['ok', 'You finished it'], skipped: ['quiet', 'You skipped it'], replied: ['quiet', 'You answered in the chat'], expired: ['quiet', 'No longer waiting'] };
+async function answerHandoff(m, action, btns) {
+  btns.forEach((b) => { b.disabled = true; });
+  try { await api('/api/handoff', { method: 'POST', body: { token: m.token, action } }); return true; }
+  catch (e) { if (!(e instanceof AuthError)) toast(e.message); btns.forEach((b) => { b.disabled = false; }); return false; }
+}
+function openHandoffTab(m) { COMPUTER.want = m && m.url ? hostOf(m.url) : ''; openComputer('browser'); }
+function handoffCard(m) {
+  const pending = m.state === 'pending';
+  const host = m.url ? hostOf(m.url) : '';
+  const card = h('div', { class: 'ask handoff' + (pending ? '' : ' done') });
+  card.append(h('div', { class: 'ask-head' }, h('span', { class: 'ask-icon' }, icon('eye')), h('span', { class: 'ask-title', text: 'Needs you in the browser' }), pending && h('span', { class: 'pill brass', text: 'WAITING' })));
+  card.append(h('div', { class: 'ask-why', text: m.text + (host ? ' · ' + host : '') }));
+  if (pending) {
+    card.append(h('div', { class: 'note', text: 'Open the page, do it yourself, then say you are done. What you type there is not shown to the agent.' }));
+    const btns = [];
+    const mk = (label, cls, fn) => { const b = h('button', { class: 'btn ' + cls, type: 'button', text: label, onclick: fn }); btns.push(b); return b; };
+    card.append(h('div', { class: 'btn-row' },
+      mk('Skip', '', () => answerHandoff(m, 'skip', btns)),
+      mk('Open browser', 'primary', () => openHandoffTab(m)),
+      mk('I’m done', '', async () => { if (await answerHandoff(m, 'done', btns)) { toast('Carrying on.'); } })));
+  } else {
+    const v = HANDOFF_STATE[m.state] || ['quiet', m.state];
+    card.append(h('div', { class: 'verdict ' + v[0] }, icon(v[0] === 'ok' ? 'check' : 'info'), v[1]));
+    if (m.state === 'done') card.append(h('div', { class: 'field-note', text: 'The sign-in stays in the agent’s browser, so it can use this site until the site ends it. To let it sign in again by itself, save the login under Settings, Connections.' }));
+  }
+  return card;
+}
+// The bar kept on the browser panel while the agent waits: where it is, and the one tap that sends the user back.
+function handoffBar() {
+  const m = pendingHandoffs()[0];
+  if (!m) return null;
+  const btns = [];
+  const done = h('button', { class: 'btn primary', type: 'button', text: 'I’m done, continue', onclick: async () => { if (await answerHandoff(m, 'done', btns)) { closePanel(); location.hash = '#chat'; toast('Carrying on.'); } } });
+  const skip = h('button', { class: 'btn', type: 'button', text: 'Skip', onclick: async () => { if (await answerHandoff(m, 'skip', btns)) { closePanel(); location.hash = '#chat'; } } });
+  btns.push(done, skip);
+  return h('div', { class: 'handoff-bar' }, h('span', { class: 'grow' }, h('b', { text: 'The agent is waiting for you' }), h('span', { class: 's', text: m.text })), skip, done);
 }

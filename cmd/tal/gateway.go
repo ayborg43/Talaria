@@ -177,8 +177,12 @@ func runGateway(c *cli) error {
 			if c.yolo {
 				approve = func(string, string) bool { return true }
 			}
+			var handoff func(context.Context, string, string) (string, error)
+			if s.name == "web" && webHub != nil { // only the web app can show the agent's tab and wait for the user at it
+				handoff = webHub.Handoff
+			}
 			return c.rt.NewAgent(app.AgentOptions{
-				Approve: approve, ExtraSystem: note + agencyNote(c.rt), ChatID: chatID, Gateway: s.name, Tasks: s.sched, Activity: s.sink,
+				Approve: approve, ExtraSystem: note + agencyNote(c.rt), ChatID: chatID, Gateway: s.name, Tasks: s.sched, Activity: s.sink, Handoff: handoff,
 				// A job scheduled from this chat starts out with what the chat is using now.
 				Jobs: gatewayJobTargets(backends, s.envs, func() (string, string) { return selection(chatID) }),
 			})

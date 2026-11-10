@@ -615,7 +615,7 @@ func (s *Server) browserShot(w http.ResponseWriter, r *http.Request) {
 func (s *Server) browserAct(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		ID   string  `json:"id"`
-		Kind string  `json:"kind"` // click, type, key, wheel, open, back
+		Kind string  `json:"kind"` // click, type, replace, key, wheel, open, back
 		X    float64 `json:"x"`
 		Y    float64 `json:"y"`
 		DY   float64 `json:"dy"`
@@ -639,6 +639,8 @@ func (s *Server) browserAct(w http.ResponseWriter, r *http.Request) {
 		err = p.ClickAt(ctx, in.X, in.Y)
 	case "type":
 		err = p.InsertText(ctx, in.Text)
+	case "replace":
+		err = p.ReplaceText(ctx, in.Text)
 	case "key":
 		err = p.PressKey(ctx, in.Key)
 	case "wheel":
@@ -654,5 +656,9 @@ func (s *Server) browserAct(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "url": p.Where(ctx)})
+	out := map[string]any{"ok": true, "url": p.Where(ctx)}
+	if in.Kind == "click" { // what the click focused, so the page can offer the right box to type into
+		out["focus"] = p.FocusKind(ctx)
+	}
+	writeJSON(w, http.StatusOK, out)
 }

@@ -218,6 +218,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notices", s.authed(s.noticesPost))
 	mux.HandleFunc("POST /api/tasks", s.authed(s.taskAction))
 	mux.HandleFunc("POST /api/setup/check", s.authed(s.setupCheck))
+	mux.HandleFunc("POST /api/handoff", s.authed(s.handoffPost))
 	mux.HandleFunc("GET /api/suggestions", s.authed(s.suggestionsGet))
 	mux.HandleFunc("POST /api/suggestions", s.authed(s.suggestionsPost))
 	mux.HandleFunc("GET /api/brief", s.authed(s.briefGet))
@@ -230,6 +231,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/computer/transfer", s.authed(s.computerTransfer))
 	mux.HandleFunc("GET /api/browser", s.authed(s.browserTabs))
 	mux.HandleFunc("GET /api/browser/shot", s.authed(s.browserShot))
+	mux.HandleFunc("GET /api/browser/stream", s.authed(s.browserStream))
 	mux.HandleFunc("POST /api/browser/act", s.authed(s.browserAct))
 	// The AG-UI door checks its own key: a client that is not this page has no session to show.
 	mux.HandleFunc("POST /api/agui", s.agui)

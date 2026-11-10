@@ -38,7 +38,7 @@ type rule struct {
 var knownTools = map[string]bool{
 	"browser_back": true, "browser_click": true, "browser_close": true,
 	"choice_present": true, "choice_select": true,
-	"browser_fill": true, "browser_open": true, "browser_press": true,
+	"browser_fill": true, "browser_handoff": true, "browser_open": true, "browser_press": true,
 	"browser_screenshot": true, "browser_scroll": true, "browser_select": true,
 	"browser_snapshot": true, "browser_type": true, "browser_wait": true,
 	"calendar_add": true, "calendar_delete": true, "calendar_events": true, "calendar_update": true,

@@ -13,11 +13,21 @@ import (
 	"talaria/internal/tool"
 )
 
+// Option changes how Register sets the tools up.
+type Option func(*toolset)
+
+// WithHandoff says browser_handoff is registered too, so a page that asks for a password tells the agent to use it
+// instead of leaving it to ask in the chat.
+func WithHandoff() Option { return func(t *toolset) { t.handoff = true } }
+
 // ToolNames are the tools Register adds.
 var ToolNames = []string{
 	"browser_open", "browser_snapshot", "browser_click", "browser_type", "browser_press",
 	"browser_select", "browser_scroll", "browser_back", "browser_screenshot", "browser_wait", "browser_close",
 }
+
+// HandoffName is browser_handoff, which RegisterHandoff adds when the front end can ask the user to take over.
+const HandoffName = "browser_handoff"
 
 // Prefix starts every browser tool's name, so rules can cover them all ("browser_*").
 const Prefix = "browser_"
@@ -30,8 +40,11 @@ const usage = " The browser is a real, persistent one: logins and cookies are ke
 
 // Register adds the browser tools to r for one conversation, identified by
 // owner (each gets its own tab). Calling it again replaces them.
-func Register(r *tool.Registry, m *Manager, owner string) {
+func Register(r *tool.Registry, m *Manager, owner string, opts ...Option) {
 	t := &toolset{m: m, owner: owner}
+	for _, o := range opts {
+		o(t)
+	}
 	reg := func(tl tool.Tool) { // everything a page returns is text from outside
 		tl.Untrusted = true
 		if run := tl.Run; run != nil && tl.RunRich == nil && tl.Name != Prefix+"close" {
@@ -149,6 +162,8 @@ type toolset struct {
 	m     *Manager
 	owner string
 	creds Credentials // nil unless the vault tools are registered
+	// handoff says browser_handoff is registered, so a page that asks for a password can say to use it.
+	handoff bool
 }
 
 // page returns the conversation's tab, with a note when it is a fresh one.
@@ -180,6 +195,9 @@ func (t *toolset) finish(ctx context.Context, p *Page, lead string) (string, err
 	notes := p.takeNotes()
 	if lead != "" {
 		notes = append([]string{lead}, notes...)
+	}
+	if t.handoff && hasPasswordField(snap) {
+		notes = append(notes, signInHint)
 	}
 	return Render(snap, notes), nil
 }

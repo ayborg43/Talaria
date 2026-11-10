@@ -113,6 +113,9 @@ type Agent struct {
 	// for the model, so the conversation goes on instead of waiting; the call is run later with CallApproved if
 	// it is allowed. ok=false means it could not keep it, and Approve is asked as usual.
 	Defer func(ctx context.Context, r Request) (note string, ok bool)
+	// Handoff, if set, is how the agent asks the user to take over the browser for a login, a code or a check, and
+	// waits for them. It is set only by a front end that has a page to show the tab on; unset means no such tool.
+	Handoff func(ctx context.Context, reason, url string) (outcome string, err error)
 	// Gate, if set, rules on every tool call, scrubs results and keeps a record.
 	Gate Gate
 	// BeforeModel, if set, is asked before every request to the model, and may refuse it: this is

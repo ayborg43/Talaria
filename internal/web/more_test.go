@@ -71,7 +71,7 @@ func TestTheNewScreensNeedASignIn(t *testing.T) {
 		{"GET", "/api/files/x/form"}, {"POST", "/api/files/x/form"},
 		{"GET", "/api/computer"}, {"POST", "/api/computer/run"}, {"GET", "/api/computer/files"}, {"GET", "/api/computer/file"},
 		{"POST", "/api/computer/file"}, {"POST", "/api/computer/transfer"},
-		{"GET", "/api/browser"}, {"GET", "/api/browser/shot"}, {"POST", "/api/browser/act"},
+		{"GET", "/api/browser"}, {"GET", "/api/browser/shot"}, {"GET", "/api/browser/stream"}, {"POST", "/api/browser/act"},
 	} {
 		if resp, body := r.do(rt.m, rt.p, map[string]string{}); resp.StatusCode != 401 {
 			t.Errorf("%s %s without signing in: %d %s", rt.m, rt.p, resp.StatusCode, body)
@@ -310,6 +310,9 @@ func TestTakingControlNeedsATabTheAgentHasOpen(t *testing.T) {
 		if resp, _ := r.do("GET", "/api/browser/shot?id="+id, nil); resp.StatusCode != 404 {
 			t.Errorf("shot of %q: %d", id, resp.StatusCode)
 		}
+		if resp, _ := r.do("GET", "/api/browser/stream?id="+id, nil); resp.StatusCode != 404 {
+			t.Errorf("live view of %q: %d", id, resp.StatusCode)
+		}
 		if resp, _ := r.do("POST", "/api/browser/act", map[string]any{"id": id, "kind": "click", "x": 1, "y": 1}); resp.StatusCode != 404 {
 			t.Errorf("act on %q: %d", id, resp.StatusCode)
 		}
@@ -372,7 +375,7 @@ func TestTheSecondScriptKeepsThePagesRules(t *testing.T) {
 	if !strings.Contains(sw, "'/more.js'") {
 		t.Error("the service worker does not keep more.js, so the app would not open offline")
 	}
-	for _, want := range []string{"function openComputer", "function openDoc", "function richResult", "function conversationsCard", "function paneYou", "function readyCard", "function loadMake", "function channelForm", "URL.revokeObjectURL"} {
+	for _, want := range []string{"function openComputer", "function openDoc", "function richResult", "function conversationsCard", "function paneYou", "function handoffCard", "function handoffBar", "function readyCard", "function loadMake", "function channelForm", "URL.revokeObjectURL"} {
 		if !strings.Contains(js, want) {
 			t.Errorf("more.js lost %q", want)
 		}
@@ -527,5 +530,24 @@ func TestTheChecklistSeesACalendarSetByTheEnvironment(t *testing.T) {
 	}
 	if js := string(b); !strings.Contains(js, "ctl.links") || !strings.Contains(js, "l.name === 'Calendar'") {
 		t.Error("the setup checklist ignores the server's list of connections")
+	}
+}
+
+// DOM append and replaceChildren write a null argument as the word "null": a card or bar that may be missing is
+// filtered out first. (A tool result with no card of its own showed "null" under its heading.)
+func TestAMissingCardIsLeftOutNotWrittenAsTheWordNull(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("static", "app.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "card.append(head, rich, body)") {
+		t.Error("the tool card appends a card that may be null")
+	}
+	m, err := os.ReadFile(filepath.Join("static", "more.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(m), "body.replaceChildren(...[handoffBar(), busyBar, picker,") || !strings.Contains(string(m), ".filter(Boolean));") {
+		t.Error("the browser panel no longer filters out a missing bar")
 	}
 }

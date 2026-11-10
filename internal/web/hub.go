@@ -54,6 +54,8 @@ type Message struct {
 	// Approval messages: the token that answers it, only while it is waiting, and whether "always" is offered.
 	Token  string `json:"token,omitempty"`
 	Always bool   `json:"always,omitempty"`
+	// URL, on a handoff message, is the page the agent is asking the user to take over.
+	URL string `json:"url,omitempty"`
 
 	started time.Time
 }
@@ -134,6 +136,7 @@ type Hub struct {
 	activity  map[int64]int // tool calls and messages per hour, by the hour's Unix time / 3600
 	saveT     *time.Timer
 	closed    bool
+	handoffs  map[string]chan string // tokens of the handoffs waiting for an answer, each to its waiting agent
 }
 
 func (h *Hub) now() time.Time {
@@ -189,6 +192,8 @@ func (h *Hub) init() {
 		switch {
 		case m.Role == "tool" && m.State == "running":
 			m.State = "error"
+		case m.Role == "handoff" && m.State == "pending":
+			m.State, m.Token = "expired", "" // the agent that was waiting is gone with the run that asked
 		case m.Role == "approval" && m.State == "pending":
 			if h.Held == nil || m.Token == "" || !h.Held(m.Token) {
 				m.State, m.Token = "expired", ""
@@ -362,6 +367,13 @@ func (h *Hub) AddUser(text string) *Message {
 	defer h.mu.Unlock()
 	h.init()
 	h.count()
+	for token, ch := range h.handoffs { // writing in the chat answers a request to take over: the agent reads it next
+		select {
+		case ch <- "replied":
+		default:
+		}
+		delete(h.handoffs, token)
+	}
 	return copyMsg(h.add(&Message{Role: "user", Text: clip(text)}))
 }
 

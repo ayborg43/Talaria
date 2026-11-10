@@ -868,3 +868,11 @@ html{caret-color:var(--brass-text);accent-color:var(--brass);scrollbar-color:var
 @media (max-width:420px){.suggest-card{flex-wrap:wrap}.suggest-card .acts{width:100%;justify-content:flex-end}}
 .sug-row .t{white-space:normal;overflow:visible;text-overflow:clip}
 .host{color:var(--muted);font-size:.85em}
+
+/* taking over: the card, and the bar kept on the browser panel */
+.handoff-bar{display:flex;align-items:center;gap:8px;padding:10px 12px;margin:0 0 8px;border:1px solid var(--brass-line);border-radius:16px;background:var(--brass-tint);flex-wrap:wrap}
+.handoff-bar .grow{min-width:140px}.handoff-bar b{display:block;font-size:14px}.handoff-bar .s{display:block;font-size:12.5px;color:var(--ink2);overflow-wrap:anywhere}
+.ask.handoff .ask-why{overflow-wrap:anywhere}
+.live-pill{align-self:center}.live-pill[hidden]{display:none}
+.typed.secret{letter-spacing:.12em}
+.handoff-bar.busy{background:var(--sunk);border-color:var(--line)}

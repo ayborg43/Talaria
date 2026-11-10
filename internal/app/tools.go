@@ -174,7 +174,12 @@ func (rt *Runtime) offerBrowser(ag *agent.Agent, env execenv.Env) {
 		return
 	}
 	owner := fmt.Sprintf("agent-%p", ag)
-	browser.Register(ag.Tools, mgr, owner)
+	if ag.Handoff != nil {
+		browser.Register(ag.Tools, mgr, owner, browser.WithHandoff())
+		browser.RegisterHandoff(ag.Tools, mgr, owner, ag.Handoff)
+	} else {
+		browser.Register(ag.Tools, mgr, owner)
+	}
 	if rt.cfg.Vault != nil {
 		browser.RegisterVault(ag.Tools, mgr, owner, rt.cfg.Vault)
 	}

@@ -211,6 +211,7 @@ function upsert(m) {
   S.msgs.set(m.id, m);
   if (S.order.length > 500) S.msgs.delete(S.order.shift());
 }
+function pendingHandoffs() { return S.order.map((id) => S.msgs.get(id)).filter((m) => m.role === 'handoff' && m.state === 'pending'); }
 function pendingAsks() { return S.order.map((id) => S.msgs.get(id)).filter((m) => m.role === 'approval' && m.state === 'pending'); }
 function toolRunning() { return S.order.some((id) => { const m = S.msgs.get(id); return m.role === 'tool' && m.state === 'running'; }); }
 function working() { return S.running; }
@@ -325,7 +326,7 @@ function toolCard(t) {
   // Mail, pages, documents, plans and spending are shown as what they are, in
   // the thread; the raw result stays one tap away under the heading.
   const rich = t.state === 'ok' ? richResult(t) : null;
-  card.append(head, rich, body);
+  card.append(...[head, rich, body].filter(Boolean)); // a tool with no card of its own leaves it out; a bare null would be written as the word
   return card;
 }
 function buildBlock(b, isLast) {
@@ -338,6 +339,7 @@ function buildBlock(b, isLast) {
       t.ms ? h('em', { text: (t.ms / 1000).toFixed(1) + 's' }) : null)));
   }
   if (b.kind === 'approval') return askCard(b.m);
+  if (b.kind === 'handoff') return handoffCard(b.m);
   const streaming = isLast && working();
   const body = h('div', { class: 'msg-bot' + (streaming ? ' cursor' : '') });
   if (!streaming) {
@@ -491,7 +493,7 @@ function renderChrome() {
   const current = count === 1 ? 'Working · ' + doingText(S.agents[0]) : count > 1 ? `${count} agents working` : busy ? 'Working…' : null;
   $('#status-text').textContent = !S.connected ? 'Reconnecting…' : S.paused ? 'Paused · chat still works'
     : current || (S.channel ? 'Channel · ' + S.channel.title : (S.side ? 'Side chat · ' : 'Online') + (S.side ? S.side : S.model ? ' · ' + S.model : ''));
-  const n = pendingAsks().length;
+  const n = pendingAsks().length + pendingHandoffs().length;
   const ab = $('#agent-badge');
   ab.hidden = n === 0 && S.agents.length === 0; ab.textContent = String(n || S.agents.length); ab.classList.toggle('work', n === 0);
   const hasText = $('#input').value.trim().length > 0;
@@ -901,7 +903,7 @@ function renderToday() {
   $('#today-greeting').textContent = (hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening') + (S.profile.name ? ', ' + S.profile.name : '') + '.';
   $('#today-date').textContent = new Intl.DateTimeFormat([], { weekday: 'long', day: 'numeric', month: 'long', timeZone: S.zone }).format(now);
   const out = [];
-  const n = pendingAsks().length;
+  const n = pendingAsks().length + pendingHandoffs().length;
   if (n) out.push(h('a', { class: 'alert-card', href: '#agents' }, h('span', { class: 'ask-icon' }, icon('shield')),
     h('span', { class: 'grow' }, h('b', { text: n === 1 ? '1 thing needs your OK' : n + ' things need your OK' })), icon('chev')));
 

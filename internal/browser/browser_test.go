@@ -524,3 +524,99 @@ func TestPrivateAddressesNeverReachTheBrowserUnlessAllowed(t *testing.T) {
 		t.Fatal("a refused address must not start a browser")
 	}
 }
+
+// browser_handoff asks the user, waits, and then reports the page as it is. A page that asks for a password
+// says to use it, but only when the agent has it.
+func TestHandoffAsksTheUserAndReturnsThePageWhenTheyAreDone(t *testing.T) {
+	r := newRig(t, Options{})
+	var gotReason, gotURL string
+	answer := HandoffDone
+	RegisterHandoff(r.reg, r.m, r.owner, func(_ context.Context, reason, url string) (string, error) {
+		gotReason, gotURL = reason, url
+		return answer, nil
+	})
+	if _, err := r.call("browser_handoff", `{"reason":"Sign in to the shop"}`); err == nil {
+		t.Fatal("a handoff with no page open was asked for")
+	}
+	r.ok("browser_open", `{"url":"http://shop.test/"}`)
+	out := r.ok("browser_handoff", `{"reason":"  Sign in  to the shop "}`)
+	if gotReason != "Sign in to the shop" || !strings.Contains(gotURL, "shop.test") {
+		t.Fatalf("asked %q at %q", gotReason, gotURL)
+	}
+	if !strings.Contains(out, "The user says they are done") || !strings.Contains(out, "Page: Shop") {
+		t.Fatalf("done should return the page:\n%s", out)
+	}
+	for outcome, want := range map[string]string{
+		HandoffSkip:    "chose not to",
+		HandoffReplied: "wrote in the chat",
+		HandoffTimeout: "Nobody answered",
+	} {
+		answer = outcome
+		if out := r.ok("browser_handoff", `{"reason":"x"}`); !strings.Contains(out, want) {
+			t.Errorf("%s: %q", outcome, out)
+		}
+	}
+	if _, err := r.call("browser_handoff", `{"reason":"   "}`); err == nil {
+		t.Error("a handoff with no reason was asked for")
+	}
+}
+
+func TestAPasswordPageSaysToHandOffOnlyWhenTheAgentCan(t *testing.T) {
+	plain := newRig(t, Options{})
+	if out := plain.ok("browser_open", `{"url":"http://shop.test/"}`); strings.Contains(out, "browser_handoff") {
+		t.Fatalf("the hint names a tool the agent does not have:\n%s", out)
+	}
+	r := newRig(t, Options{})
+	r.reg = tool.NewRegistry()
+	Register(r.reg, r.m, r.owner, WithHandoff())
+	if out := r.ok("browser_open", `{"url":"http://shop.test/"}`); !strings.Contains(out, "call browser_handoff") {
+		t.Fatalf("a page with a password field did not say to hand off:\n%s", out)
+	}
+}
+
+// The app asks what kind of thing the user's tap focused, to offer a masked box for a password and a plain one for
+// text. It is told the kind only, never what is in the field.
+func TestFocusKindSaysWhatTheTapFocused(t *testing.T) {
+	r := newRig(t, Options{})
+	r.ok("browser_open", `{"url":"http://shop.test/"}`)
+	p := r.m.Peek(r.owner)
+	if got := p.FocusKind(context.Background()); got != "none" {
+		t.Fatalf("nothing is focused yet: %q", got)
+	}
+	r.ok("browser_type", `{"ref":2,"text":"mugs"}`)
+	if got := p.FocusKind(context.Background()); got != "text" {
+		t.Fatalf("a search box: %q", got)
+	}
+	if _, err := r.call("browser_type", `{"ref":4,"text":"x"}`); err == nil {
+		t.Log("the tool typed into the password field in this fake")
+	}
+	r.ok("browser_click", `{"ref":1}`) // a link is not something to type into
+	if got := p.FocusKind(context.Background()); got == "password" {
+		t.Fatalf("a link reported as a password: %q", got)
+	}
+}
+
+func TestReplaceTextSelectsWhatIsThereThenTypesOverIt(t *testing.T) {
+	r := newRig(t, Options{})
+	r.ok("browser_open", `{"url":"http://shop.test/"}`)
+	r.ok("browser_type", `{"ref":2,"text":"old"}`)
+	p := r.m.Peek(r.owner)
+	before := len(r.sent("Input.insertText"))
+	if err := p.ReplaceText(context.Background(), "a password"); err != nil {
+		t.Fatal(err)
+	}
+	ins := r.sent("Input.insertText")
+	if len(ins) != before+1 || ins[len(ins)-1].Params["text"] != "a password" {
+		t.Fatalf("the new text was not typed: %v", ins)
+	}
+	if err := p.ReplaceText(context.Background(), strings.Repeat("x", 4001)); err == nil {
+		t.Fatal("an enormous replacement was accepted")
+	}
+	keys := len(r.sent("Input.dispatchKeyEvent"))
+	if err := p.ReplaceText(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.sent("Input.dispatchKeyEvent")) <= keys {
+		t.Fatal("clearing the field pressed no key")
+	}
+}
