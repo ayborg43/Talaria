@@ -202,6 +202,9 @@ func (rt *Runtime) Notes() *memory.Notes { return rt.notes }
 // Goals returns the goal store, nil if goals are off.
 func (rt *Runtime) Goals() *goal.Store { return rt.cfg.Goals }
 
+// Ideas is the store of suggestions, or nil when there is none.
+func (rt *Runtime) Ideas() *idea.Store { return rt.cfg.Ideas }
+
 // HasCalendars reports whether the agent can read calendars.
 func (rt *Runtime) HasCalendars() bool { return rt.cfg.Calendars != nil }
 
@@ -265,6 +268,8 @@ type AgentOptions struct {
 	// goal_create) even though there is a ChatID: a scheduled job has the chat it
 	// reports to, but must not schedule more jobs.
 	NoCron bool
+	// Suggest lets a run that has NoCron still leave suggestions (idea_add) for the user to start or hide.
+	Suggest bool
 	// NoHistory keeps the conversation out of the saved history. A watch polling
 	// a service every few minutes would otherwise fill it with empty sessions.
 	NoHistory bool

@@ -66,11 +66,13 @@ func ClampRetention(hours int) int {
 
 // File is one stored file.
 type File struct {
-	ID      string    `json:"id"`
-	Name    string    `json:"name"` // what the user called it
-	MIME    string    `json:"mime"`
-	Size    int64     `json:"size"`
-	Origin  string    `json:"origin"` // upload or generated
+	ID     string `json:"id"`
+	Name   string `json:"name"` // what the user called it
+	MIME   string `json:"mime"`
+	Size   int64  `json:"size"`
+	Origin string `json:"origin"` // upload or generated
+	// Kind says what a made page is (doc, page, slides or dashboard); it is empty for a PDF or an image.
+	Kind    string    `json:"kind,omitempty"`
 	Created time.Time `json:"created"`
 }
 
@@ -204,19 +206,32 @@ func (s *Store) Save(name string, data []byte, origin string) (File, error) {
 	if mime == "" && len(data) > 0 {
 		return File{}, errors.New("only PDF files and PNG, JPEG, GIF or WebP images can be kept")
 	}
-	return s.keep(name, data, mime, origin)
+	return s.keep(name, data, mime, origin, "")
 }
 
 // SaveMade keeps a page made by Make (RenderDoc, RenderPage, RenderSlides or RenderDashboard). It is the only
 // way a page gets into the store: the bytes of an upload are never trusted to be one.
-func (s *Store) SaveMade(name string, page []byte) (File, error) {
+func (s *Store) SaveMade(name string, page []byte, kind string) (File, error) {
 	if len(page) > maxMakeBytes {
 		return File{}, errors.New("the page is too big")
 	}
-	return s.keep(name, page, MIMEMade, OriginGenerated)
+	switch kind {
+	case KindDoc, KindPage, KindSlides, KindDashboard:
+	default:
+		return File{}, errors.New("a made page is a doc, page, slides or dashboard")
+	}
+	return s.keep(name, page, MIMEMade, OriginGenerated, kind)
 }
 
-func (s *Store) keep(name string, data []byte, mime, origin string) (File, error) {
+// What a made page is.
+const (
+	KindDoc       = "doc"
+	KindPage      = "page"
+	KindSlides    = "slides"
+	KindDashboard = "dashboard"
+)
+
+func (s *Store) keep(name string, data []byte, mime, origin, kind string) (File, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(data) == 0 {
@@ -237,7 +252,7 @@ func (s *Store) keep(name string, data []byte, mime, origin string) (File, error
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return File{}, err
 	}
-	f := File{ID: id, Name: name, MIME: mime, Size: int64(len(data)), Origin: origin, Created: s.now()}
+	f := File{ID: id, Name: name, MIME: mime, Size: int64(len(data)), Origin: origin, Kind: kind, Created: s.now()}
 	files, err := s.load()
 	if err != nil {
 		os.Remove(path)

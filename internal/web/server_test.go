@@ -1589,7 +1589,7 @@ func TestThePageHasAnAgentsTabWithALiveBadge(t *testing.T) {
 			t.Errorf("the page lacks %s", want)
 		}
 	}
-	for _, want := range []string{"const TABS = ['chat', 'today', 'agents', 'settings'];", "loadAgentsPage", "/api/agents", "agent-badge"} {
+	for _, want := range []string{"const TABS = ['chat', 'today', 'make', 'agents', 'settings'];", "loadAgentsPage", "/api/agents", "agent-badge"} {
 		if !strings.Contains(js, want) {
 			t.Errorf("the script lacks %q", want)
 		}
@@ -1770,11 +1770,12 @@ func TestSettingsPermissionsModeRoundTrip(t *testing.T) {
 	}
 }
 
-// The page has four places, each with a reason: the old Needs You and Control screens are inside Agents and Settings.
+// The page has five places, each with a reason: Make is the gallery of what it made, and the old Needs You and
+// Control screens are inside Tasks and Settings.
 func TestThePageHasOnlyTheTabsThatEarnTheirPlace(t *testing.T) {
 	read := func(n string) string { b, _ := os.ReadFile(filepath.Join("static", n)); return string(b) }
 	html, js := read("index.html"), read("app.js")
-	if got := regexp.MustCompile(`data-tab="(\w+)"`).FindAllStringSubmatch(html, -1); len(got) != 4 {
+	if got := regexp.MustCompile(`data-tab="(\w+)"`).FindAllStringSubmatch(html, -1); len(got) != 5 {
 		t.Fatalf("the nav has %d tabs: %v", len(got), got)
 	}
 	for _, gone := range []string{`id="screen-needs"`, `id="screen-control"`, `data-tab="needs"`, `data-tab="control"`} {
@@ -1782,7 +1783,7 @@ func TestThePageHasOnlyTheTabsThatEarnTheirPlace(t *testing.T) {
 			t.Errorf("the page still has %s", gone)
 		}
 	}
-	for _, want := range []string{"waitingSection", "historyCard", "who(w)", "SETTINGS_PAGES", "panePermissions", "paneModels", "tab === 'needs' || tab === 'control'", "renderTg"} {
+	for _, want := range []string{"renderAgentsPage", "historyCard", "who(w)", "SETTINGS_PAGES", "panePermissions", "paneModels", "tab === 'needs' || tab === 'control'", "renderTg"} {
 		if !strings.Contains(js, want) {
 			t.Errorf("the script lacks %q", want)
 		}

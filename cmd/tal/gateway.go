@@ -389,12 +389,17 @@ func runGateway(c *cli) error {
 			srv.Scrub = gd.For("web", s.name, web.ChatID).Scrub
 		}
 		// Finished background tasks, and running one again: the scheduler is this service's own, made by attach above.
+		reviewed := newReviewedSet(filepath.Join(c.home, "web_reviewed.json"))
 		srv.Sources.Tasks = func() []web.TaskInfo {
 			var out []web.TaskInfo
 			for _, d := range c.rt.Cron.DoneTasks(s.name, web.ChatID) {
-				out = append(out, web.TaskInfo{ID: d.Job.ID, Name: tidy(d.Job.Name, 80, "(task)"), Status: tidy(d.Status, 160, ""), Failed: d.Failed(), At: d.At})
+				out = append(out, web.TaskInfo{ID: d.Job.ID, Name: tidy(d.Job.Name, 80, "(task)"), Status: tidy(d.Status, 160, ""), Failed: d.Failed(), At: d.At, Reviewed: reviewed.Has(d.Job.ID)})
 			}
 			return out
+		}
+		srv.Sources.ReviewTask = reviewed.Add
+		if ideas := c.rt.Ideas(); ideas != nil {
+			srv.Sources.Suggestions, srv.Sources.StartSuggestion, srv.Sources.HideSuggestion = webSuggestions(ideas, c.rt.Cron, func() cron.Control { return s.sched })
 		}
 		srv.Sources.Brief, srv.Sources.SetBrief = webBrief(c.rt.Cron, zone), setBrief(c.rt.Cron, zone)
 		srv.Sources.RetryTask = func(id string) error {

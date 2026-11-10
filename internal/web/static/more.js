@@ -337,24 +337,28 @@ function docCard(d) {
 function mailTriageCard(d) {
   const needs = d.needs || [], wait = d.wait || [];
   if (!needs.length && !wait.length) return null;
-  const rows = (items, tint) => {
+  const rows = (items, tint, actions) => {
     const box = h('div', { class: 'rich rows' });
     items.slice(0, 10).forEach((r, i) => {
       const from = r.from || '(unknown)', name = from.replace(/\s*<.*>$/, '') || from;
       const av = h('span', { class: 'avatar', text: (name.trim()[0] || '?').toUpperCase() });
       av.style.background = TINTS[(i + tint) % 4][0]; av.style.color = TINTS[(i + tint) % 4][1];
-      box.append(h('button', { class: 'row', type: 'button', onclick: () => sendText('Read message ' + r.id + ' and tell me what it says.') }, av,
-        h('span', { class: 'grow' }, h('span', { class: 't', text: name + ' · ' + (r.subject || '(no subject)') }), h('span', { class: 's', text: r.why || '' })),
-        r.unread ? h('span', { class: 'pill info', text: 'NEW' }) : null));
+      box.append(h('div', { class: 'row convo' },
+        h('button', { class: 'rowbtn', type: 'button', onclick: () => sendText('Read message ' + r.id + ' and tell me what it says.') }, av,
+          h('span', { class: 'grow' }, h('span', { class: 't', text: name + ' · ' + (r.subject || '(no subject)') }), h('span', { class: 's', text: r.why || '' })),
+          r.unread ? h('span', { class: 'pill info', text: 'NEW' }) : null),
+        actions ? h('span', { class: 'acts' },
+          h('button', { class: 'btn small primary', type: 'button', text: 'Start', title: 'Have it deal with this', onclick: () => sendText('Handle message ' + r.id + ': read it, work out what it needs from me, and do what you can (draft a reply, add to my calendar). Ask me before anything is sent.') }),
+          h('button', { class: 'btn small', type: 'button', text: 'Reply', onclick: () => sendText('Draft a reply to message ' + r.id + ' and save it in my Drafts. Do not send it.') })) : null));
     });
     if (items.length > 10) box.append(h('div', { class: 'field-note', text: '+' + (items.length - 10) + ' more.' }));
     return box;
   };
   const card = h('div', { class: 'rich triage' });
   card.append(h('div', { class: 'triage-h' }, h('b', { text: 'Needs you' }), h('span', { class: 'pill ' + (needs.length ? 'brass' : 'ok'), text: String(needs.length) })));
-  card.append(needs.length ? rows(needs, 0) : h('div', { class: 'field-note', text: 'Nothing needs you.' }));
+  card.append(needs.length ? rows(needs, 0, true) : h('div', { class: 'field-note', text: 'Nothing needs you.' }));
   if (wait.length) {
-    const more = h('details', { class: 'triage-wait' }, h('summary', null, 'Can wait ', h('span', { class: 'pill', text: String(wait.length) })), rows(wait, 2));
+    const more = h('details', { class: 'triage-wait' }, h('summary', null, 'Can wait ', h('span', { class: 'pill', text: String(wait.length) })), rows(wait, 2, false));
     card.append(more);
   }
   return card;
@@ -487,11 +491,12 @@ function conversationsCard(chats, archived) {
   if (!archived) {
     rows.append(h('div', { class: 'btn-row sheet-new' },
       h('button', { class: 'btn', type: 'button', text: '+ New chat', onclick: newConversation }),
-      h('button', { class: 'btn', type: 'button', text: '+ Side chat', title: 'A blank conversation beside this one, for a tangent', onclick: sideConversation })));
+      h('button', { class: 'btn', type: 'button', text: '+ Side chat', title: 'A blank conversation beside this one, for a tangent', onclick: sideConversation }),
+      h('button', { class: 'btn', type: 'button', text: '+ Channel', title: 'A conversation kept for one piece of work', onclick: channelForm })));
   }
   const ordered = chats.slice().sort((a, b) => (b.main ? 1 : 0) - (a.main ? 1 : 0)); // the main one first; the rest stay newest first
   for (const c of ordered) {
-    const sub = [c.main ? 'Main conversation' : c.side ? 'Side chat of ' + c.side : '', (c.messages || 0) + (c.messages === 1 ? ' message' : ' messages')].filter(Boolean).join(' · ');
+    const sub = [c.main ? 'Main conversation' : c.side ? 'Side chat of ' + c.side : c.purpose || '', (c.messages || 0) + (c.messages === 1 ? ' message' : ' messages')].filter(Boolean).join(' · ');
     const acts = h('span', { class: 'acts' });
     acts.append(h('button', { class: 'btn small', type: 'button', text: 'Rename', onclick: () => {
       const title = prompt('Name this conversation', c.title || '');
@@ -512,7 +517,7 @@ function conversationsCard(chats, archived) {
     }
     rows.append(h('div', { class: 'row convo', 'aria-current': c.active ? 'true' : null },
       h('button', { class: 'rowbtn', type: 'button', onclick: () => (archived ? change({ unarchive: c.id }).then(() => openConversation(c.id)) : openConversation(c.id)) },
-        c.main ? h('span', { class: 'pill brass', text: 'MAIN' }) : c.side ? h('span', { class: 'pill info', text: 'SIDE' }) : null,
+        c.main ? h('span', { class: 'pill brass', text: 'MAIN' }) : c.side ? h('span', { class: 'pill info', text: 'SIDE' }) : c.color ? h('span', { class: 'chan-ico chan ' + c.color, text: c.icon || (c.title || '?').trim()[0].toUpperCase() }) : null,
         h('span', { class: 'grow' }, h('span', { class: 't', text: c.title || 'New chat' }), h('span', { class: 's', text: sub })),
         h('span', { class: 'when', text: c.updated_at ? fmtWhen(new Date(c.updated_at)) : '' })), acts));
   }
@@ -550,23 +555,6 @@ function replayConversation() {
 }
 
 // ---------- finished tasks ----------
-function tasksCard() {
-  if (!doneTasks.length) return null;
-  const rows = h('div', { class: 'rows' });
-  for (const t of doneTasks.slice(0, 10)) {
-    const again = h('button', { class: 'btn small', type: 'button', text: t.failed ? 'Retry' : 'Run again' });
-    again.addEventListener('click', async () => {
-      again.disabled = true;
-      try { const d = await api('/api/tasks', { method: 'POST', body: { retry: t.id } }); doneTasks = d.tasks || []; toast('Started again: ' + t.name); renderAgentsPage(); }
-      catch (e) { failed(e); again.disabled = false; }
-    });
-    rows.append(h('div', { class: 'row' }, h('span', { class: 'mark ' + (t.failed ? 'bad' : 'ok') }, icon(t.failed ? 'x' : 'check')),
-      h('span', { class: 'grow' }, h('span', { class: 't', text: t.name }), h('span', { class: 's', text: t.failed ? t.status.replace(/^error: /, 'Failed: ') : 'Finished' })),
-      h('span', { class: 'when', text: ago(t.at) }), again));
-  }
-  return h('div', { class: 'card' }, h('h2', null, 'Background tasks', h('small', { text: 'run one again as it was' })), rows);
-}
-
 // ---------- you: profile and notes ----------
 async function saveMe(body, done) {
   try { S.me = await api('/api/profile', { method: 'POST', body }); if (done) toast(done); }
@@ -748,4 +736,244 @@ function renderWelcome() {
       h('button', { class: 'btn primary', type: 'button', text: 'Introduce yourself', onclick: async () => { await markOnboarded(); sendText(ONBOARD_PROMPT); } }),
       h('button', { class: 'btn', type: 'button', text: 'Set things up', onclick: async () => { await markOnboarded(); location.hash = '#settings/setup'; } }),
       h('button', { class: 'btn small', type: 'button', text: 'Not now', onclick: markOnboarded }))));
+}
+
+// ---------- make: what it made ----------
+// A gallery of the documents, pages, slide decks and dashboards it has made (and PDFs). Each tile is drawn from
+// its kind alone, so nothing is rendered until you open one: a page of its own is never loaded just to be a thumbnail.
+const MAKE_KINDS = [['all', 'All'], ['doc', 'Docs'], ['page', 'Pages'], ['slides', 'Slides'], ['dashboard', 'Dashboards'], ['pdf', 'PDFs']];
+const MAKE_NAME = { doc: 'Document', page: 'Web page', slides: 'Slides', dashboard: 'Dashboard', pdf: 'PDF' };
+const MAKE_ASK = { doc: 'Make a document about ', page: 'Make a web page for ', slides: 'Make a slide deck about ', dashboard: 'Make a dashboard of ' };
+// Tile art is built with DOM calls from path lists (no markup is parsed): each entry is a path, or a rectangle as [x, y, w, h, r].
+const MAKE_ART = {
+  doc: ['M12 6h17l8 8v28H12z', 'M29 6v8h8M18 22h14M18 28h14M18 34h9'],
+  page: [[5, 9, 38, 30, 4], 'M5 17h38M11 13h.01M16 13h.01M12 25h14M12 31h22'],
+  slides: [[5, 9, 38, 26, 3], 'M24 35v6M16 41h16M13 18h14M13 24h22M13 29h9'],
+  dashboard: [[6, 6, 36, 36, 4], 'M14 34V26M22 34V16M30 34V22'],
+  pdf: ['M12 6h17l8 8v28H12z', 'M29 6v8h8', 'M17 31h14M17 36h8'],
+};
+function artEl(kind) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  for (const [k, v] of Object.entries({ viewBox: '0 0 48 48', fill: 'none', stroke: 'currentColor', 'stroke-width': '2.2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) svg.setAttribute(k, v);
+  for (const shape of MAKE_ART[kind] || MAKE_ART.doc) {
+    const el = document.createElementNS(NS, Array.isArray(shape) ? 'rect' : 'path');
+    if (Array.isArray(shape)) for (const [k, v] of [['x', shape[0]], ['y', shape[1]], ['width', shape[2]], ['height', shape[3]], ['rx', shape[4]]]) el.setAttribute(k, String(v));
+    else el.setAttribute('d', shape);
+    svg.append(el);
+  }
+  return svg;
+}
+function makeKindOf(f) { return f.kind || (f.mime === 'application/pdf' ? 'pdf' : ''); }
+function makeStarters() {
+  return h('div', { class: 'make-start' }, Object.keys(MAKE_ASK).map((k) => h('button', { type: 'button', onclick: () => {
+    location.hash = '#chat';
+    const box = $('#input'); box.value = MAKE_ASK[k]; autosize(); renderChrome(); box.focus(); box.setSelectionRange(box.value.length, box.value.length);
+  } }, artEl(k), MAKE_NAME[k])));
+}
+async function loadMake() {
+  const body = $('#make-body');
+  if (!S.made) body.replaceChildren(h('div', { class: 'skeleton' }));
+  try {
+    const d = await api('/api/files');
+    S.made = { files: (d.files || []).filter((f) => f.origin === 'generated' && makeKindOf(f)), hours: d.retention_hours || 12 };
+  } catch (e) { if (e instanceof AuthError) return; if (!S.made) { body.replaceChildren(h('div', { class: 'card empty', text: e.message })); return; } toast(e.message); }
+  renderMake();
+}
+function renderMake() {
+  const body = $('#make-body'); if (!body || !S.made || S.tab !== 'make') return;
+  const filter = S.makeFilter || 'all';
+  const all = S.made.files, list = all.filter((f) => filter === 'all' || makeKindOf(f) === filter);
+  const chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Kind' }, MAKE_KINDS.filter(([k]) => k === 'all' || all.some((f) => makeKindOf(f) === k) || k === filter).map(([k, label]) =>
+    h('button', { type: 'button', 'aria-pressed': k === filter ? 'true' : 'false', text: label, onclick: () => { S.makeFilter = k; renderMake(); } })));
+  const left = (at) => {
+    const m = Math.floor((new Date(at).getTime() + S.made.hours * 3600000 - Date.now()) / 60000);
+    return m <= 0 ? 'expiring' : m < 60 ? 'expires in ' + m + 'm' : m < 2880 ? 'expires in ' + Math.floor(m / 60) + 'h' : 'expires in ' + Math.floor(m / 1440) + 'd';
+  };
+  const out = [h('div', { class: 'card' }, h('h2', null, 'Start something'), makeStarters())];
+  if (!all.length) out.push(h('div', { class: 'card empty', text: 'Nothing made yet. Ask in chat for a document, a web page, a slide deck or a dashboard, or tap one above.' }));
+  else {
+    out.push(chips);
+    const grid = h('div', { class: 'make-grid' });
+    for (const f of list) {
+      const k = makeKindOf(f);
+      grid.append(h('button', { class: 'make-card k-' + k, type: 'button', onclick: () => openDoc(f.id, f) },
+        h('span', { class: 'make-art' }, artEl(k)),
+        h('span', { class: 't', text: f.name.replace(/\.(html|pdf)$/i, '') }),
+        h('span', { class: 's', text: MAKE_NAME[k] + ' · ' + fmtWhen(new Date(f.created)) + ' · ' + left(f.created) })));
+    }
+    out.push(list.length ? grid : h('div', { class: 'card empty', text: 'None of that kind yet.' }));
+    out.push(h('div', { class: 'field-note', text: 'Made files are kept for ' + S.made.hours + ' hours, then deleted: open one and Save it to keep it.' }));
+  }
+  keepScroll(body, () => body.replaceChildren(...out));
+}
+
+// ---------- tasks: what needs you, what is working, what is ready ----------
+// "Needs input" holds what waits on an answer (a request for your OK, or a task that failed); "Working" is what is
+// running; "Ready for review" is finished work you have not looked at yet, checked off with Done and then filed
+// under Resolved in History. Up next is what is set to run on its own.
+function reviewTask(t, done) {
+  return async () => {
+    try { const d = await api('/api/tasks', { method: 'POST', body: { review: t.id } }); doneTasks = (d.tasks || []); if (done) toast(done); renderAgentsPage(); }
+    catch (e) { failed(e); }
+  };
+}
+function runAgain(t, label) {
+  const b = h('button', { class: 'btn small', type: 'button', text: label });
+  b.addEventListener('click', async () => {
+    b.disabled = true;
+    try { const d = await api('/api/tasks', { method: 'POST', body: { retry: t.id } }); doneTasks = d.tasks || []; toast('Started again: ' + t.name); renderAgentsPage(); }
+    catch (e) { failed(e); b.disabled = false; }
+  });
+  return b;
+}
+function taskRow(t, extra) {
+  return h('div', { class: 'row task' }, h('span', { class: 'mark ' + (t.failed ? 'bad' : 'ok') }, icon(t.failed ? 'x' : 'check')),
+    h('span', { class: 'grow' }, h('span', { class: 't', text: t.name }), h('span', { class: 's', text: t.failed ? t.status.replace(/^error: /, 'Failed: ') : 'Finished ' + ago(t.at) })),
+    h('span', { class: 'acts keep' }, extra));
+}
+function failedTasksRows() {
+  return doneTasks.filter((t) => t.failed && !t.reviewed).slice(0, 10).map((t) => taskRow(t, [runAgain(t, 'Retry'), h('button', { class: 'btn small', type: 'button', text: 'Dismiss', onclick: reviewTask(t) })]));
+}
+function readyCard() {
+  const ready = doneTasks.filter((t) => !t.failed && !t.reviewed).slice(0, 10);
+  const card = h('div', { class: 'card' }, h('h2', null, 'Ready for review', h('small', { text: ready.length ? ready.length + ' finished' : '' })));
+  if (!ready.length) { card.append(h('div', { class: 'empty', text: 'Finished background work waits here until you check it off.' })); return card; }
+  const rows = h('div', { class: 'rows' });
+  for (const t of ready) rows.append(taskRow(t, [runAgain(t, 'Run again'), h('button', { class: 'btn small primary', type: 'button', text: 'Done', onclick: reviewTask(t, 'Filed under Resolved.') })]));
+  card.append(rows);
+  return card;
+}
+function resolvedCard() {
+  const done = doneTasks.filter((t) => t.reviewed).slice(0, 15);
+  if (!done.length) return null;
+  const rows = h('div', { class: 'rows' });
+  for (const t of done) rows.append(taskRow(t, [runAgain(t, t.failed ? 'Retry' : 'Run again')]));
+  const d = h('details', { class: 'card fold' }, h('summary', null, h('span', { class: 'display', text: 'Resolved' }), h('small', { text: String(done.length) })), rows);
+  return d;
+}
+function needsInputCard() {
+  const pend = pendingAsks(), bad = failedTasksRows();
+  const n = pend.length + bad.length;
+  const card = h('div', { class: 'card wait' + (n ? ' has' : '') }, h('h2', null, 'Needs input', h('small', { text: n ? n + ' to look at' : '' })));
+  if (!n) { card.append(h('div', { class: 'empty', text: 'Nothing is waiting for you.' }), h('div', { class: 'note center', text: ASK_POLICY[ctl && ctl.permissions] || ASK_POLICY.deletes_and_posts })); return card; }
+  if (pend.length) card.append(h('div', { class: 'note', text: 'These are saved. Answer whenever you like: the work carries on from where it stopped.' }));
+  pend.forEach((m) => card.append(askCard(m)));
+  if (bad.length) card.append(h('div', { class: 'rows' }, bad));
+  return card;
+}
+function tasksCounts() {
+  const needs = pendingAsks().length + doneTasks.filter((t) => t.failed && !t.reviewed).length;
+  const ready = doneTasks.filter((t) => !t.failed && !t.reviewed).length;
+  return { active: needs + S.agents.length + ready, next: standing.length + (S.suggestions || []).length };
+}
+function tasksSeg() {
+  const c = tasksCounts();
+  const seg = h('div', { class: 'seg tasks', role: 'tablist' }, [['active', 'Active', c.active], ['next', 'Up next', c.next], ['history', 'History', 0]].map(([id, label, n]) =>
+    h('button', { type: 'button', role: 'tab', 'aria-selected': (S.tasksView || 'active') === id ? 'true' : 'false', onclick: () => { S.tasksView = id; renderAgentsPage(); } }, label, n ? h('small', { text: String(n) }) : null)));
+  return seg;
+}
+
+// ---------- the greeting an empty chat opens with ----------
+function greetLine() {
+  const now = new Date();
+  const hr = Number(new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', timeZone: S.zone }).format(now));
+  return (hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening') + (S.profile && S.profile.name ? ', ' + S.profile.name : '') + '.';
+}
+function renderGreet() {
+  const el = $('#greet'); if (!el) return;
+  const show = S.tab === 'chat' && S.order.length === 0 && !!S.profile;
+  if (!show) { if (!el.hidden) { el.hidden = true; el.replaceChildren(); } return; }
+  const date = new Intl.DateTimeFormat([], { weekday: 'long', day: 'numeric', month: 'long', timeZone: S.zone }).format(new Date());
+  const ch = S.channel;
+  el.hidden = false;
+  el.replaceChildren(h('div', { class: 'd', text: ch ? (ch.icon ? ch.icon + ' ' : '') + ch.title : date }), h('h2', { text: ch ? (ch.purpose || 'A channel for ' + ch.title) : greetLine() }));
+}
+
+// ---------- channels ----------
+// A channel is a conversation kept for one piece of work: a name, an icon, a colour and what it is for.
+const CHAN_COLORS = ['brass', 'info', 'ok', 'coral', 'plum', 'slate'];
+function channelForm() {
+  closeSheetBody();
+  const body = $('#sheet-body');
+  let color = 'brass';
+  const name = h('input', { type: 'text', maxlength: '40', placeholder: 'Wholesale orders', autocomplete: 'off' });
+  const iconIn = h('input', { type: 'text', maxlength: '8', placeholder: '📦', autocomplete: 'off' });
+  const why = h('textarea', { maxlength: '240', placeholder: 'What is it for? For example: quotes, stock and shipping for shop orders.' });
+  const sw = h('div', { class: 'swatches' }, CHAN_COLORS.map((c) => h('button', { type: 'button', class: 'chan ' + c, 'aria-label': c, 'aria-pressed': c === color ? 'true' : 'false', onclick: () => { color = c; for (const b of sw.children) b.setAttribute('aria-pressed', b.classList.contains(c) ? 'true' : 'false'); } })));
+  const create = h('button', { class: 'btn primary', type: 'button', text: 'Create channel' });
+  create.addEventListener('click', async () => {
+    if (!name.value.trim()) { toast('Give the channel a name.'); return; }
+    create.disabled = true;
+    try { await api('/api/chats', { method: 'POST', body: { channel: { name: name.value, icon: iconIn.value, color, purpose: why.value } } }); }
+    catch (e) { failed(e); create.disabled = false; return; }
+    closeSheet();
+    await loadState(); S.pinned = true; toBottom();
+    const purpose = why.value.trim();
+    sendText((purpose ? 'This channel is for: ' + purpose : 'This channel is called "' + name.value.trim() + '".') + ' Keep the work here about that. Say hello in a line or two, and offer three things you could start on.');
+  });
+  body.replaceChildren(h('div', { class: 'card chan-form' }, h('h2', null, 'New channel'),
+    h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Name' }), name),
+    h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Icon (an emoji or a couple of letters)' }), iconIn),
+    h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Colour' }), sw),
+    h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'What it is for' }), why),
+    h('div', { class: 'btn-row' }, create, h('button', { class: 'btn', type: 'button', text: 'Back', onclick: openSheet }))));
+  name.focus();
+}
+function closeSheetBody() { $('#sheet-body').replaceChildren(); }
+
+
+// ---------- suggestions: what it proposes ----------
+// The agent leaves suggestions (the morning brief does, daily) and each waits for a tap: Start runs it as a background
+// task, which can read, draft and write but cannot send, pay or delete, and Hide drops it for good. The newest one
+// waits above the message box; all of them are under Up next on the Tasks screen.
+function sourceNote(sources) {
+  const src = (sources || [])[0];
+  if (!src) return null;
+  const u = String(src.url || '');
+  if (u.startsWith('mail:')) return 'From mail #' + u.slice(5);
+  if (u.startsWith('calendar:')) return 'From calendar ' + u.slice(9);
+  if (/^https:\/\//.test(u)) { try { return 'From ' + new URL(u).hostname; } catch { return null; } }
+  return null;
+}
+async function actOnSuggestion(body, done) {
+  try {
+    const d = await api('/api/suggestions', { method: 'POST', body });
+    S.suggestions = d.suggestions || []; S.suggestion = S.suggestions[0] || null;
+    if (d.started) toast('Started: ' + d.started + '. It shows under Tasks, and its result will come to this chat.'); else if (done) toast(done);
+  } catch (e) { failed(e); }
+  renderSuggest(); if (S.tab === 'agents') renderAgentsPage();
+}
+function suggestButtons(sg) {
+  return [sg.startable ? h('button', { class: 'btn small primary', type: 'button', text: 'Start', title: 'Run it as a background task. It cannot send, pay or delete.', onclick: () => actOnSuggestion({ start: sg.id }) }) : null,
+    h('button', { class: 'btn small', type: 'button', text: 'Hide', onclick: () => actOnSuggestion({ hide: sg.id }, 'Hidden.') })];
+}
+function renderSuggest() {
+  const el = $('#suggest'); if (!el) return;
+  const sg = S.suggestion;
+  const show = !!sg && S.tab === 'chat' && !working() && !$('#input').value.trim();
+  if (!show) { if (!el.hidden) { el.hidden = true; el.replaceChildren(); } return; }
+  const sig = sg.id + '|' + sg.title;
+  if (!el.hidden && el.dataset.sig === sig) return;
+  el.hidden = false; el.dataset.sig = sig;
+  el.replaceChildren(h('div', { class: 'suggest-card' }, h('span', { class: 'sg-tag', text: 'SUGGESTED' }),
+    h('span', { class: 'grow' }, h('span', { class: 't', text: sg.title }), sg.body ? h('span', { class: 's', text: sg.body }) : null),
+    h('span', { class: 'acts' }, suggestButtons(sg))));
+}
+function suggestionsCard() {
+  const list = S.suggestions || [];
+  if (!list.length) return null;
+  const rows = h('div', { class: 'rows' });
+  for (const sg of list) {
+    const note = sourceNote(sg.sources);
+    rows.append(h('div', { class: 'row sug-row' },
+      h('span', { class: 'grow' }, h('span', { class: 't', text: sg.title }), sg.body ? h('span', { class: 's', text: sg.body }) : null, note ? h('span', { class: 's why', text: note + ' · ' + ago(sg.at) }) : null),
+      h('span', { class: 'acts keep' }, suggestButtons(sg))));
+  }
+  return h('div', { class: 'card' }, h('h2', null, 'Suggested for you', h('small', { text: list.length + (list.length === 1 ? ' idea' : ' ideas') })),
+    h('div', { class: 'note', text: 'Start runs one as a background task. It can read, draft and write, but not send, pay or delete. Hide drops it for good.' }), rows);
+}
+async function loadSuggestions() {
+  try { const d = await api('/api/suggestions'); S.suggestions = d.suggestions || []; S.suggestion = S.suggestions[0] || null; } catch (e) { if (e instanceof AuthError) return; }
+  renderSuggest(); if (S.tab === 'agents') renderAgentsPage();
 }

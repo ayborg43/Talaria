@@ -111,12 +111,15 @@ func TestDashboardDrawsWhatItIsGivenAndRefusesWhatItCannot(t *testing.T) {
 func TestAMadePageIsKeptAndAnUploadCannotBeOne(t *testing.T) {
 	s := testStore(t)
 	page, _ := RenderDoc("Memo", "Hello")
-	f, err := s.SaveMade("Memo.html", page)
-	if err != nil || f.MIME != MIMEMade || f.Origin != OriginGenerated {
+	f, err := s.SaveMade("Memo.html", page, KindDoc)
+	if err != nil || f.MIME != MIMEMade || f.Origin != OriginGenerated || f.Kind != KindDoc {
 		t.Fatalf("%+v %v", f, err)
 	}
 	if got, raw, err := s.Open(f.ID); err != nil || got.Name != "Memo.html" || !strings.Contains(string(raw), "<h1>Memo</h1>") {
 		t.Fatalf("the page did not come back: %v", err)
+	}
+	if _, err := s.SaveMade("x.html", page, "script"); err == nil {
+		t.Fatal("a made page of an unknown kind was kept")
 	}
 	if _, err := s.Save("evil.html", []byte("<!doctype html><script>alert(1)</script>"), OriginUpload); err == nil {
 		t.Fatal("an uploaded page was kept")

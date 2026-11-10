@@ -56,8 +56,10 @@
       <button id="new-chat" class="icon-btn" type="button" aria-label="Start a new conversation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></button>
     </header>
     <div id="agents" class="agents" hidden aria-label="Who is working"></div>
+    <div id="greet" class="greet" hidden></div>
     <div id="thread" class="thread" role="log" aria-live="polite"></div>
     <button id="jump" class="jump" type="button" hidden aria-label="Jump to the latest message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+    <div id="suggest" class="suggest" hidden></div>
     <div id="welcome" class="welcome" hidden></div>
     <div id="quick" class="quick"></div>
     <div id="queuebar" class="queuebar" hidden></div>
@@ -84,10 +86,20 @@
     </div>
   </section>
 
-  <section id="screen-agents" class="screen" aria-label="Agents" hidden>
+  <section id="screen-make" class="screen" aria-label="Make" hidden>
     <div class="scroll">
       <header class="page-head">
-        <div><h1 class="display page-title">Agents</h1><p id="agents-sub" class="muted">Who is working for you, and what is waiting for your OK.</p></div>
+        <div><h1 class="display page-title">Make</h1><p class="muted">What it made for you: documents, pages, slides and dashboards.</p></div>
+        <button id="make-refresh" class="icon-btn" type="button" aria-label="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5"/></svg></button>
+      </header>
+      <div id="make-body" class="stack"></div>
+    </div>
+  </section>
+
+  <section id="screen-agents" class="screen" aria-label="Tasks" hidden>
+    <div class="scroll">
+      <header class="page-head">
+        <div><h1 class="display page-title">Tasks</h1><p id="agents-sub" class="muted">What needs you, what is being worked on, and what is ready to look at.</p></div>
         <button id="pause-btn" class="pause" type="button" hidden></button>
       </header>
       <div id="agents-body" class="stack"></div>
@@ -117,7 +129,8 @@
   <nav id="tabs" class="tabs" aria-label="Sections">
     <a href="#chat" data-tab="chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.2A8 8 0 1 1 20 12z"/></svg><span>Chat</span></a>
     <a href="#today" data-tab="today"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/></svg><span>Today</span></a>
-    <a href="#agents" data-tab="agents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="3.5"/><path d="M12 8V5M9 4.5h6"/><circle cx="9.5" cy="13.5" r="1" fill="currentColor"/><circle cx="14.5" cy="13.5" r="1" fill="currentColor"/><path d="M3 12.5v2M21 12.5v2"/></svg><span>Agents</span><b id="agent-badge" class="badge work" hidden>0</b></a>
+    <a href="#make" data-tab="make"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg><span>Make</span></a>
+    <a href="#agents" data-tab="agents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="3.5"/><path d="M12 8V5M9 4.5h6"/><circle cx="9.5" cy="13.5" r="1" fill="currentColor"/><circle cx="14.5" cy="13.5" r="1" fill="currentColor"/><path d="M3 12.5v2M21 12.5v2"/></svg><span>Tasks</span><b id="agent-badge" class="badge work" hidden>0</b></a>
     <a href="#settings" data-tab="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2.2"/><circle cx="8" cy="17" r="2.2"/></svg><span>Settings</span></a>
   </nav>
 </div>

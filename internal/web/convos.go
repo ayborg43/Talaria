@@ -26,7 +26,12 @@ type Convo struct {
 	Archived bool   `json:"archived,omitempty"`
 	// Parent is the conversation this one was opened beside: a side chat, for
 	// a tangent that should not crowd the conversation it came from.
-	Parent     string             `json:"parent,omitempty"`
+	Parent string `json:"parent,omitempty"`
+	// A channel is a conversation kept for one piece of work: Purpose says what it is for, Icon is an emoji or a
+	// couple of letters, and Color one of the names in ChannelColors.
+	Purpose    string             `json:"purpose,omitempty"`
+	Icon       string             `json:"icon,omitempty"`
+	Color      string             `json:"color,omitempty"`
 	UpdatedAt  time.Time          `json:"updated_at"`
 	Display    []*Message         `json:"display,omitempty"`
 	Transcript []provider.Message `json:"transcript,omitempty"`
@@ -42,6 +47,9 @@ type ConvoMeta struct {
 	// conversation a side chat was opened beside.
 	Main     bool      `json:"main,omitempty"`
 	Side     string    `json:"side,omitempty"`
+	Purpose  string    `json:"purpose,omitempty"`
+	Icon     string    `json:"icon,omitempty"`
+	Color    string    `json:"color,omitempty"`
 	Updated  time.Time `json:"updated_at"`
 	Messages int       `json:"messages"`
 	Active   bool      `json:"active"`
@@ -191,6 +199,57 @@ func (c *Convos) NewSide() string {
 	return id
 }
 
+// ChannelColors are the colours a channel may wear: names, never CSS, so a colour can only be one of these.
+var ChannelColors = []string{"brass", "info", "ok", "coral", "plum", "slate"}
+
+// NewChannel starts a blank conversation kept for one piece of work and shows it. It is listed like any other,
+// with its icon and colour and what it is for.
+func (c *Convos) NewChannel(name, icon, color, purpose string) (string, error) {
+	name, icon, purpose = strings.Join(strings.Fields(name), " "), strings.Join(strings.Fields(icon), " "), strings.Join(strings.Fields(purpose), " ")
+	switch {
+	case name == "":
+		return "", fmt.Errorf("give the channel a name")
+	case len([]rune(name)) > 40:
+		return "", fmt.Errorf("the name is longer than 40 characters")
+	case len([]rune(icon)) > 8:
+		return "", fmt.Errorf("the icon is one emoji or a couple of letters")
+	case len([]rune(purpose)) > 240:
+		return "", fmt.Errorf("what it is for is longer than 240 characters")
+	}
+	if color == "" {
+		color = ChannelColors[0]
+	}
+	known := false
+	for _, k := range ChannelColors {
+		known = known || k == color
+	}
+	if !known {
+		return "", fmt.Errorf("the colour is one of: %s", strings.Join(ChannelColors, ", "))
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.seq++
+	id := fmt.Sprintf("c%d", c.seq)
+	c.items[id] = &Convo{ID: id, Title: name, Purpose: purpose, Icon: icon, Color: color, UpdatedAt: time.Now()}
+	c.order = append([]string{id}, c.order...)
+	c.active = id
+	c.ensureMainLocked()
+	c.trimLocked()
+	c.saveLocked()
+	return id, nil
+}
+
+// ActiveChannel describes the open conversation if it is a channel, for the page to name it.
+func (c *Convos) ActiveChannel() (title, icon, color, purpose string, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cv := c.items[c.active]
+	if cv == nil || cv.Color == "" {
+		return "", "", "", "", false
+	}
+	return cv.Title, cv.Icon, cv.Color, cv.Purpose, true
+}
+
 // SideOf names the conversation the open one was opened beside, or "" when
 // the open one is not a side chat.
 func (c *Convos) SideOf() string {
@@ -232,7 +291,8 @@ func (c *Convos) list(archived bool) []ConvoMeta {
 		if title == "" {
 			title = "New chat"
 		}
-		meta := ConvoMeta{ID: id, Title: title, Archived: cv.Archived, Main: id == c.main, Updated: cv.UpdatedAt, Messages: len(cv.Display), Active: id == c.active}
+		meta := ConvoMeta{ID: id, Title: title, Archived: cv.Archived, Main: id == c.main, Updated: cv.UpdatedAt, Messages: len(cv.Display), Active: id == c.active,
+			Purpose: cv.Purpose, Icon: cv.Icon, Color: cv.Color}
 		if _, ok := c.items[cv.Parent]; ok {
 			meta.Side = c.titleLocked(cv.Parent)
 		}

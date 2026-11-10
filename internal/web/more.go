@@ -32,6 +32,8 @@ type TaskInfo struct {
 	Status string    `json:"status"`
 	Failed bool      `json:"failed"`
 	At     time.Time `json:"at"`
+	// Reviewed is set once the user has looked at the result and checked it off.
+	Reviewed bool `json:"reviewed,omitempty"`
 }
 
 // ---- profile and notes ----
@@ -140,22 +142,37 @@ func (s *Server) noticesPost(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) taskAction(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Retry string `json:"retry"`
+		Retry  string `json:"retry"`
+		Review string `json:"review"` // check a finished task off: it moves to Resolved
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if s.Sources.RetryTask == nil {
+	switch {
+	case strings.TrimSpace(in.Review) != "":
+		if len(in.Review) > 64 {
+			fail(w, http.StatusBadRequest, "that is not a task id")
+			return
+		}
+		if s.Sources.ReviewTask == nil {
+			fail(w, http.StatusNotImplemented, "tasks are not set up")
+			return
+		}
+		if err := s.Sources.ReviewTask(strings.TrimSpace(in.Review)); err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	case s.Sources.RetryTask == nil:
 		fail(w, http.StatusNotImplemented, "tasks are not set up")
 		return
-	}
-	if strings.TrimSpace(in.Retry) == "" {
-		fail(w, http.StatusBadRequest, "say which task to run again")
+	case strings.TrimSpace(in.Retry) == "":
+		fail(w, http.StatusBadRequest, "say which task to run again or check off")
 		return
-	}
-	if err := s.Sources.RetryTask(strings.TrimSpace(in.Retry)); err != nil {
-		fail(w, http.StatusBadRequest, err.Error())
-		return
+	default:
+		if err := s.Sources.RetryTask(strings.TrimSpace(in.Retry)); err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	out := map[string]any{"ok": true, "tasks": []TaskInfo{}}
 	if s.Sources.Tasks != nil {

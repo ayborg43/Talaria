@@ -91,7 +91,9 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 				}
 				return done
 			},
-			Create: !o.NoCron,
+			// A job starts nothing, but one that is allowed to propose (the morning brief) may leave suggestions:
+			// they only wait for the user's Start.
+			Create: !o.NoCron || o.Suggest,
 		})
 	}
 	rt.mcp.Register(tools)

@@ -31,10 +31,13 @@ func RegisterTools(r *tool.Registry, b Binding) {
 		r.Register(tool.Tool{
 			Name: "idea_add",
 			Description: "Keep a suggestion with its source evidence: what the user might want, and where the idea came from. " +
-				"Every idea needs at least one HTTP(S) source. Suggestions already sent or matching finished work are left out when listing.",
+				"Every idea needs at least one source: an HTTP(S) address, or mail:<id> / calendar:<name> for something read in the user's mail or calendar. " +
+				"Give a prompt to let the user start it with one tap: the full, self-contained instruction a background task would run (it has no memory of this chat, and cannot send, pay, delete or change anything that needs approval). " +
+				"Suggestions already sent or matching finished work are left out when listing.",
 			Schema: json.RawMessage(`{"type":"object","properties":{
 				"title":{"type":"string","description":"a short name"},
 				"body":{"type":"string","description":"a sentence or two"},
+				"prompt":{"type":"string","description":"what to run if the user taps Start: self-contained, at most 1500 characters"},
 				"sources":{"type":"array","items":{"type":"object","properties":{
 					"title":{"type":"string"},"url":{"type":"string"}},"required":["title","url"]}}},
 				"required":["title","sources"]}`),
@@ -78,12 +81,13 @@ func (b Binding) add(_ context.Context, raw json.RawMessage) (string, error) {
 	var a struct {
 		Title   string   `json:"title"`
 		Body    string   `json:"body"`
+		Prompt  string   `json:"prompt"`
 		Sources []Source `json:"sources"`
 	}
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return "", err
 	}
-	id, err := b.Store.Add(b.Gateway, b.ChatID, a.Title, a.Body, a.Sources)
+	id, err := b.Store.AddTask(b.Gateway, b.ChatID, a.Title, a.Body, a.Prompt, a.Sources)
 	if err != nil {
 		return "", err
 	}

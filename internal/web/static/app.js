@@ -481,7 +481,7 @@ function renderChrome() {
   // The status names the current work, not just that something is working.
   const current = count === 1 ? 'Working · ' + doingText(S.agents[0]) : count > 1 ? `${count} agents working` : busy ? 'Working…' : null;
   $('#status-text').textContent = !S.connected ? 'Reconnecting…' : S.paused ? 'Paused · chat still works'
-    : current || (S.side ? 'Side chat · ' : 'Online') + (S.side ? S.side : S.model ? ' · ' + S.model : '');
+    : current || (S.channel ? 'Channel · ' + S.channel.title : (S.side ? 'Side chat · ' : 'Online') + (S.side ? S.side : S.model ? ' · ' + S.model : ''));
   const n = pendingAsks().length;
   const ab = $('#agent-badge');
   ab.hidden = n === 0 && S.agents.length === 0; ab.textContent = String(n || S.agents.length); ab.classList.toggle('work', n === 0);
@@ -490,7 +490,7 @@ function renderChrome() {
   $('#stop').hidden = !(run && !hasText);
   $('#send').disabled = !hasText;
   $('#quick').hidden = run || hasText;
-  if (typeof renderWelcome === 'function') renderWelcome(); // more.js may not have loaded yet on the first paint
+  if (typeof renderWelcome === 'function') { renderWelcome(); renderGreet(); renderSuggest(); } // more.js may not have loaded yet on the first paint
   document.title = n ? `(${n}) Talaria` : 'Talaria';
   if (S.tab === 'agents') { const sig = n + '|' + S.agents.length; if (sig !== S.agentsSig) { S.agentsSig = sig; renderAgentsPage(); } }
 }
@@ -557,6 +557,7 @@ async function loadAgentsPage() {
   const body = $('#agents-body');
   if (!body.children.length) body.replaceChildren(h('div', { class: 'skeleton' }));
   try {
+    loadSuggestions();
     const [d, c] = await Promise.all([api('/api/agents'), api('/api/control')]);
     recentAgents = d.recent || []; standing = d.jobs || []; doneTasks = d.tasks || []; ctl = c; S.paused = c.paused;
   } catch (e) { if (e instanceof AuthError) return; toast(e.message); }
@@ -572,17 +573,6 @@ const ASK_POLICY = {
   deletes_and_posts: 'Talaria asks before deleting anything or posting on social media. Everything else it just does.',
   strict: 'Talaria asks before running commands, changing files or sending anything out.',
 };
-function waitingSection() {
-  const pend = pendingAsks();
-  const card = h('div', { class: 'card wait' + (pend.length ? ' has' : '') }, h('h2', null, 'Waiting for you', h('small', { text: pend.length ? pend.length + ' to answer' : '' })));
-  if (!pend.length) {
-    card.append(h('div', { class: 'empty', text: 'Nothing is waiting for you.' }), h('div', { class: 'note center', text: ASK_POLICY[ctl && ctl.permissions] || ASK_POLICY.deletes_and_posts }));
-    return card;
-  }
-  card.append(h('div', { class: 'note', text: 'These are saved. Answer whenever you like: the work carries on from where it stopped.' }));
-  pend.forEach((m) => card.append(askCard(m)));
-  return card;
-}
 function historyCard() {
   const done = S.order.map((id) => S.msgs.get(id)).filter((m) => m.role === 'approval' && m.state !== 'pending').reverse().slice(0, 40);
   if (!done.length) return null;
@@ -609,25 +599,31 @@ function activityCard() {
 function renderAgentsPage() {
   if (S.tab !== 'agents') return;
   renderPause();
-  const out = [waitingSection(), nowCard()];
-  out.push(standing.length ? jobsCard(standing, 'Set up to run on their own')
-    : h('div', { class: 'card' }, h('h2', null, 'Set up to run on their own'), h('div', { class: 'empty', text: 'Nothing yet. Ask for a reminder, a watch on your mail, or a goal to work on, and it will show here.' })));
-  const fin = h('div', { class: 'card' }, h('h2', null, 'Finished lately'));
-  if (!recentAgents.length) fin.append(h('div', { class: 'empty', text: 'Helpers and background work that finish will be listed here.' }));
-  else {
-    const rows = h('div', { class: 'rows' });
-    for (const f of recentAgents.slice(0, 15)) {
-      rows.append(h('div', { class: 'row' }, h('span', { class: 'k ' + f.kind, text: KINDS[f.kind] || f.kind.toUpperCase() }),
-        h('span', { class: 'grow' }, h('span', { class: 't', text: f.label }), h('span', { class: 's', text: (f.stopped ? 'Stopped after ' : 'Took ') + duration(f.seconds) + (f.model ? ' · ' + f.model : '') })),
-        h('span', { class: 'when', text: ago(f.at) })));
+  const view = S.tasksView || 'active';
+  const out = [tasksSeg()];
+  if (view === 'active') {
+    out.push(needsInputCard(), nowCard(), readyCard(), computerCard());
+  } else if (view === 'next') {
+    const sug = suggestionsCard(); if (sug) out.push(sug);
+    out.push(standing.length ? jobsCard(standing, 'Set up to run on their own')
+      : h('div', { class: 'card' }, h('h2', null, 'Set up to run on their own'), h('div', { class: 'empty', text: 'Nothing yet. Ask for a reminder, a watch on your mail, or a goal to work on, and it will show here.' })));
+  } else {
+    const fin = h('div', { class: 'card' }, h('h2', null, 'Finished lately'));
+    if (!recentAgents.length) fin.append(h('div', { class: 'empty', text: 'Helpers and background work that finish will be listed here.' }));
+    else {
+      const rows = h('div', { class: 'rows' });
+      for (const f of recentAgents.slice(0, 15)) {
+        rows.append(h('div', { class: 'row' }, h('span', { class: 'k ' + f.kind, text: KINDS[f.kind] || f.kind.toUpperCase() }),
+          h('span', { class: 'grow' }, h('span', { class: 't', text: f.label }), h('span', { class: 's', text: (f.stopped ? 'Stopped after ' : 'Took ') + duration(f.seconds) + (f.model ? ' · ' + f.model : '') })),
+          h('span', { class: 'when', text: ago(f.at) })));
+      }
+      fin.append(rows);
     }
-    fin.append(rows);
+    out.push(fin);
+    const res = resolvedCard(); if (res) out.push(res);
+    const hist = historyCard(); if (hist) out.push(hist);
+    const act = activityCard(); if (act) out.push(act);
   }
-  out.push(fin);
-  const tc = tasksCard(); if (tc) out.push(tc);
-  out.push(computerCard());
-  const hist = historyCard(); if (hist) out.push(hist);
-  const act = activityCard(); if (act) out.push(act);
   const agentsBody = $('#agents-body');
   keepScroll(agentsBody, () => agentsBody.replaceChildren(...out));
 }
@@ -638,7 +634,7 @@ function renderPause() {
   b.hidden = false;
   b.className = 'pause' + (S.paused ? ' on' : pauseArmed ? ' armed' : '');
   b.textContent = S.paused ? 'Resume' : pauseArmed ? 'Tap again to pause' : 'Pause all';
-  $('#agents-sub').textContent = S.paused ? 'Paused: goals, watches and reminders are held until you resume. Chat still works.' : 'Who is working for you, and what is waiting for your OK.';
+  $('#agents-sub').textContent = S.paused ? 'Paused: goals, watches and reminders are held until you resume. Chat still works.' : 'What needs you, what is being worked on, and what is ready to look at.';
 }
 $('#pause-btn').addEventListener('click', async () => {
   if (!S.paused && !pauseArmed) { pauseArmed = true; clearTimeout(pauseTimer); pauseTimer = setTimeout(() => { pauseArmed = false; renderPause(); }, 4000); renderPause(); return; }
@@ -822,7 +818,7 @@ async function loadState() {
   setAgents(d.agents);
   S.epoch = d.epoch; S.seq = d.seq; S.running = d.running; S.model = d.model; S.paused = d.paused; S.version = d.version;
   S.telegram = !!d.telegram; renderTg();
-  S.zone = d.zone || S.zone; S.profile = d.profile || {}; S.side = d.side || ''; applyTheme(S.profile.theme);
+  S.zone = d.zone || S.zone; S.profile = d.profile || {}; S.side = d.side || ''; S.channel = d.channel || null; S.suggestion = d.suggestion || null; applyTheme(S.profile.theme);
   if (!S.order.length) S.pinned = true; // a conversation that starts again starts at its bottom
   // Nothing is torn down: messages that are unchanged keep their elements, so the reader's place survives a reconnect.
   renderChat(); renderQueue();
@@ -855,7 +851,7 @@ async function reconnect() {
 }
 
 // ---------- tabs ----------
-const TABS = ['chat', 'today', 'agents', 'settings'];
+const TABS = ['chat', 'today', 'make', 'agents', 'settings'];
 function route() {
   let [tab, sub = ''] = location.hash.slice(1).split('/');
   if (tab === 'needs' || tab === 'control') tab = 'agents'; // those screens live there now
@@ -865,6 +861,8 @@ function route() {
   for (const t of TABS) $('#screen-' + t).hidden = t !== tab;
   $$('#tabs a').forEach((a) => (a.getAttribute('data-tab') === tab ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
   if (tab === 'today') loadToday();
+  if (tab === 'make') loadMake();
+  if (tab === 'chat') loadSuggestions();
   if (tab === 'agents') loadAgentsPage();
   if (tab === 'settings') { if (S.settings) renderSettings(); loadSettings(); }
   if (tab === 'chat') { S.pinned = true; toBottom(); }
@@ -882,6 +880,7 @@ async function loadToday(fresh) {
   renderToday();
 }
 $('#today-refresh').addEventListener('click', () => loadToday(true));
+$('#make-refresh').addEventListener('click', () => loadMake());
 
 function setup(text, hint) {
   return h('div', { class: 'card' }, h('div', { class: 'row' }, h('span', { class: 'tag' }, icon('info')), h('span', { class: 'grow' }, h('span', { class: 't', text }), h('span', { class: 's', text: hint }))));
@@ -932,7 +931,8 @@ function renderToday() {
       const av = h('span', { class: 'avatar', text: (name.trim()[0] || '?').toUpperCase() });
       av.style.background = TINTS[i % 4][0]; av.style.color = TINTS[i % 4][1];
       rows.append(h('div', { class: 'row' }, av,
-        h('span', { class: 'grow' }, h('span', { class: 't', text: name }), h('span', { class: 's', text: m.subject || '(no subject)' })),
+        h('span', { class: 'grow' }, h('span', { class: 't', text: name }), h('span', { class: 's', text: m.needs && m.why ? (m.subject || '(no subject)') + ' — ' + m.why : m.subject || '(no subject)' })),
+        m.needs ? h('span', { class: 'pill brass', text: 'NEEDS YOU' }) : null,
         h('span', { class: 'when' + (m.unread ? ' state-info' : ''), text: fmtWhen(new Date(m.at)) })));
     });
     card.append(mail.items.length ? rows : h('div', { class: 'empty', text: 'Nothing new in the last few days.' }));
@@ -1685,3 +1685,6 @@ if (!navigator.onLine) $('#offline').hidden = false;
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 navigator.serviceWorker?.addEventListener('message', (e) => { if (e.data && e.data.go) { location.hash = e.data.go; } });
 start();
+
+// A suggestion may have arrived while the app was in the background: look again when it comes back.
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('#app').hidden) loadSuggestions(); });

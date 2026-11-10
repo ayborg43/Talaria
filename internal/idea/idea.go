@@ -36,6 +36,7 @@ const (
 	MaxTitleRunes  = 200
 	MaxBodyRunes   = 2000
 	MaxSources     = 5
+	MaxPromptRunes = 1500
 )
 
 // Source is one piece of evidence behind an idea.
@@ -53,6 +54,8 @@ type Idea struct {
 	Body    string   `json:"body"`
 	Sources []Source `json:"sources"`
 	Status  string   `json:"status"`
+	// Prompt, when set, is the self-contained instruction a background task runs if the user taps Start.
+	Prompt string `json:"prompt,omitempty"`
 
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
@@ -146,10 +149,17 @@ func validSource(src Source) error {
 		return errors.New("each source needs a short title")
 	}
 	u, err := url.Parse(strings.TrimSpace(src.URL))
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return errors.New("each source URL must use HTTP or HTTPS")
+	if err != nil {
+		return errors.New("each source must be an HTTP(S) address, mail:<id> or calendar:<name>")
 	}
-	return nil
+	switch {
+	case (u.Scheme == "http" || u.Scheme == "https") && u.Host != "":
+		return nil
+	case (u.Scheme == "mail" || u.Scheme == "calendar") && u.Opaque != "" && len([]rune(u.Opaque)) <= 80 && !strings.ContainsAny(u.Opaque, " \t\r\n"):
+		// Something read in the user's own mail or calendar: the id says which message or calendar.
+		return nil
+	}
+	return errors.New("each source must be an HTTP(S) address, mail:<id> or calendar:<name>")
 }
 
 func (s *Store) db() (*sql.DB, error) {
@@ -284,9 +294,14 @@ func (s *Store) save(ideas []Idea) error {
 // Add keeps a new suggestion with its evidence. It refuses ideas without a
 // source, so every suggestion can point at where it came from.
 func (s *Store) Add(gateway string, chatID int64, title, body string, sources []Source) (string, error) {
+	return s.AddTask(gateway, chatID, title, body, "", sources)
+}
+
+// AddTask is Add for a suggestion the user can start: prompt is what a background task runs if they do.
+func (s *Store) AddTask(gateway string, chatID int64, title, body, prompt string, sources []Source) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	title, body = squash(title), strings.TrimSpace(body)
+	title, body, prompt = squash(title), strings.TrimSpace(body), strings.TrimSpace(prompt)
 	switch {
 	case title == "":
 		return "", errors.New("an idea needs a title")
@@ -294,6 +309,8 @@ func (s *Store) Add(gateway string, chatID int64, title, body string, sources []
 		return "", errors.New("the title is too long (200 characters at most)")
 	case len([]rune(body)) > MaxBodyRunes:
 		return "", errors.New("the body is too long (2000 characters at most)")
+	case len([]rune(prompt)) > MaxPromptRunes:
+		return "", errors.New("the prompt is too long (1500 characters at most)")
 	case len(sources) == 0:
 		return "", errors.New("an idea needs at least one source")
 	case len(sources) > MaxSources:
@@ -318,7 +335,7 @@ func (s *Store) Add(gateway string, chatID int64, title, body string, sources []
 		return "", errors.New("too many open ideas; accept or dismiss some first")
 	}
 	now := s.now()
-	it := Idea{ID: newID(), Gateway: gateway, ChatID: chatID, Title: title, Body: body, Sources: sources, Status: Open, Created: now, Updated: now}
+	it := Idea{ID: newID(), Gateway: gateway, ChatID: chatID, Title: title, Body: body, Prompt: prompt, Sources: sources, Status: Open, Created: now, Updated: now}
 	ideas = append(ideas, it)
 	if err := s.save(ideas); err != nil {
 		return "", err
@@ -347,6 +364,22 @@ func (s *Store) update(gateway string, chatID int64, id string, fn func(*Idea) e
 		return s.save(ideas)
 	}
 	return errors.New("no such idea")
+}
+
+// Get returns one of the chat's ideas, whatever its status.
+func (s *Store) Get(gateway string, chatID int64, id string) (Idea, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ideas, err := s.load()
+	if err != nil {
+		return Idea{}, err
+	}
+	for _, it := range ideas {
+		if it.ID == id && it.Gateway == gateway && it.ChatID == chatID {
+			return it, nil
+		}
+	}
+	return Idea{}, errors.New("no such idea")
 }
 
 // Accept marks an idea accepted: the user wants it.

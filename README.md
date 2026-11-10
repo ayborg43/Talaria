@@ -645,9 +645,8 @@ finish and send it from your own mail program. A draft leaves nothing, so it doe
 
 ## Web app (installable on your phone)
 
-Talaria has its own page, with four places: **Chat** (replies stream in as they are written, with a chip for each tool it uses; the paperclip attaches a PDF or image, which the agent sees like anything else sent),
-**Today** (your calendar and mail at a glance, with a countdown to your next event, plus the kept downloads with how long each has left), **Agents** (what is **waiting for your OK**, who is
-working and on which model, what runs on its own, what finished, and a switch that holds everything) and **Settings** (AI models,
+Talaria has its own page, with five places: **Chat** (replies stream in as they are written, with a chip for each tool it uses; the paperclip attaches a PDF or image, which the agent sees like anything else sent),
+**Today** (your calendar and mail at a glance, with a countdown to your next event and a **Needs you** mark, with its reason, on the mail that does, plus the kept downloads with how long each has left), **Make** (a gallery of what it made), **Tasks** (what needs your input, what is working, what is ready for review, what runs on its own, and a switch that holds everything) and **Settings** (AI models,
 permissions, connections, notifications, and the account). It works alongside Telegram, not instead of it: it is the same agent,
 with the same safety rules, and the same conversation history, goals, watches and reminders.
 
@@ -740,6 +739,28 @@ holds live login cookies, so keep Dokploy access tight and back up the data volu
   scripts, frames, forms, event handlers, `javascript:` links and anything that would fetch; and every made page is served under a policy
   with `sandbox`, `default-src 'none'` and no script or network, in a frame with scripts, forms and popups switched off, so it cannot reach
   the app or the network whatever it contains. An upload can never be one: only Make can put a page in the store. Pages are capped at about 600 KB.
+- **Make is a place.** The **Make** tab lists everything it made (documents, pages, slide decks, dashboards and generated PDFs) as tiles with a
+  filter for each kind, and four starters (Document, Web page, Slides, Dashboard) that put the start of a request in the message box. A tile is
+  drawn from its kind alone and nothing is loaded until you open it, so the gallery costs no memory beyond the list. Made files expire like any
+  download: open one and **Save** to keep it.
+- **Tasks have states.** The **Tasks** tab (the old Agents screen) opens on **Active**: **Needs input** (a request for your OK, or a background task
+  that failed, with Retry and Dismiss), **Working now**, and **Ready for review**, finished background work you check off with **Done**. That
+  moves it to **Resolved** under **History**, on every device (the list of checked-off ids is a small file, `web_reviewed.json`). **Up next** is
+  what runs on its own, and **History** holds what finished lately, Resolved, the answered requests and the activity chart.
+- **Suggestions you start with a tap.** The agent can leave suggestions (`idea_add`, with a title, why, a source and a prompt), and the morning brief
+  proposes up to three a day after it has written the brief, skipping any already open. The newest waits above the message box as **Suggested**, with
+  **Start** and **Hide**; all of them are under **Up next** on the Tasks screen, each saying where it came from ("From mail #12", "From calendar
+  Studio", or a site). **Start** runs the stored prompt as a background task, the same kind the agent starts in chat with risky tools **off**, so it
+  can read, draft and write but cannot send, pay, delete or change anything that needs approval; a tap never grants more than asking in chat would.
+  It then shows under Working now, and its result comes to the chat and waits under Ready for review. **Hide** drops it for good. A suggestion with
+  no prompt (a research note) can only be hidden. A source is an https address, `mail:<id>` or `calendar:<name>`; nothing is kept without one.
+  If no task slot is free (three at once), Start says so and the suggestion stays.
+- **Act from the sorted inbox.** Each row under **Needs you** in a triage card has **Start** (have it read the message, work out what it needs and
+  do what it can, asking before anything is sent) and **Reply** (draft a reply into Drafts, never sent).
+- **Channels.** **+ Channel** in the conversation list makes a conversation kept for one piece of work: a name, an icon, one of six colours and what
+  it is for. The agent opens it with a hello and three things it could start on, the list shows its icon and purpose, and an empty channel greets
+  you with what it is for instead of the date. A channel is an ordinary conversation, so it can be renamed, archived or deleted like one. An
+  empty chat opens with the date and a greeting by name.
 - **Results look like what they are.** A mail listing is a list you can tap, a message has Draft a reply and Whole thread, a page
   the agent opened has **Take control**, a goal shows its plan with what is done, a spending import shows its categories as bars
   with a field to set a savings goal, and a made or filled PDF has View and Save. The raw result is one tap away under each.

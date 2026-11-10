@@ -239,3 +239,38 @@ func TestAConversationCanBeDeleted(t *testing.T) {
 		t.Fatal("deleted conversation can still be loaded")
 	}
 }
+
+func TestAChannelIsAConversationWithAPurpose(t *testing.T) {
+	c := testConvos(t)
+	main := c.New()
+	id, err := c.NewChannel("  Wholesale   orders ", "📦", "ok", "Orders from shops: quotes, stock, shipping.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ActiveID() != id || c.MainID() != main {
+		t.Fatalf("active %q main %q", c.ActiveID(), c.MainID())
+	}
+	var got ConvoMeta
+	for _, m := range c.List() {
+		if m.ID == id {
+			got = m
+		}
+	}
+	if got.Title != "Wholesale orders" || got.Icon != "📦" || got.Color != "ok" || got.Purpose == "" {
+		t.Fatalf("listed as %+v", got)
+	}
+	for name, args := range map[string][4]string{
+		"no name":    {"", "x", "ok", "p"},
+		"long name":  {strings.Repeat("a", 41), "x", "ok", "p"},
+		"long icon":  {"n", "123456789", "ok", "p"},
+		"bad colour": {"n", "x", "red; background:url(//evil)", "p"},
+		"long why":   {"n", "x", "ok", strings.Repeat("a", 241)},
+	} {
+		if _, err := c.NewChannel(args[0], args[1], args[2], args[3]); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	if _, err := c.NewChannel("Quiet", "", "", ""); err != nil { // a colour and a purpose are optional
+		t.Fatal(err)
+	}
+}

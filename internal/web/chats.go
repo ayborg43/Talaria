@@ -122,6 +122,13 @@ func (s *Server) switchChat(w http.ResponseWriter, r *http.Request) {
 		Delete    string `json:"delete"` // remove this conversation for good
 		Side      bool   `json:"side"`   // a blank conversation beside the open one
 		Main      string `json:"main"`   // make this conversation the main one
+		// Channel starts a conversation kept for one piece of work.
+		Channel *struct {
+			Name    string `json:"name"`
+			Icon    string `json:"icon"`
+			Color   string `json:"color"`
+			Purpose string `json:"purpose"`
+		} `json:"channel"`
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -172,6 +179,17 @@ func (s *Server) switchChat(w http.ResponseWriter, r *http.Request) {
 		in.Open = s.Convos.MainID()
 	}
 	switch {
+	case in.Channel != nil:
+		id, err := s.Convos.NewChannel(in.Channel.Name, in.Channel.Icon, in.Channel.Color, in.Channel.Purpose)
+		if err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.Hub.Replace(nil)
+		if s.Engine != nil {
+			s.Engine.SetHistory(ChatID, nil)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
 	case in.Side:
 		id := s.Convos.NewSide()
 		s.Hub.Replace(nil)

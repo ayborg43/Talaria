@@ -131,3 +131,21 @@ func RetryChatTask(s *Store, ctl Control, gateway string, chatID int64, id strin
 	}
 	return j, nil
 }
+
+// StartChatTask starts a background task for a chat from the app rather than from the model: the user tapped Start
+// on a suggestion. It runs like any task the model starts with allow_risky off, so a tool that needs approval is
+// denied and the task says so in its result; starting one never grants more than a task started in chat would.
+func StartChatTask(s *Store, ctl Control, gateway string, chatID int64, name, prompt string) (Job, error) {
+	if gateway == "" {
+		gateway = DefaultGateway
+	}
+	j, err := s.AddTask(Job{Name: name, Kind: KindTask, Prompt: prompt, Gateway: gateway, ChatID: chatID, TimeoutSec: defaultTaskMinutes * 60},
+		runningTasks(ctl, gateway, chatID), maxTasksPerChat)
+	if err != nil {
+		return Job{}, err
+	}
+	if ctl != nil {
+		ctl.Wake()
+	}
+	return j, nil
+}

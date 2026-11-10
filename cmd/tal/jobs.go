@@ -91,6 +91,8 @@ func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
 		// Only for the activity log, which says whose job made each call. A job has no
 		// cron tools: it must not schedule more jobs.
 		Origin: "job:" + j.ID, Gateway: j.Gateway, ChatID: j.ChatID, NoCron: true, Activity: r.sink,
+		// The morning brief may leave suggestions for the user to start or hide; no other job proposes anything.
+		Suggest: j.Kind == "" && j.Name == briefName,
 	})
 	if r.sink != nil {
 		id := activity.ID(ctx)

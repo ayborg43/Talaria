@@ -122,3 +122,27 @@ func TestLegacyJSONIsImportedOnce(t *testing.T) {
 		t.Fatalf("imported ideas persist beside new ones: %+v", again)
 	}
 }
+
+func TestASuggestionCanCarryAPromptAndCiteMailOrACalendar(t *testing.T) {
+	s := testStore(t)
+	id, err := s.AddTask("web", 1, "Draft a reply to Ana", "She asked for the ship date.", "Read message 12 and draft a reply.",
+		[]Source{{Title: "Ana's message", URL: "mail:12"}, {Title: "Kiln schedule", URL: "calendar:Studio"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get("web", 1, id)
+	if err != nil || got.Prompt != "Read message 12 and draft a reply." || got.Status != Open {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if _, err := s.Get("web", 2, id); err == nil {
+		t.Fatal("another chat read the suggestion")
+	}
+	for _, bad := range []string{"mail:", "mail:1 2", "mail://x", "file:///etc/passwd", "javascript:alert(1)", "calendar:" + strings.Repeat("a", 81)} {
+		if _, err := s.Add("web", 1, "x"+bad, "", []Source{{Title: "s", URL: bad}}); err == nil {
+			t.Errorf("source %q was accepted", bad)
+		}
+	}
+	if _, err := s.AddTask("web", 1, "long", "", strings.Repeat("a", MaxPromptRunes+1), []Source{{Title: "s", URL: "mail:1"}}); err == nil {
+		t.Error("an enormous prompt was kept")
+	}
+}

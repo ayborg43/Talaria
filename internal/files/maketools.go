@@ -108,7 +108,7 @@ func makeTool(b Binding, kind string) func(context.Context, json.RawMessage) (st
 		if err != nil {
 			return "", err
 		}
-		f, err := b.Store.SaveMade(clipRunes(title, 60)+".html", page)
+		f, err := b.Store.SaveMade(clipRunes(title, 60)+".html", page, map[string]string{"doc": KindDoc, "page": KindPage, "slides": KindSlides, "dashboard": KindDashboard}[kind])
 		if err != nil {
 			return "", err
 		}

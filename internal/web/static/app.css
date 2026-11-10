@@ -816,3 +816,54 @@ html{caret-color:var(--brass-text);accent-color:var(--brass);scrollbar-color:var
 .triage-wait summary{cursor:pointer;color:var(--muted);font-size:13.5px;display:flex;align-items:center;gap:8px;padding:6px 0}
 @media (min-width:900px){.welcome{max-width:860px;padding:0 32px 12px}}
 .setup-row .s{white-space:normal}
+
+/* make: a gallery of what it made, and the channels */
+.chips{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;padding:2px 0}
+.chips::-webkit-scrollbar{display:none}
+.chips button{flex:none;padding:7px 13px;border-radius:99px;border:1px solid var(--bubble-line);background:var(--card);color:var(--ink2);font-size:13.5px;white-space:nowrap}
+.chips button[aria-pressed=true]{background:var(--tab-on);color:var(--brass-text);border-color:var(--brass-line);font-weight:600}
+.make-start{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.make-start button{display:flex;align-items:center;gap:10px;text-align:left;padding:10px 12px;border-radius:16px;border:1px dashed var(--brass-line);background:none;color:var(--ink);font-weight:600;font-size:14px}
+.make-start button svg{width:22px;height:22px;flex:none;color:var(--brass-text)}
+.make-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.make-card{display:flex;flex-direction:column;gap:8px;text-align:left;padding:0;border:1px solid var(--line);border-radius:18px;background:var(--card);box-shadow:var(--shadow);overflow:hidden;color:inherit}
+.make-art{display:flex;align-items:center;justify-content:center;height:96px;background:var(--k-tint,var(--brass-tint));color:var(--k,var(--brass-text))}
+.make-art svg{width:56px;height:56px}
+.make-card .t{display:block;font-weight:600;font-size:14px;padding:0 12px;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.make-card .s{display:block;font-size:12px;color:var(--muted);padding:0 12px 12px}
+.k-doc{--k:var(--info);--k-tint:var(--info-tint)}.k-page{--k:var(--coral);--k-tint:var(--bad-tint)}.k-slides{--k:var(--brass-text);--k-tint:var(--brass-tint)}.k-dashboard{--k:var(--ok);--k-tint:var(--ok-tint)}.k-pdf{--k:var(--muted);--k-tint:var(--sunk)}
+/* the greeting an empty chat opens with */
+.greet{flex:none;max-width:640px;width:100%;margin:0 auto;padding:18px 20px 0}
+.greet .d{color:var(--muted);font-size:13.5px}
+.greet h2{margin:2px 0 0;font-family:var(--display);font-weight:600;font-size:clamp(1.5rem,5vw,2rem);letter-spacing:-.015em}
+@media (min-width:900px){.greet{max-width:860px;padding:22px 32px 0}}
+/* channels: a colour and an icon on a conversation */
+.chan{--c:var(--brass)}.chan.brass{--c:var(--brass)}.chan.info{--c:var(--info)}.chan.ok{--c:var(--ok)}.chan.coral{--c:var(--coral)}.chan.plum{--c:#8a5a9e}.chan.slate{--c:#5f6b7a}
+.chan-ico{flex:none;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:11px;background:color-mix(in srgb,var(--c) 18%,transparent);color:var(--c);font-size:17px;font-weight:700}
+.swatches{display:flex;gap:10px;flex-wrap:wrap}
+.swatches button{width:30px;height:30px;border-radius:50%;border:2px solid transparent;background:var(--c)}
+.swatches button[aria-pressed=true]{border-color:var(--ink);box-shadow:0 0 0 2px var(--bg)}
+.chan-form textarea{width:100%;min-height:64px;resize:vertical}
+/* tasks: states, and the done button */
+.seg.tasks{max-width:none;padding:0 0 4px;border:0}
+.seg.tasks button small{font-weight:700;margin-left:6px;padding:1px 7px;border-radius:99px;background:var(--sunk);font-size:11px}
+.seg.tasks button[aria-selected=true] small{background:var(--brass-tint)}
+.row .acts.keep{display:flex;gap:6px;flex:none}
+@media (max-width:380px){.make-grid{grid-template-columns:repeat(2,1fr)}}
+#make-body>*{grid-column:1/-1}
+#agents-body>.seg{grid-column:1/-1}
+.row.task .t{white-space:normal;overflow:visible;text-overflow:clip}
+
+/* suggestions: what it proposes, with Start and Hide */
+.suggest{flex:none;padding:0 16px 8px;max-width:640px;width:100%;margin:0 auto}
+.suggest-card{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--brass-line);border-radius:18px;background:var(--brass-tint)}
+.suggest-card .grow{min-width:0}
+.suggest-card .t{display:block;font-weight:600;font-size:14px;overflow-wrap:anywhere}
+.suggest-card .s{display:block;font-size:12.5px;color:var(--ink2);overflow-wrap:anywhere}
+.suggest-card .sg-tag{flex:none;font-size:10.5px;font-weight:700;letter-spacing:.07em;color:var(--brass-text)}
+.suggest-card .acts{display:flex;gap:6px;flex:none}
+.sug-row .s{white-space:normal;overflow:visible}
+.sug-row .why a{color:var(--info)}
+@media (min-width:900px){.suggest{max-width:860px;padding:0 32px 8px}}
+@media (max-width:420px){.suggest-card{flex-wrap:wrap}.suggest-card .acts{width:100%;justify-content:flex-end}}
+.sug-row .t{white-space:normal;overflow:visible;text-overflow:clip}

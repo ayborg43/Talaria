@@ -155,7 +155,8 @@ func webSources(rt *app.Runtime, zone *time.Location, links func() []web.LinkInf
 			}
 			out := make([]web.MailItem, 0, len(list))
 			for _, m := range list {
-				out = append(out, web.MailItem{ID: m.UID, From: m.From, Subject: m.Subject, At: m.Date, Unread: m.Unread})
+				class, why := mailbox.Classify(m, mb.Address)
+				out = append(out, web.MailItem{ID: m.UID, From: m.From, Subject: m.Subject, At: m.Date, Unread: m.Unread, Needs: class == mailbox.NeedsYou, Why: why})
 			}
 			return unread, out, nil
 		}

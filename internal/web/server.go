@@ -61,6 +61,9 @@ type MailItem struct {
 	Subject string    `json:"subject"`
 	At      time.Time `json:"at"`
 	Unread  bool      `json:"unread"`
+	// Needs says the message needs the user, and Why says in a sentence why it does or does not.
+	Needs bool   `json:"needs,omitempty"`
+	Why   string `json:"why,omitempty"`
 }
 
 // JobInfo is something Talaria does on its own: a goal, a watch or a scheduled reminder.
@@ -90,6 +93,13 @@ type Sources struct {
 	// Tasks lists the background tasks that have ended lately, and RetryTask starts one of them again as it was.
 	Tasks     func() []TaskInfo
 	RetryTask func(id string) error
+	// Suggestions lists what the agent has proposed (newest first), StartSuggestion starts one as a background
+	// task and returns its name, and HideSuggestion dismisses one for good. Nil leaves suggestions out.
+	Suggestions     func() []SuggestionInfo
+	StartSuggestion func(id string) (string, error)
+	HideSuggestion  func(id string) error
+	// ReviewTask checks a finished task off, so the Tasks screen files it under Resolved.
+	ReviewTask func(id string) error
 	// Brief says whether the morning brief is on and when, and SetBrief turns it on or off at a time of day
 	// ("07:30", in Zone). Nil leaves the brief out of the app.
 	Brief    func() BriefInfo
@@ -208,6 +218,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notices", s.authed(s.noticesPost))
 	mux.HandleFunc("POST /api/tasks", s.authed(s.taskAction))
 	mux.HandleFunc("POST /api/setup/check", s.authed(s.setupCheck))
+	mux.HandleFunc("GET /api/suggestions", s.authed(s.suggestionsGet))
+	mux.HandleFunc("POST /api/suggestions", s.authed(s.suggestionsPost))
 	mux.HandleFunc("GET /api/brief", s.authed(s.briefGet))
 	mux.HandleFunc("POST /api/brief", s.authed(s.briefPost))
 	mux.HandleFunc("GET /api/computer", s.authed(s.computerGet))
@@ -403,8 +415,14 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		p := s.Notes.Profile()
 		out["profile"] = map[string]any{"name": p.Name, "avatar": p.Avatar, "theme": p.Theme, "onboarded": p.Onboarded}
 	}
+	if l := s.suggestions(); len(l) > 0 { // the newest suggestion waits above the message box, with Start and Hide
+		out["suggestion"] = l[0]
+	}
 	if s.Convos != nil { // a side chat says what it was opened beside, so the page can say where "back" goes
 		out["side"] = s.Convos.SideOf()
+		if title, icon, color, purpose, ok := s.Convos.ActiveChannel(); ok {
+			out["channel"] = map[string]string{"title": title, "icon": icon, "color": color, "purpose": purpose}
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

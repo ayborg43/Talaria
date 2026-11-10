@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"talaria/internal/guard"
+	"talaria/internal/idea"
 	"talaria/internal/memory"
 	"talaria/internal/provider"
 	"talaria/internal/subagent"
@@ -230,5 +231,29 @@ func TestNoHistoryKeepsARunOutOfTheSavedHistory(t *testing.T) {
 	}
 	if hits, _ := s.Search("kept", 5, ""); len(hits) != 1 {
 		t.Fatalf("the ordinary run is kept: %+v", hits)
+	}
+}
+
+// A job starts nothing, but the morning brief may leave suggestions that wait for the user's tap.
+func TestOnlyAJobAllowedToSuggestIsOfferedIdeaAdd(t *testing.T) {
+	var offered bool
+	p := chatFunc(func(_ context.Context, req provider.Request) (provider.Message, error) {
+		offered = hasTool(req, "idea_add")
+		return provider.Message{Role: provider.RoleAssistant, Content: "ok"}, nil
+	})
+	home := t.TempDir()
+	rt := Open(Config{Home: home, Provider: p, Model: "m", Ideas: &idea.Store{Path: filepath.Join(home, "sessions.db")}})
+	t.Cleanup(rt.Close)
+	rt.NewAgent(AgentOptions{ChatID: 1, NoCron: true}).Run(context.Background(), "x")
+	if offered {
+		t.Fatal("an ordinary job was offered idea_add")
+	}
+	rt.NewAgent(AgentOptions{ChatID: 1, NoCron: true, Suggest: true}).Run(context.Background(), "x")
+	if !offered {
+		t.Fatal("the brief was not offered idea_add")
+	}
+	rt.NewAgent(AgentOptions{ChatID: 1}).Run(context.Background(), "x")
+	if !offered {
+		t.Fatal("a chat is offered idea_add")
 	}
 }
