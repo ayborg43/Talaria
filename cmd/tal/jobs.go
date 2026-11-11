@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
+	"talaria/internal/agent"
+	"talaria/internal/runlog"
 	"time"
 
 	"talaria/internal/activity"
@@ -52,6 +56,8 @@ type jobRunner struct {
 	// routine says which profile scheduled prompts that name none run on (see config.RoutineProfileName); it is
 	// asked at each run, so a change in Settings applies at once. Nil means the chat's own.
 	routine func() string
+	// runs keeps a short record of each run of a web chat's jobs, for the Activity view and for steering a running task.
+	runs *runlog.Log
 }
 
 func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
@@ -115,7 +121,7 @@ func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
 	if env != nil {
 		r.rt.UseEnvironment(a, env)
 	}
-	reply, err := a.Run(ctx, prompt)
+	reply, err := r.runRecorded(ctx, a, j, prompt)
 	if err != nil && a.Acted() {
 		// It had already done something. The scheduler tries a failed one-shot again; this one it must not.
 		return reply, cron.Acted(err)
@@ -190,4 +196,74 @@ func (r *jobRunner) prepare(j cron.Job) (prompt, note, final string, err error) 
 		note = cronNote
 	}
 	return j.Prompt, note, "", nil
+}
+
+// runRecorded runs the agent and writes down what it did: each tool it used (what it was asked, scrubbed), the files
+// it made, and what it reported. It also lets the user steer it: anything they add while it works is read at its next
+// step. Only a web chat's jobs are recorded; the rest run as they always did.
+func (r *jobRunner) runRecorded(ctx context.Context, a *agent.Agent, j cron.Job, prompt string) (string, error) {
+	if r.runs == nil || j.Gateway != "web" {
+		return a.Run(ctx, prompt)
+	}
+	rid := r.runs.Begin(j.ID, j.Name, j.Kind, j.Gateway, j.ChatID, prompt, a.Model, j.Parent)
+	prevStart := a.OnToolStart
+	a.OnToolStart = func(name, args string) {
+		if prevStart != nil {
+			prevStart(name, args)
+		}
+		r.runs.Step(rid, name, briefArgs(a, name, args))
+	}
+	prevArt := a.OnToolArtifact
+	a.OnToolArtifact = func(name string, art json.RawMessage) {
+		if prevArt != nil {
+			prevArt(name, art)
+		}
+		var d struct{ Kind, ID, Name, MIME string }
+		if json.Unmarshal(art, &d) == nil && d.Kind == "document" && d.ID != "" {
+			r.runs.AddFile(rid, runlog.File{ID: d.ID, Name: d.Name, MIME: d.MIME})
+		}
+	}
+	a.Interject = func() []string { return r.runs.Take(rid) }
+	reply, err := a.Run(ctx, prompt)
+	switch {
+	case err == nil && strings.TrimSpace(reply) == cron.Silent:
+		r.runs.End(rid, runlog.Done, "Nothing to report.")
+	case err == nil:
+		r.runs.End(rid, runlog.Done, a.Safe(reply))
+	case ctx.Err() != nil:
+		r.runs.End(rid, runlog.Cancelled, "Stopped before it finished.")
+	default:
+		r.runs.End(rid, runlog.Failed, a.Safe("error: "+err.Error()))
+	}
+	return reply, err
+}
+
+// briefArgs says in a short line what a tool was asked, for the record of a run: the tool's own account of its
+// arguments where it has one (so a typed password is never written), else the values of a plain JSON object, with
+// secrets removed. It is never what the tool read or returned.
+func briefArgs(a *agent.Agent, name, args string) string {
+	if t, ok := a.Tools.Get(name); ok && t.LogArgs != nil {
+		args = t.LogArgs(json.RawMessage(args))
+	}
+	var m map[string]any
+	if json.Unmarshal([]byte(args), &m) == nil && len(m) == 0 {
+		return "" // a call that was asked nothing
+	}
+	if len(m) > 0 {
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		var parts []string
+		for _, k := range keys {
+			if s, ok := m[k].(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		if len(parts) > 0 {
+			args = strings.Join(parts, " · ")
+		}
+	}
+	return a.Safe(args)
 }

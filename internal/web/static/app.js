@@ -570,7 +570,7 @@ async function loadAgentsPage() {
   if (!body.children.length) body.replaceChildren(h('div', { class: 'skeleton' }));
   try {
     loadSuggestions(); loadRecipes().then(() => { if (S.tab === 'agents' && S.tasksView === 'next') renderAgentsPage(); });
-    const [d, c] = await Promise.all([api('/api/agents'), api('/api/control')]);
+    const [d, c] = await Promise.all([api('/api/agents'), api('/api/control'), loadRuns()]);
     recentAgents = d.recent || []; standing = d.jobs || []; doneTasks = d.tasks || []; ctl = c; S.paused = c.paused;
   } catch (e) { if (e instanceof AuthError) return; toast(e.message); }
   renderAgentsPage();

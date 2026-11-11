@@ -944,8 +944,10 @@ function runAgain(t, label) {
   return b;
 }
 function taskRow(t, extra) {
+  // With a record kept, the name opens what the task did.
+  const text = [h('span', { class: 't', text: t.name }), h('span', { class: 's', text: t.failed ? t.status.replace(/^error: /, 'Failed: ') : 'Finished ' + ago(t.at) })];
   return h('div', { class: 'row task' }, h('span', { class: 'mark ' + (t.failed ? 'bad' : 'ok') }, icon(t.failed ? 'x' : 'check')),
-    h('span', { class: 'grow' }, h('span', { class: 't', text: t.name }), h('span', { class: 's', text: t.failed ? t.status.replace(/^error: /, 'Failed: ') : 'Finished ' + ago(t.at) })),
+    RUNS.on ? h('button', { type: 'button', class: 'grow rowlink', title: 'See what it did', onclick: () => openRun(t.id) }, text) : h('span', { class: 'grow' }, text),
     h('span', { class: 'acts keep' }, extra));
 }
 function failedTasksRows() {
@@ -989,6 +991,125 @@ function tasksSeg() {
   const seg = h('div', { class: 'seg tasks', role: 'tablist' }, [['active', 'Active', c.active], ['next', 'Up next', c.next], ['history', 'History', 0]].map(([id, label, n]) =>
     h('button', { type: 'button', role: 'tab', 'aria-selected': (S.tasksView || 'active') === id ? 'true' : 'false', onclick: () => { S.tasksView = id; renderAgentsPage(); } }, label, n ? h('small', { text: String(n) }) : null)));
   return seg;
+}
+
+// ---------- activity: what a task did, and a word with it ----------
+// Each background run leaves a short record (the tools it used and what they were asked, the files it made, what it
+// reported). Open one to read it, tell a task that is still working what to do differently, or write to a finished one
+// to carry on from where it stopped. The page shows what the server kept and nothing it did not.
+const RUNS = { list: [], on: false, timer: 0 };
+const RUN_STATE = { running: 'Working', done: 'Finished', failed: 'Failed', cancelled: 'Stopped' };
+async function loadRuns() {
+  try { const d = await api('/api/runs'); RUNS.list = d.runs || []; RUNS.on = !!d.available; } catch (e) { if (e instanceof AuthError) return; }
+  const el = document.getElementById('runs-card');
+  if (S.tab !== 'agents' || (S.tasksView || 'active') !== 'active') return;
+  const c = runsCard();
+  if (el) keepScroll(el, () => { if (c) el.replaceWith(c); else el.remove(); });
+  else if (c && document.getElementById('now')) keepScroll(document.getElementById('now'), () => document.getElementById('now').after(c));
+}
+function runClock(iso) {
+  return new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23', timeZone: S.zone }).format(new Date(iso));
+}
+function runTook(r) {
+  if (!r.ended) return '';
+  return duration(Math.max(0, Math.round((new Date(r.ended) - new Date(r.started)) / 1000)));
+}
+function runLine(r) {
+  if (r.status === 'running') return r.doing || 'Starting';
+  return (RUN_STATE[r.status] || r.status) + ' ' + ago(r.ended || r.started) + (runTook(r) ? ' · took ' + runTook(r) : '') + (r.steps ? ' · ' + r.steps + (r.steps === 1 ? ' step' : ' steps') : '');
+}
+function runsCard() {
+  if (!RUNS.on || !RUNS.list.length) return null;
+  const rows = h('div', { class: 'rows' });
+  for (const r of RUNS.list.slice(0, 8)) {
+    rows.append(h('button', { type: 'button', class: 'row runrow', onclick: () => openRun(r.id) },
+      h('span', { class: 'k ' + (r.kind || 'job'), text: KINDS[r.kind || 'job'] || 'JOB' }),
+      h('span', { class: 'grow' }, h('span', { class: 't', text: r.name }), h('span', { class: 's mono', text: runLine(r) })),
+      r.status === 'running' ? h('span', { class: 'pulse', 'aria-hidden': 'true' }) : h('span', { class: 'state ' + (r.status === 'done' ? 'state-ok' : r.status === 'failed' ? 'state-bad' : 'state-quiet'), text: RUN_STATE[r.status] || r.status })));
+  }
+  const n = RUNS.list.filter((r) => r.status === 'running').length;
+  return h('div', { class: 'card', id: 'runs-card' }, h('h2', null, 'What it did', h('small', { text: n ? n + ' working' : 'latest runs' })),
+    h('div', { class: 'note', text: 'Open one to see each step, what it made and what it reported, or to tell it what to do differently.' }), rows);
+}
+// A light refresh while something is working, so its latest step moves on the Tasks screen.
+setInterval(() => { if (S.tab === 'agents' && !document.hidden && RUNS.list.some((r) => r.status === 'running')) loadRuns(); }, 4000);
+
+async function openRun(id) {
+  const body = openPanel('Activity', '');
+  body.className = 'panel-body activity';
+  const top = h('div', { class: 'run-top' }), detail = h('div', { class: 'run-detail' }), steer = h('div', { class: 'run-steer' });
+  body.replaceChildren(top, detail, steer);
+  let drawnFor = '';
+  const load = async () => {
+    let r;
+    try { r = await api('/api/runs/' + encodeURIComponent(id)); }
+    catch (e) { if (e instanceof AuthError) return; detail.replaceChildren(h('div', { class: 'card' }, h('div', { class: 'empty', text: e.message }))); return; }
+    drawRun(r, top, detail);
+    if (drawnFor !== r.id + r.status) { drawnFor = r.id + r.status; drawSteer(r, steer, () => { id = r.id; load(); }); }
+    clearTimeout(PANEL.timer);
+    if (r.status === 'running') PANEL.timer = setTimeout(load, 2500);
+    else loadRuns();
+  };
+  await load();
+}
+function drawRun(r, top, detail) {
+  document.getElementById('panel-title').textContent = r.name;
+  document.getElementById('panel-sub').textContent = (RUN_STATE[r.status] || r.status) + (r.ended ? ' · took ' + runTook(r) : ' · started ' + runClock(r.started)) + (r.model ? ' · ' + r.model : '');
+  const acts = [];
+  if (r.status === 'running') {
+    const stop = h('button', { class: 'btn small', type: 'button', text: 'Stop it' });
+    stop.addEventListener('click', async () => {
+      stop.disabled = true;
+      try { await api('/api/runs/' + encodeURIComponent(r.id) + '/stop', { method: 'POST' }); toast('Stopping it.'); } catch (e) { failed(e); stop.disabled = false; }
+    });
+    acts.push(stop);
+  }
+  const cards = [];
+  const mark = h('div', { class: 'run-state ' + r.status }, h('span', { class: 'mark ' + (r.status === 'failed' ? 'bad' : r.status === 'running' ? 'quiet' : 'ok') }, icon(r.status === 'failed' ? 'x' : r.status === 'running' ? 'info' : 'check')),
+    h('span', { class: 'grow' }, h('b', { text: RUN_STATE[r.status] || r.status }), h('span', { class: 's', text: r.ended ? 'Ended ' + ago(r.ended) : 'Started ' + ago(r.started) })), acts);
+  top.replaceChildren(...[mark, r.parent ? h('div', { class: 'note', text: 'This carries on from an earlier run.' }) : null].filter(Boolean));
+
+  if (r.prompt) cards.push(h('details', { class: 'card fold' }, h('summary', null, h('span', { class: 'display', text: 'What it was asked' })), h('div', { class: 'run-prompt', text: r.prompt })));
+  const steps = h('div', { class: 'timeline' });
+  (r.steps || []).forEach((st, i) => {
+    if (r.skipped && i === 5) steps.append(h('div', { class: 'run-gap', text: r.skipped + ' steps in between are not shown' }));
+    steps.append(h('div', { class: 'run-step' }, h('span', { class: 'at mono', text: runClock(st.at) }), h('span', { class: 'what' }, h('b', { text: st.tool }), st.detail ? h('span', { class: 'mono d', text: st.detail }) : null)));
+  });
+  cards.push(h('div', { class: 'card' }, h('h2', null, 'Steps', h('small', { text: String((r.steps || []).length + (r.skipped || 0)) })),
+    (r.steps || []).length ? steps : h('div', { class: 'empty', text: r.status === 'running' ? 'Nothing yet: it is getting started.' : 'It did not use any tools.' })));
+  if ((r.files || []).length) {
+    const rows = h('div', { class: 'rows' });
+    for (const f of r.files) rows.append(h('div', { class: 'row' }, h('span', { class: 'tag', text: /image/.test(f.mime || '') ? 'IMG' : f.mime === 'text/html' ? 'PAGE' : 'DOC' }), h('span', { class: 'grow' }, h('span', { class: 't', text: f.name || 'Document' })),
+      h('button', { class: 'btn small', type: 'button', text: 'View', onclick: () => openDoc(f.id, { name: f.name, mime: f.mime }) })));
+    cards.push(h('div', { class: 'card' }, h('h2', null, 'What it made'), rows));
+  }
+  if ((r.steers || []).length) {
+    cards.push(h('div', { class: 'card' }, h('h2', null, 'What you told it'), h('div', { class: 'rows' }, r.steers.map((x) =>
+      h('div', { class: 'row' }, h('span', { class: 'grow' }, h('span', { class: 't wrap', text: x.text }), h('span', { class: 's', text: runClock(x.at) + (x.applied ? ' · it has read this' : ' · it will read this at its next step') })))))));
+  }
+  if (r.result) cards.push(h('div', { class: 'card' }, h('h2', null, r.status === 'failed' ? 'What went wrong' : 'What it reported'), h('div', { class: 'run-result' }, markdown(r.result))));
+  keepScroll(detail, () => detail.replaceChildren(...cards));
+}
+function drawSteer(r, box, again) {
+  const live = r.status === 'running';
+  const area = h('textarea', { maxlength: '1000', rows: '2', placeholder: live ? 'Tell it something while it works. For example: skip the second site, or look at prices in euros.' : 'Write to carry on from here. For example: now compare delivery times.' });
+  const go = h('button', { class: 'btn primary', type: 'button', text: live ? 'Tell it' : 'Carry on from here' });
+  go.addEventListener('click', async () => {
+    const text = area.value.trim();
+    if (!text) { toast('Write what you want it to do.'); return; }
+    go.disabled = true;
+    try {
+      const d = await api('/api/runs/' + encodeURIComponent(r.id) + '/steer', { method: 'POST', body: { text } });
+      area.value = '';
+      if (d.mode === 'follow_up') { toast('Started: ' + d.started + '. Its result comes to your chat.'); closePanel(); loadAgentsPage(); return; }
+      toast('Noted. It reads this at its next step.');
+      again();
+    } catch (e) { failed(e); }
+    go.disabled = false;
+  });
+  box.replaceChildren(h('div', { class: 'card' }, h('h2', null, live ? 'Steer it' : 'Follow up'),
+    live ? null : h('div', { class: 'note', text: 'This starts a new background task that knows what this one was asked and what it reported. Like any background task it cannot send, post, pay or delete.' }),
+    area, h('div', { class: 'btn-row' }, go)));
 }
 
 // ---------- the greeting an empty chat opens with ----------

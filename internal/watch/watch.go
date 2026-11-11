@@ -54,6 +54,9 @@ type Watch struct {
 	Instructions string          `json:"instructions,omitempty"`
 	Every        time.Duration   `json:"every"`
 	Status       string          `json:"status"`
+	// WakeGoal is a goal to wake when this watch sees something: instead of messaging the user or running the model
+	// on the change, the goal's next check-in is brought forward and told what happened.
+	WakeGoal string `json:"wake_goal,omitempty"`
 
 	LastHash    string    `json:"last_hash,omitempty"`
 	LastResult  string    `json:"last_result,omitempty"` // an excerpt, to show the model what changed

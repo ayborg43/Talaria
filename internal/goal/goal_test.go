@@ -357,3 +357,34 @@ func statMode(path string) (uint32, error) {
 	}
 	return uint32(fi.Mode().Perm()), nil
 }
+
+func TestTheAgentCanChooseWhenItLooksAgainWithinBounds(t *testing.T) {
+	e := newEnv(t, true)
+	e.ok(t, "goal_create", `{"title":"Wait for the parcel","objective":"know when it arrives","check_in_minutes":360}`)
+	id := e.onlyGoal(t).ID
+	e.ok(t, "goal_update", `{"id":"`+id+`","note":"due on Friday","next_check_in_minutes":90}`)
+	if next, _ := e.jobs.NextCheckin(id); !next.Equal(e.now.Add(90 * time.Minute)) {
+		t.Fatalf("it looks again when it chose: %v", next)
+	}
+	jobs, _ := e.jobs.List()
+	if len(jobs) != 1 || jobs[0].Schedule != "@every 6h0m0s" {
+		t.Fatalf("the usual interval is unchanged: %+v", jobs)
+	}
+	for _, bad := range []string{"1", "4", "10081", "-5"} {
+		if _, err := e.run(t, "goal_update", `{"id":"`+id+`","next_check_in_minutes":`+bad+`}`); err == nil {
+			t.Errorf("%s minutes should be refused", bad)
+		}
+	}
+	// A paused goal is not looked at again just because it was asked to be.
+	e.ok(t, "goal_update", `{"id":"`+id+`","status":"paused","next_check_in_minutes":30}`)
+	if _, ok := e.jobs.NextCheckin(id); ok {
+		t.Fatal("a paused goal has no check-ins")
+	}
+}
+
+func TestTheCheckinPromptSaysTheAgentChoosesWhenToLookAgain(t *testing.T) {
+	p := CheckinPrompt(Goal{ID: "g", Title: "t", Objective: "o", Checkins: 1, MaxCheckins: 5, Every: time.Hour})
+	if !strings.Contains(p, "next_check_in_minutes") || !strings.Contains(p, "Woken by") {
+		t.Fatal(p)
+	}
+}

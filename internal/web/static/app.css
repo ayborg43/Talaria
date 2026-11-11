@@ -907,3 +907,31 @@ html{caret-color:var(--brass-text);accent-color:var(--brass);scrollbar-color:var
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
 @media (prefers-reduced-motion:reduce){.rec-dot{animation:none}}
 @media (min-width:900px){.voicebar{max-width:860px;padding:0 32px 8px}}
+
+/* activity: what a task did */
+.row.runrow{width:100%;background:none;border-left:0;border-right:0;border-bottom:0;text-align:left;cursor:pointer;color:inherit}
+.row.runrow:first-child{border-top:0}
+.row.runrow:hover .t{text-decoration:underline}
+.pulse{width:9px;height:9px;border-radius:99px;background:var(--brass);flex:none;animation:runpulse 1.4s ease-in-out infinite}
+@keyframes runpulse{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1.1)}}
+@media (prefers-reduced-motion:reduce){.pulse{animation:none}}
+.panel-body.activity{display:flex;flex-direction:column;gap:12px}
+.run-state{display:flex;align-items:center;gap:12px;padding:2px 0}
+.run-state .grow{flex:1;min-width:0}
+.run-state .grow b{display:block}
+.run-state .s{display:block;font-size:12.5px;color:var(--muted)}
+.run-detail{display:flex;flex-direction:column;gap:12px}
+.run-prompt{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13.5px;color:var(--ink2);padding-top:8px}
+.timeline{display:flex;flex-direction:column}
+.run-step{display:flex;gap:10px;padding:7px 0;border-top:1px solid var(--line2);min-width:0}
+.run-step:first-child{border-top:0}
+.run-step .at{flex:none;font-size:11px;color:var(--faint);padding-top:2px}
+.run-step .what{min-width:0;flex:1}
+.run-step .what b{font-weight:600;margin-right:8px;font-size:13.5px}
+.run-step .d{display:block;font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.run-gap{padding:6px 0;font-size:12px;color:var(--faint);text-align:center;border-top:1px dashed var(--line)}
+.run-result{overflow-wrap:anywhere;font-size:14px}
+.row .t.wrap{white-space:normal;overflow:visible;text-overflow:clip}
+.run-steer textarea{width:100%;min-height:64px;resize:vertical;border:1px solid var(--field-line);border-radius:14px;background:var(--field);padding:10px 12px;font-size:16px;margin-top:8px}
+.rowlink{background:none;border:0;padding:0;text-align:left;cursor:pointer;color:inherit;min-width:0}
+.rowlink:hover .t{text-decoration:underline}

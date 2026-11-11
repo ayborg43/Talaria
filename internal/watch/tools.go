@@ -29,6 +29,9 @@ type Binding struct {
 	// Call runs a tool the way a poll will: on its own, through the permission
 	// rules, never asking anyone.
 	Call func(ctx context.Context, name string, args json.RawMessage) (string, error)
+	// GoalOpen says whether the chat has an open goal with that id, for a watch that wakes one. Nil means no watch
+	// may wake a goal here.
+	GoalOpen func(id string) error
 	// Create offers watch_create. A run that is looking at a change does not
 	// start more watches.
 	Create bool
@@ -54,6 +57,7 @@ func RegisterTools(r *tool.Registry, b Binding) {
 				"instructions":{"type":"string","description":"what the user wants to hear about, and what to ignore"},
 				"every_minutes":{"type":"integer","description":"how often to poll; default 15, from 5 to 1440"},
 				"max_changes":{"type":"integer","description":"how many changes to look at before pausing to hear from the user; default 30"},
+				"wake_goal":{"type":"string","description":"the id of an open goal to wake when this watch sees something, instead of telling the user: the goal's next check-in then happens at once, knowing why. Use it when a goal is waiting on this page or service."},
 				"when":{"type":"object","description":"wait for one condition instead of any change","properties":{
 					"kind":{"type":"string","enum":["price_below","price_above","text_appears","text_gone"]},
 					"usd":{"type":"number","description":"the price threshold in US dollars"},
@@ -135,12 +139,22 @@ func (b Binding) create(ctx context.Context, raw json.RawMessage) (string, error
 		Every        int `json:"every_minutes"`
 		Max          int `json:"max_changes"`
 		When         *Condition
+		WakeGoal     string `json:"wake_goal"`
 	}
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return "", err
 	}
 	if a.When != nil {
 		if err := a.When.validate(); err != nil {
+			return "", err
+		}
+	}
+	a.WakeGoal = strings.TrimSpace(a.WakeGoal)
+	if a.WakeGoal != "" {
+		if b.GoalOpen == nil {
+			return "", errors.New("a watch cannot wake a goal here")
+		}
+		if err := b.GoalOpen(a.WakeGoal); err != nil {
 			return "", err
 		}
 	}
@@ -153,7 +167,7 @@ func (b Binding) create(ctx context.Context, raw json.RawMessage) (string, error
 	case !strings.HasPrefix(a.Tool, "mcp_") && a.Tool != "web_fetch":
 		return "", errors.New("only the tools of connected services and web_fetch can be watched")
 	}
-	w := Watch{Gateway: b.Gateway, ChatID: b.ChatID, Title: a.Title, Tool: a.Tool, Args: a.Arguments, Instructions: a.Instructions, MaxTriggers: a.Max, When: a.When}
+	w := Watch{Gateway: b.Gateway, ChatID: b.ChatID, Title: a.Title, Tool: a.Tool, Args: a.Arguments, Instructions: a.Instructions, MaxTriggers: a.Max, When: a.When, WakeGoal: a.WakeGoal}
 	if a.Every > 0 {
 		w.Every = time.Duration(a.Every) * time.Minute
 	}
@@ -187,12 +201,16 @@ func (b Binding) create(ctx context.Context, raw json.RawMessage) (string, error
 		return "", fmt.Errorf("the watch was not set up, because its polling could not be scheduled: %w", err)
 	}
 	next, _ := b.Sched.NextPoll(w.ID)
+	wake := ""
+	if w.WakeGoal != "" {
+		wake = " When it sees something it wakes goal " + w.WakeGoal + " instead of messaging the user."
+	}
 	if w.When != nil {
 		return fmt.Sprintf("watching: %s (id %s). It polls %s every %s, first at %s, and the user is told when %s, with no model run.%s",
 			w.Title, w.ID, w.Tool, w.Every, next.Local().Format("15:04"), w.When.Describe(), already), nil
 	}
-	return fmt.Sprintf("watching: %s (id %s). It polls %s every %s, first at %s, and I will look at the answer whenever it changes, up to %d times before asking you.",
-		w.Title, w.ID, w.Tool, w.Every, next.Local().Format("15:04"), w.MaxTriggers), nil
+	return fmt.Sprintf("watching: %s (id %s). It polls %s every %s, first at %s, and I will look at the answer whenever it changes, up to %d times before asking you.%s",
+		w.Title, w.ID, w.Tool, w.Every, next.Local().Format("15:04"), w.MaxTriggers, wake), nil
 }
 
 func (b Binding) list(ctx context.Context, _ json.RawMessage) (string, error) {
@@ -217,6 +235,9 @@ func (b Binding) line(w Watch) string {
 		if w.LastFound != "" {
 			out += " (now " + w.LastFound + ")"
 		}
+	}
+	if w.WakeGoal != "" {
+		out += " | wakes goal " + w.WakeGoal
 	}
 	switch {
 	case w.Status != Active:

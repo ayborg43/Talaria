@@ -130,6 +130,10 @@ type Agent struct {
 	GuardUntrusted bool
 	// Label names this agent in the record when it is a subagent.
 	Label string
+	// Interject, if set, is asked before every request to the model and returns things the user has said since the
+	// last one (a note to a running background task). Each becomes a user message, so the model reads it at the
+	// next step instead of when the task ends.
+	Interject func() []string
 	// OnToolStart, if set, is called just before a tool runs, after any approval.
 	// Parallel tools run at once, so it may be called from several goroutines.
 	OnToolStart func(name, args string)
@@ -243,6 +247,11 @@ func (a *Agent) Run(ctx context.Context, input string) (string, error) {
 		if a.BeforeModel != nil {
 			if err := a.BeforeModel(); err != nil {
 				return "", err
+			}
+		}
+		if a.Interject != nil {
+			for _, said := range a.Interject() {
+				a.add(provider.Message{Role: provider.RoleUser, Content: "The user adds, while you are working: " + said})
 			}
 		}
 		began := time.Now()
@@ -684,3 +693,7 @@ func plainArgs(s string) string {
 	}
 	return strings.TrimSpace(b.String())
 }
+
+// Safe is text with known secrets removed, as it is before it is logged or kept: for a front end that writes down
+// what the agent did.
+func (a *Agent) Safe(s string) string { return a.scrub(s) }

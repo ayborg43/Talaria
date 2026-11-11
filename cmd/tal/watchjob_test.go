@@ -14,6 +14,7 @@ import (
 	"talaria/internal/config"
 	"talaria/internal/cron"
 	"talaria/internal/execenv"
+	"talaria/internal/goal"
 	"talaria/internal/mcp"
 	"talaria/internal/metrics"
 	"talaria/internal/oauth/oauthtest"
@@ -51,6 +52,7 @@ func (a *answer) sends() int { a.mu.Lock(); defer a.mu.Unlock(); return a.sent }
 type watchRig struct {
 	model   *spy
 	watches *watch.Store
+	goals   *goal.Store
 	runner  *jobRunner
 	rt      *app.Runtime
 	mail    *answer
@@ -96,10 +98,11 @@ func newWatchRig(t *testing.T, model provider.Provider) *watchRig {
 		model = &spy{reply: "Sam wrote."}
 	}
 	watches := &watch.Store{Path: filepath.Join(home, "sessions.db")}
-	rt := app.Open(app.Config{Home: home, Provider: model, Model: "m", Env: execenv.Local{}, MCP: m, Watches: watches})
+	goals := &goal.Store{Path: filepath.Join(home, "sessions.db")}
+	rt := app.Open(app.Config{Home: home, Provider: model, Model: "m", Env: execenv.Local{}, MCP: m, Watches: watches, Goals: goals})
 	t.Cleanup(rt.Close)
-	r := &watchRig{watches: watches, rt: rt, mail: mail, chat: 5,
-		runner: &jobRunner{rt: rt, allowed: map[int64]bool{5: true}}}
+	r := &watchRig{watches: watches, goals: goals, rt: rt, mail: mail, chat: 5,
+		runner: &jobRunner{rt: rt, allowed: map[int64]bool{5: true}, goals: goals}}
 	r.model, _ = model.(*spy)
 	return r
 }
@@ -456,5 +459,98 @@ func TestPollBudgetLeavesRoomForTheAnalysis(t *testing.T) {
 	defer cancelShort()
 	if got := pollBudget(short); got != time.Minute {
 		t.Fatalf("30 seconds left: %s, want the 1m floor", got)
+	}
+}
+
+// A goal that is waiting on a page can be woken by the watch on it: the model is not asked about the change and the
+// user is not messaged. The goal's next check-in is brought forward and carries a note of what happened.
+func TestAWatchCanWakeAGoalInsteadOfSpeaking(t *testing.T) {
+	w := newWatchRig(t, nil)
+	goals := w.goals
+	g, err := goals.Add(goal.Goal{Gateway: "discord", ChatID: w.chat, Title: "Get the parcel", Objective: "know when it arrives"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.rt.Cron.ScheduleGoal(g.ID, "discord", w.chat, g.Title, 6*time.Hour, false, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	x := w.newWatch(t, func(x *watch.Watch) { x.WakeGoal = g.ID })
+	w.poll(t, x.ID) // the baseline
+	w.mail.set("1 unread: Sam, 'your parcel is here'", false)
+	if out := w.poll(t, x.ID); out != cron.Silent {
+		t.Fatalf("the goal has it; nobody else is told: %q", out)
+	}
+	if w.model.calls() != 0 {
+		t.Fatal("waking a goal must not use the model on the page")
+	}
+	next, _ := w.rt.Cron.NextCheckin(g.ID)
+	if time.Until(next) > time.Minute {
+		t.Fatalf("the goal should be due now, not %v", next)
+	}
+	got, _ := goals.GetAny(g.ID)
+	if len(got.Notes) != 1 || !strings.HasPrefix(got.Notes[0].Text, "Woken by the watch") {
+		t.Fatalf("%+v", got.Notes)
+	}
+	if strings.Contains(got.Notes[0].Text, "parcel is here") {
+		t.Fatalf("what the page says must not be handed over as if it were an instruction: %q", got.Notes[0].Text)
+	}
+}
+
+func TestAWatchSpeaksAsUsualWhenItsGoalCannotBeWoken(t *testing.T) {
+	for name, setup := range map[string]func(*goal.Store, goal.Goal){
+		"paused": func(s *goal.Store, g goal.Goal) {
+			s.Update("discord", 5, g.ID, func(x *goal.Goal) error { x.Status = goal.Paused; return nil })
+		},
+		"used up": func(s *goal.Store, g goal.Goal) {
+			s.Update("discord", 5, g.ID, func(x *goal.Goal) error { x.Checkins = x.MaxCheckins; return nil })
+		},
+		"deleted": nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWatchRig(t, nil)
+			goals := w.goals
+			g, _ := goals.Add(goal.Goal{Gateway: "discord", ChatID: w.chat, Title: "g", Objective: "o"})
+			w.rt.Cron.ScheduleGoal(g.ID, "discord", w.chat, g.Title, 6*time.Hour, false, "", "")
+			if setup != nil {
+				setup(goals, g)
+			}
+			id := g.ID
+			if setup == nil {
+				id = "gone"
+			}
+			x := w.newWatch(t, func(x *watch.Watch) { x.WakeGoal = id })
+			w.poll(t, x.ID)
+			w.mail.set("1 unread", false)
+			if out := w.poll(t, x.ID); out != "Sam wrote." {
+				t.Fatalf("it should speak as a watch does: %q", out)
+			}
+		})
+	}
+}
+
+func TestAWatchIsOnlyGivenAGoalToWakeThatCanBeWoken(t *testing.T) {
+	w := newWatchRig(t, nil)
+	g, _ := w.goals.Add(goal.Goal{Gateway: "discord", ChatID: w.chat, Title: "g", Objective: "o"})
+	w.goals.Add(goal.Goal{Gateway: "discord", ChatID: 9, Title: "someone else's", Objective: "o"})
+	ag := w.rt.NewAgent(app.AgentOptions{ChatID: 5, Gateway: "discord"})
+	tl, _ := ag.Tools.Get("watch_create")
+	create := func(id string) (string, error) {
+		return tl.Run(context.Background(), json.RawMessage(`{"title":"Mail from Sam","tool":"mcp_mail_search_mail","arguments":{"q":"x"},"instructions":"x","wake_goal":"`+id+`"}`))
+	}
+	if _, err := create("nope"); err == nil {
+		t.Fatal("a goal that does not exist")
+	}
+	w.goals.Update("discord", 5, g.ID, func(x *goal.Goal) error { x.Status = goal.Paused; return nil })
+	if _, err := create(g.ID); err == nil {
+		t.Fatal("a paused goal")
+	}
+	w.goals.Update("discord", 5, g.ID, func(x *goal.Goal) error { x.Status = goal.Open; return nil })
+	out, err := create(g.ID)
+	if err != nil || !strings.Contains(out, "wakes goal "+g.ID) {
+		t.Fatalf("%q %v", out, err)
+	}
+	ws, _ := w.watches.List("discord", 5)
+	if len(ws) != 1 || ws[0].WakeGoal != g.ID {
+		t.Fatalf("%+v", ws)
 	}
 }

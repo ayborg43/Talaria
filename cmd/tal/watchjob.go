@@ -8,6 +8,7 @@ import (
 	"talaria/internal/activity"
 	"talaria/internal/app"
 	"talaria/internal/cron"
+	"talaria/internal/goal"
 	"talaria/internal/metrics"
 	"talaria/internal/watch"
 )
@@ -78,6 +79,11 @@ func (r *jobRunner) runWatch(ctx context.Context, j cron.Job) (string, error) {
 		watch.Quiet: "quiet", watch.Changed: "changed", watch.Failed: "failed", watch.PausedByErrors: "paused", watch.PausedByBudget: "paused",
 		watch.ConditionMet: "met",
 	}[out])
+	if (out == watch.Changed || out == watch.ConditionMet) && w.WakeGoal != "" {
+		if r.wakeGoal(w) {
+			return cron.Silent, nil // the goal now has it; telling the user too would be a second voice on one event
+		}
+	}
 	switch out {
 	case watch.PausedByErrors:
 		r.rt.Cron.UnscheduleWatch(w.ID)
@@ -96,4 +102,36 @@ func (r *jobRunner) runWatch(ctx context.Context, j cron.Job) (string, error) {
 		return a.Run(ctx, watch.Prompt(w, previous, result))
 	}
 	return cron.Silent, nil
+}
+
+// minWakeGap is the shortest time between two check-ins of a goal, however often what it waits on changes.
+const minWakeGap = goal.MinNextCheckin
+
+// wakeGoal tells the goal a watch has seen something and brings its next check-in forward, within the goal's own
+// limits: it has to be open, it keeps its cap on check-ins, and it is never woken closer than minWakeGap to its last
+// one. The note says what happened in words of this program's, never in the page's: a watch reads text other people
+// wrote, and a goal that works with tools unattended must not be handed it as if it were an instruction. The goal
+// reads the page itself, as untrusted, when it wakes. It says whether the goal took it; if not the watch speaks as
+// it would have.
+func (r *jobRunner) wakeGoal(w watch.Watch) bool {
+	if r.goals == nil {
+		return false
+	}
+	g, err := r.goals.Get(w.Gateway, w.ChatID, w.WakeGoal)
+	if err != nil || g.Status != goal.Open || g.Checkins >= g.MaxCheckins {
+		return false
+	}
+	what := "changed"
+	if w.When != nil {
+		what = "reached what it was waiting for (" + w.When.Describe() + ")"
+	}
+	line := fmt.Sprintf("Woken by the watch %q (%s, polled with %s): it %s.", tidy(w.Title, 60, "watch"), w.ID, w.Tool, what)
+	if _, err := r.rt.Cron.WakeGoal(g.ID, minWakeGap); err != nil {
+		return false
+	}
+	_, err = r.goals.Update(w.Gateway, w.ChatID, g.ID, func(x *goal.Goal) error {
+		x.AddNote(time.Now(), line)
+		return nil
+	})
+	return err == nil
 }

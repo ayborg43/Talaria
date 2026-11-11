@@ -54,6 +54,8 @@ type Job struct {
 	Watch string `json:"watch,omitempty"`
 	// Recipe is the ready-made recipe a scheduled prompt was added from, so the app can show it as added and take it away.
 	Recipe string `json:"recipe,omitempty"`
+	// Parent is the run (see package runlog) this task follows up, when the user wrote to a finished task to carry it on.
+	Parent string `json:"parent,omitempty"`
 	// RecipeValues is what the user filled in for it (a topic), so the app can show it again when the recipe is changed.
 	RecipeValues map[string]string `json:"recipe_values,omitempty"`
 	// TimeoutSec overrides how long one run may take; 0 means the scheduler's own limit.
@@ -197,7 +199,7 @@ func checkAdd(j Job, now time.Time) (Job, error) {
 		return Job{}, fmt.Errorf("prompt too long (%d bytes, max %d)", len(j.Prompt), maxPrompt)
 	case j.ChatID == 0:
 		return Job{}, errors.New("job has no delivery chat")
-	case !plainName(j.Profile) || !plainName(j.Environment) || !plainName(j.Gateway) || !plainName(j.Goal) || !plainName(j.Recipe):
+	case !plainName(j.Profile) || !plainName(j.Environment) || !plainName(j.Gateway) || !plainName(j.Goal) || !plainName(j.Recipe) || !plainName(j.Parent):
 		return Job{}, errors.New("gateway, profile, environment and goal must be short plain names")
 	case j.Kind != "" && j.Kind != KindTask && j.Kind != KindGoal && j.Kind != KindWatch:
 		return Job{}, fmt.Errorf("unknown job kind %q", j.Kind)
@@ -479,6 +481,65 @@ func (s *Store) NextPoll(watchID string) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
+}
+
+// SetGoalNext makes a goal's next check-in happen at that time, once: the schedule goes on from there as it was.
+// A check-in that is running when this is called keeps its place; the new time is what the schedule then waits for.
+func (s *Store) SetGoalNext(goalID string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := s.lockFile()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	jobs, err := s.load()
+	if err != nil {
+		return err
+	}
+	for i := range jobs {
+		if jobs[i].Kind == KindGoal && jobs[i].Goal == goalID {
+			jobs[i].NextRun = at
+			return s.save(jobs)
+		}
+	}
+	return errors.New("that goal has no check-ins scheduled")
+}
+
+// WakeGoal brings a goal's next check-in forward to now, because something it is waiting for has happened. It never
+// brings it nearer than minGap after the last check-in began or, if one is running, after now, so a restless
+// watch cannot make a goal run again and again. It returns when the check-in will happen.
+func (s *Store) WakeGoal(goalID string, minGap time.Duration) (time.Time, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := s.lockFile()
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer unlock()
+	jobs, err := s.load()
+	if err != nil {
+		return time.Time{}, err
+	}
+	now := s.now()
+	for i := range jobs {
+		j := &jobs[i]
+		if j.Kind != KindGoal || j.Goal != goalID {
+			continue
+		}
+		at := now
+		if !j.ClaimedAt.IsZero() {
+			at = now.Add(minGap)
+		} else if !j.LastRun.IsZero() && j.LastRun.Add(minGap).After(at) {
+			at = j.LastRun.Add(minGap)
+		}
+		if j.NextRun.Before(at) {
+			return j.NextRun, nil // it is due sooner than that already
+		}
+		j.NextRun = at
+		return at, s.save(jobs)
+	}
+	return time.Time{}, errors.New("that goal has no check-ins scheduled")
 }
 
 // NextCheckin says when a goal's next check-in is due, if it has one.

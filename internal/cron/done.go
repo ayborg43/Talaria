@@ -149,3 +149,20 @@ func StartChatTask(s *Store, ctl Control, gateway string, chatID int64, name, pr
 	}
 	return j, nil
 }
+
+// StartFollowUp starts a background task that carries on from an earlier run, because the user wrote to it. It is
+// the same kind of task the model can start in chat, with risky tools off, within the same limit on how many may run.
+func StartFollowUp(s *Store, ctl Control, gateway string, chatID int64, name, prompt, parent string) (Job, error) {
+	if gateway == "" {
+		gateway = DefaultGateway
+	}
+	j, err := s.AddTask(Job{Name: name, Kind: KindTask, Prompt: prompt, Gateway: gateway, ChatID: chatID, Parent: parent, TimeoutSec: defaultTaskMinutes * 60},
+		runningTasks(ctl, gateway, chatID), maxTasksPerChat)
+	if err != nil {
+		return Job{}, err
+	}
+	if ctl != nil {
+		ctl.Wake()
+	}
+	return j, nil
+}

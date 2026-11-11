@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"talaria/internal/runlog"
 	"time"
 
 	"talaria/internal/activity"
@@ -191,13 +192,14 @@ func runGateway(c *cli) error {
 
 	// attach gives a service its scheduler, and the commands and hooks that
 	// connect its chats to background tasks and goals.
+	runs := &runlog.Log{Path: filepath.Join(c.home, "runs.json")}
 	attach := func(s *service, logf func(string, ...any)) (map[string]chat.Command, func(int64), func(int64) int) {
 		note := cronNote
 		taskText := taskNote
 		if s.markdown {
 			note, taskText = cronNoteMarkdown, taskNoteMarkdown
 		}
-		runner := &jobRunner{rt: c.rt, backends: backends, envs: s.envs, allowed: s.allowed, note: note, taskNote: taskText, goals: c.rt.Goals(), yolo: c.yolo, sink: s.sink,
+		runner := &jobRunner{rt: c.rt, backends: backends, envs: s.envs, allowed: s.allowed, note: note, taskNote: taskText, goals: c.rt.Goals(), yolo: c.yolo, sink: s.sink, runs: runs,
 			routine: c.cfg.RoutineProfileName}
 		s.sched = &cron.Scheduler{
 			Store:    c.rt.Cron,
@@ -388,6 +390,7 @@ func runGateway(c *cli) error {
 			Notes: c.rt.Notes(), Notices: notices, Env: c.rt.Env(), Browsers: c.rt.Browsers,
 			ReceiptsPath: filepath.Join(c.home, "computer_receipts.json"),
 			AGUIKey:      webSet.AGUIKey,
+			Runs:         runs,
 		}
 		if webSet.AGUIKey != "" {
 			logf("web: AG-UI clients may connect at /api/agui with TALARIA_AGUI_KEY as a bearer token")
@@ -410,6 +413,7 @@ func runGateway(c *cli) error {
 		}
 		srv.Sources.Brief, srv.Sources.SetBrief = webBrief(c.rt.Cron, zone), setBrief(c.rt.Cron, zone)
 		srv.Sources.Recipes = webRecipes(c.rt, c.rt.Cron, zone, func() cron.Control { return s.sched })
+		srv.Sources.Runs = webRunHooks(c.rt, runs, c.rt.Cron, func() *cron.Scheduler { return s.sched })
 		srv.Sources.RetryTask = func(id string) error {
 			_, err := cron.RetryChatTask(c.rt.Cron, s.sched, s.name, web.ChatID, id)
 			return err

@@ -501,3 +501,56 @@ func TestWatchDeliveryWording(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+func TestAGoalCanBeToldWhenToCheckInNextAndItsScheduleGoesOn(t *testing.T) {
+	s := newStore(t, utc("2026-10-20 10:00"))
+	if err := s.SetGoalNext("g1", utc("2026-10-20 12:00")); err == nil {
+		t.Fatal("a goal with no schedule has nothing to set")
+	}
+	s.ScheduleGoal("g1", "discord", 5, "x", 6*time.Hour, false, "", "")
+	if err := s.SetGoalNext("g1", utc("2026-10-20 11:00")); err != nil {
+		t.Fatal(err)
+	}
+	if next, _ := s.NextCheckin("g1"); !next.Equal(utc("2026-10-20 11:00")) {
+		t.Fatalf("%v", next)
+	}
+	// It is claimed when due, and then the usual interval carries on from there.
+	due, _ := s.ClaimDue(utc("2026-10-20 11:00"), "discord")
+	if len(due) != 1 {
+		t.Fatalf("%+v", due)
+	}
+	if next, _ := s.NextCheckin("g1"); !next.Equal(utc("2026-10-20 17:00")) {
+		t.Fatalf("%v", next)
+	}
+}
+
+func TestWakingAGoalNeverBringsCheckInsCloserThanTheGap(t *testing.T) {
+	now := utc("2026-10-20 10:00")
+	s := newStore(t, now)
+	s.ScheduleGoal("g1", "discord", 5, "x", 6*time.Hour, false, "", "")
+	if _, err := s.WakeGoal("nope", 5*time.Minute); err == nil {
+		t.Fatal("no such goal")
+	}
+	// Never run: due at once.
+	if at, err := s.WakeGoal("g1", 5*time.Minute); err != nil || !at.Equal(now) {
+		t.Fatalf("%v %v", at, err)
+	}
+	// Running now: not before the gap has passed.
+	due, _ := s.ClaimDue(now, "discord")
+	if len(due) != 1 {
+		t.Fatal("claim")
+	}
+	if at, _ := s.WakeGoal("g1", 5*time.Minute); !at.Equal(now.Add(5 * time.Minute)) {
+		t.Fatalf("a wake during a run waits a gap: %v", at)
+	}
+	// Just finished: not before the gap since it ran.
+	s.Finish(due[0].ID, now.Add(time.Minute), "ok")
+	if at, _ := s.NextCheckin("g1"); !at.Equal(now.Add(5 * time.Minute)) {
+		t.Fatalf("%v", at)
+	}
+	// A check-in already due sooner is left as it is.
+	s.SetGoalNext("g1", now.Add(2*time.Minute))
+	if at, _ := s.WakeGoal("g1", 5*time.Minute); !at.Equal(now.Add(2 * time.Minute)) {
+		t.Fatalf("%v", at)
+	}
+}

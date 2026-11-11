@@ -17,7 +17,16 @@ type Scheduling interface {
 	ScheduleGoal(goalID, gateway string, chatID int64, name string, every time.Duration, allowRisky bool, profile, environment string) error
 	UnscheduleGoal(goalID string) error
 	NextCheckin(goalID string) (time.Time, bool)
+	// SetGoalNext makes the next check-in happen at that time, once; the usual interval goes on after it.
+	SetGoalNext(goalID string, at time.Time) error
 }
+
+// Bounds on a check-in the agent schedules for itself. The shortest keeps a goal from running in a tight loop; the
+// longest is the same week as the usual interval allows.
+const (
+	MinNextCheckin = 5 * time.Minute
+	MaxNextCheckin = 7 * 24 * time.Hour
+)
 
 // Binding says whose goals the tools work on.
 type Binding struct {
@@ -72,14 +81,15 @@ func RegisterTools(r *tool.Registry, b Binding) {
 	r.Register(tool.Tool{
 		Name: "goal_update",
 		Description: "Record progress on a goal, or change it. Add a note about what you did or found, add steps, mark steps done by number, set what the next check-in should do first, " +
-			"change how often to check in, or set the status: open, paused (stop checking in), done, or dropped.",
+			"change how often to check in, choose when you will look again (next_check_in_minutes), or set the status: open, paused (stop checking in), done, or dropped.",
 		Schema: json.RawMessage(`{"type":"object","properties":{
 			"id":{"type":"string"},
 			"note":{"type":"string","description":"what you did or found, in a sentence or two"},
 			"add_steps":{"type":"array","items":{"type":"string"}},
 			"done_steps":{"type":"array","items":{"type":"integer"},"description":"plan step numbers, counting from 1"},
 			"next_step":{"type":"string","description":"what the next check-in should do first"},
-			"check_in_minutes":{"type":"integer"},
+			"check_in_minutes":{"type":"integer","description":"change the usual interval between check-ins"},
+			"next_check_in_minutes":{"type":"integer","description":"look again once in this many minutes (5 to 10080), whatever the usual interval is: use it when you know when something will be ready, such as after a delivery date or a deadline"},
 			"status":{"type":"string","enum":["open","paused","done","dropped"]}},
 			"required":["id"]}`),
 		// Reopening a goal gives it a fresh allowance of check-ins, and dropping one ends it: the user
@@ -240,10 +250,14 @@ func (b Binding) update(ctx context.Context, raw json.RawMessage) (string, error
 		DoneSteps []int    `json:"done_steps"`
 		NextStep  *string  `json:"next_step"`
 		Every     int      `json:"check_in_minutes"`
+		NextIn    int      `json:"next_check_in_minutes"`
 		Status    string
 	}
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return "", err
+	}
+	if a.NextIn != 0 && (time.Duration(a.NextIn)*time.Minute < MinNextCheckin || time.Duration(a.NextIn)*time.Minute > MaxNextCheckin) {
+		return "", fmt.Errorf("next_check_in_minutes must be between %d and %d (5 minutes to a week)", int(MinNextCheckin/time.Minute), int(MaxNextCheckin/time.Minute))
 	}
 	switch a.Status {
 	case "", Open, Paused, Done, Dropped:
@@ -287,6 +301,9 @@ func (b Binding) update(ctx context.Context, raw json.RawMessage) (string, error
 		schedErr = b.Sched.UnscheduleGoal(g.ID)
 	case reopened || a.Every > 0:
 		schedErr = b.Sched.ScheduleGoal(g.ID, g.Gateway, g.ChatID, g.Title, g.Every, g.AllowRisky, g.Profile, g.Environment)
+	}
+	if schedErr == nil && a.NextIn > 0 && g.Status == Open {
+		schedErr = b.Sched.SetGoalNext(g.ID, now.Add(time.Duration(a.NextIn)*time.Minute))
 	}
 	if schedErr != nil {
 		return "", fmt.Errorf("the goal was updated, but its check-ins could not be rescheduled: %w", schedErr)
@@ -339,7 +356,8 @@ func CheckinPrompt(g Goal) string {
 What to do now:
 - Do the next step, or as much of the plan as you can finish in this check-in, with your tools. Do real work; do not just restate the plan.
 - Record what you did with goal_update: add a note (what you did or found, in a sentence or two), mark finished steps done, set what the next check-in should do first, and add steps you discover. If the goal is complete, set its status to done; if it cannot go on without the user, say so below and leave it open (or pause it).
-- If the next step is best taken sooner or later than your usual interval, change check_in_minutes.
+- You choose when you look again. If you know when something will be ready (a delivery, a deadline, a reply you are waiting for), set next_check_in_minutes in goal_update to just after that, instead of looking every interval for nothing; this is for once, and the usual interval goes on after. Change check_in_minutes only if the usual rhythm itself should change. A watch the user or you set up for this goal can also wake you the moment something changes.
+- Notes that begin "Woken by" say what made this check-in happen now: start from that.
 - Your final reply is sent to the user. Send one when you need them (a decision, information, a login or approval you do not have), when something finished or went wrong, or at a milestone, and say exactly what you need. If you only made routine progress, reply with exactly [SILENT].
 - Tools that need approval are denied here. If one is, say which and why, so the user can decide.`)
 	return b.String()

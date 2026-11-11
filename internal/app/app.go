@@ -231,7 +231,20 @@ func (rt *Runtime) WatchBinding(gateway string, chatID int64, tools *tool.Regist
 	if gateway == "" {
 		gateway = cron.DefaultGateway
 	}
-	return watch.Binding{Store: rt.cfg.Watches, Sched: rt.Cron, Gateway: gateway, ChatID: chatID, Tools: tools, Call: call, Create: create}
+	b := watch.Binding{Store: rt.cfg.Watches, Sched: rt.Cron, Gateway: gateway, ChatID: chatID, Tools: tools, Call: call, Create: create}
+	if gs := rt.cfg.Goals; gs != nil {
+		b.GoalOpen = func(id string) error {
+			g, err := gs.Get(gateway, chatID, id)
+			if err != nil {
+				return err
+			}
+			if g.Status != goal.Open {
+				return fmt.Errorf("goal %s is %s, so it cannot be woken: only an open goal can", g.ID, g.Status)
+			}
+			return nil
+		}
+	}
+	return b
 }
 
 // Guard returns the permission layer, nil if the runtime has none.

@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"talaria/internal/runlog"
 	"time"
 
 	"cmp"
@@ -106,6 +107,9 @@ type Sources struct {
 	// ("07:30", in Zone). Nil leaves the brief out of the app.
 	Brief    func() BriefInfo
 	SetBrief func(enabled bool, at string) error
+	// Runs connects the Activity view to steering a running task and following up a finished one. Nil leaves
+	// those out; the record itself is Server.Runs.
+	Runs *RunHooks
 	// Zone is the time zone the person lives in.
 	Zone *time.Location
 }
@@ -118,11 +122,13 @@ type Pauser interface {
 
 // Server is the web app's HTTP side.
 type Server struct {
-	Hub       *Hub
-	Auth      *Auth
-	Engine    *chat.Engine
-	Push      *Pusher
-	Sources   Sources
+	Hub     *Hub
+	Auth    *Auth
+	Engine  *chat.Engine
+	Push    *Pusher
+	Sources Sources
+	// Runs is the record of what each background run did, for the Activity view. Nil leaves Activity out.
+	Runs      *runlog.Log
 	Pause     Pauser
 	PublicURL string // https://talaria.example.com: where people reach it, for the origin check
 	Model     string
@@ -238,6 +244,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/recipes", s.authed(s.recipesPost))
 	mux.HandleFunc("GET /api/suggestions", s.authed(s.suggestionsGet))
 	mux.HandleFunc("POST /api/suggestions", s.authed(s.suggestionsPost))
+	mux.HandleFunc("GET /api/runs", s.authed(s.runsGet))
+	mux.HandleFunc("GET /api/runs/{id}", s.authed(s.runGet))
+	mux.HandleFunc("POST /api/runs/{id}/steer", s.authed(s.runSteer))
+	mux.HandleFunc("POST /api/runs/{id}/stop", s.authed(s.runStop))
 	mux.HandleFunc("GET /api/brief", s.authed(s.briefGet))
 	mux.HandleFunc("POST /api/brief", s.authed(s.briefPost))
 	mux.HandleFunc("GET /api/computer", s.authed(s.computerGet))

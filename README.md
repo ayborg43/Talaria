@@ -1132,6 +1132,22 @@ The task runs on its own, with its own copy of the tools, and its final reply ar
   deletes or posts, or it is a connected service's tool that could send something out. Reading, searching and saving a
   note do not count.
 
+### What a task did, and steering it
+
+Every background run in the web app (a task, a goal's check-in, a scheduled prompt) leaves a short record, and **Tasks, Active,
+What it did** lists the latest ones, working ones first. Tap a run, or the name of a finished task, to open its **Activity**:
+
+- **Steps**: each tool it used, with what it was asked in a line (after secrets are scrubbed, and with a password typed into a page masked
+  exactly as in the activity log; what a tool *read* is never kept), the files it made (with View), and what it reported. A long run keeps its first
+  steps and its latest and says how many in between are not shown.
+- **Steer it while it works.** What you write is read at the run's next step, once, as "the user adds, while you are working: …".
+  It cannot lift a limit: a task still cannot send, post, pay or delete. At most five unread notes wait at a time. **Stop it** ends the run.
+- **Carry on from a finished one.** Writing to a finished task starts a new background task that is told what the first was asked,
+  what it reported and what you now say, marked as following it up. It is the same kind of task the agent starts in chat: risky
+  tools off, three at a time, and refused if your permission rule for starting work says never or "I do it myself".
+- **Small.** The last 30 runs are kept in `~/.talaria/runs.json` (mode 0600); a run in progress lives in memory; a run is at most
+  40 one-line steps and 4,000 characters of result. Other chat apps' jobs are not recorded.
+
 ### Goals
 
 For something you want pursued over days, the agent takes on a **goal** with `goal_create`: an objective (what done looks
@@ -1148,6 +1164,9 @@ like), a short plan, and how often to check in (default every 6 hours; from 15 m
   they are used up it pauses itself and says so instead of spending on unasked. Writing in the chat gives the allowance back,
   and resuming a paused goal does too. At most 5 goals are open per chat, each check-in is limited to 30 minutes, and check-ins
   are never closer than 15 minutes.
+- **It chooses when to look again.** A check-in can set `next_check_in_minutes` (5 minutes to 7 days) in `goal_update`: "the parcel is
+  due Friday, look on Friday" instead of looking every interval for nothing. It applies once; the usual interval carries on after it,
+  and it counts against the same allowance of check-ins, so waking early does not buy more.
 - **You stay in charge.** `/goals` lists them, `/goals show ID` shows one in full, `/goals pause|resume|done|drop ID` changes
   one. Creating a goal asks first, and the prompt says how often it will check in, how many times, and whether it may use risky
   tools while you are not looking. A check-in can update goals but cannot start new goals, tasks or schedules.
@@ -1224,6 +1243,11 @@ the service's read-only tools with `watch_create`, you approve it
   message is written by Talaria, with nothing from the page in it but the price read. A page that stops showing a price counts as
   a failed poll, so the watch backs off into a pause and says so instead of staying silent. Prices are read as US dollars as
   written (`$1,299.00`, `USD 49`); no currency is converted.
+- **A watch can wake a goal.** `watch_create` takes `wake_goal` (the id of an open goal in the same chat). When that watch sees a change,
+  or its condition holds, nobody is messaged and no model is run on the page: the goal's next check-in is brought forward, and the goal gets
+  a note saying which watch woke it. The note never contains what the page said, only that it changed: the check-in reads the page itself,
+  as untrusted text. It is never sooner than 5 minutes after the goal's last check-in, only an open goal with check-ins left is woken
+  (otherwise the watch speaks as it normally would), and **Pause all** holds both.
 - **You stay in charge.** `/watches` lists them; `/watches pause|resume|delete ID` changes one. They are scheduled jobs of their
   own kind (`tal cron list` shows them), kept in `~/.talaria/sessions.db` (mode 0600, as the last answer is an excerpt of
   your mail), and a watch's runs are not kept in the searchable history.
@@ -1434,6 +1458,7 @@ and how it ended.
 | `internal/subagent` | the `delegate` tool: isolated sub-conversations, run in parallel, bounded |
 | `internal/mcp` | MCP client: stdio and HTTP transports, both protocol eras, tool registration |
 | `internal/sse` | server-sent-events reader shared by the model providers and MCP |
+| `internal/runlog` | the short record of each background run for the Activity view, and the queue of what you tell a running task |
 | `internal/goal` | goals: plan, progress notes, check-in schedule and the tools to work on them |
 | `internal/vault` | the encrypted store of saved logins, service sign-ins and where each may be used |
 | `internal/oauth` | OAuth sign-in for MCP servers: discovery, registration, PKCE login over a loopback address, token renewal; `oauthtest` is a fake service for tests |
