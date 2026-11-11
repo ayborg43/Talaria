@@ -29,7 +29,9 @@ type Convo struct {
 	Parent string `json:"parent,omitempty"`
 	// A channel is a conversation kept for one piece of work: Purpose says what it is for, Icon is an emoji or a
 	// couple of letters, and Color one of the names in ChannelColors.
-	Purpose    string             `json:"purpose,omitempty"`
+	Purpose string `json:"purpose,omitempty"`
+	// Agent is the named agent (see package persona) this conversation is with, by its id.
+	Agent      string             `json:"agent,omitempty"`
 	Icon       string             `json:"icon,omitempty"`
 	Color      string             `json:"color,omitempty"`
 	UpdatedAt  time.Time          `json:"updated_at"`
@@ -48,6 +50,7 @@ type ConvoMeta struct {
 	Main     bool      `json:"main,omitempty"`
 	Side     string    `json:"side,omitempty"`
 	Purpose  string    `json:"purpose,omitempty"`
+	Agent    string    `json:"agent,omitempty"`
 	Icon     string    `json:"icon,omitempty"`
 	Color    string    `json:"color,omitempty"`
 	Updated  time.Time `json:"updated_at"`
@@ -239,6 +242,46 @@ func (c *Convos) NewChannel(name, icon, color, purpose string) (string, error) {
 	return id, nil
 }
 
+// NewAgentChat starts a blank conversation with a named agent, shown like a channel with the agent's name and icon.
+func (c *Convos) NewAgentChat(agentID, name, icon, color, purpose string) (string, error) {
+	id, err := c.NewChannel(name, icon, color, purpose)
+	if err != nil {
+		return "", err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cv := c.items[id]; cv != nil {
+		cv.Agent = agentID
+		c.saveLocked()
+	}
+	return id, nil
+}
+
+// ActiveAgent is the id of the named agent the open conversation is with, or "".
+func (c *Convos) ActiveAgent() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cv := c.items[c.active]; cv != nil {
+		return cv.Agent
+	}
+	return ""
+}
+
+// ForgetAgent turns the conversations with a removed agent into ordinary ones.
+func (c *Convos) ForgetAgent(agentID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	changed := false
+	for _, cv := range c.items {
+		if cv.Agent == agentID {
+			cv.Agent, changed = "", true
+		}
+	}
+	if changed {
+		c.saveLocked()
+	}
+}
+
 // ActiveChannel describes the open conversation if it is a channel, for the page to name it.
 func (c *Convos) ActiveChannel() (title, icon, color, purpose string, ok bool) {
 	c.mu.Lock()
@@ -292,7 +335,7 @@ func (c *Convos) list(archived bool) []ConvoMeta {
 			title = "New chat"
 		}
 		meta := ConvoMeta{ID: id, Title: title, Archived: cv.Archived, Main: id == c.main, Updated: cv.UpdatedAt, Messages: len(cv.Display), Active: id == c.active,
-			Purpose: cv.Purpose, Icon: cv.Icon, Color: cv.Color}
+			Purpose: cv.Purpose, Agent: cv.Agent, Icon: cv.Icon, Color: cv.Color}
 		if _, ok := c.items[cv.Parent]; ok {
 			meta.Side = c.titleLocked(cv.Parent)
 		}

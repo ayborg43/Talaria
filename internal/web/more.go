@@ -10,6 +10,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"talaria/internal/routine"
 	"time"
 	"unicode/utf8"
 
@@ -639,6 +640,10 @@ func (s *Server) browserAct(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	var err error
+	var step *routine.Step // what this is as a step of a routine being recorded, worked out before the page changes
+	if s.Rec != nil && s.Rec.Recording() {
+		step = s.recordStep(ctx, p, in.Kind, in.X, in.Y, in.DY, in.Text, in.Key, in.URL)
+	}
 	switch in.Kind {
 	case "click":
 		err = p.ClickAt(ctx, in.X, in.Y)
@@ -662,6 +667,9 @@ func (s *Server) browserAct(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if step != nil {
+		s.Rec.Note(*step)
 	}
 	out := map[string]any{"ok": true, "url": p.Where(ctx)}
 	if in.Kind == "click" || in.Kind == "key" || in.Kind == "login" { // what now has focus, so the page can offer the right box to type into (Tab can move it to a password field)

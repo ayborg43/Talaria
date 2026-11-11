@@ -691,7 +691,7 @@ b,strong{font-weight:600}
 .login-form input{height:48px;border-radius:12px;border:1px solid var(--field-line);background:var(--field);padding:0 12px;font-size:16px;outline:none}
 .login-form input:focus{border-color:var(--brass)}
 .toolbar.typing{position:sticky;bottom:0;z-index:3;padding:8px 0;background:var(--bg,transparent)}
-.shot{display:block;width:100%;aspect-ratio:1280/800;object-fit:contain;background:var(--line2);cursor:crosshair;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+.shot{display:block;width:100%;aspect-ratio:1280/800;object-fit:contain;background:var(--line2);cursor:crosshair;touch-action:none;user-select:none;-webkit-user-select:none}
 .prompt{font-family:var(--mono);font-weight:600;color:var(--brass-text);flex:none}
 .panel-body.terminal .runs{flex:1;min-height:120px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:12px;border-radius:16px;background:var(--card);border:1px solid var(--line)}
 .run-head{display:flex;align-items:baseline;gap:8px;font-family:var(--mono);font-size:12.5px}
@@ -737,7 +737,7 @@ html{caret-color:var(--brass-text);accent-color:var(--brass);scrollbar-color:var
 .tag svg{width:16px;height:16px}
 .logo{box-shadow:0 0 0 1px var(--line)}
 .stage.zoomed{overflow:auto;-webkit-overflow-scrolling:touch;max-height:60vh}
-.stage.zoomed .shot{width:240%;max-width:none}
+.stage.zoomed .shot{width:240%;max-width:none;touch-action:pan-x pan-y pinch-zoom}
 
 /* things arrive from where they live: a sheet rises from the bottom edge, a panel settles in, a toast lifts */
 @keyframes rise{from{transform:translateY(24px);opacity:0}}
@@ -935,3 +935,17 @@ html{caret-color:var(--brass-text);accent-color:var(--brass);scrollbar-color:var
 .run-steer textarea{width:100%;min-height:64px;resize:vertical;border:1px solid var(--field-line);border-radius:14px;background:var(--field);padding:10px 12px;font-size:16px;margin-top:8px}
 .rowlink{background:none;border:0;padding:0;text-align:left;cursor:pointer;color:inherit;min-width:0}
 .rowlink:hover .t{text-decoration:underline}
+
+/* routines and named agents */
+.rec-bar{display:flex;align-items:center;gap:12px;padding:10px 12px;margin-bottom:8px;border:1px solid var(--line);border-radius:16px;background:var(--card)}
+.rec-bar .grow{flex:1;min-width:0}
+.rec-bar .s{display:block;font-size:12.5px;color:var(--muted)}
+.rec-bar:has(.pulse){border-color:var(--brass-line);background:var(--brass-soft)}
+.rec-save{display:flex;flex-direction:column;gap:8px;width:100%}
+.rec-save .s{font-size:12.5px;color:var(--muted)}
+.rec-bar:has(.rec-save){align-items:flex-start}
+.rec-steps{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto}
+.rec-step{display:flex;gap:8px;align-items:flex-start;font-size:13.5px}
+.rec-step.private span,.routine-steps li.private{color:var(--muted);font-style:italic}
+.routine-steps{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:6px;font-size:14px;overflow-wrap:anywhere}
+.row-inline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0}

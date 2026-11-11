@@ -130,6 +130,13 @@ type Agent struct {
 	GuardUntrusted bool
 	// Label names this agent in the record when it is a subagent.
 	Label string
+	// ReadOnly refuses, without asking anyone and whatever the permission rules or Approve would say, every call to a
+	// tool that needs approval: what is left is the tools that only read. It is for a conversation the user has set
+	// to look and not touch.
+	ReadOnly bool
+	// RefuseRisky refuses, without asking anyone, any call whose risk is deleting or posting, even if Approve would
+	// allow it: for a run whose approver says yes to ordinary clicks but must never do those.
+	RefuseRisky bool
 	// Interject, if set, is asked before every request to the model and returns things the user has said since the
 	// last one (a note to a running background task). Each becomes a user message, so the model reads it at the
 	// next step instead of when the task ends.
@@ -469,6 +476,9 @@ func (a *Agent) executeAs(ctx context.Context, call provider.ToolCall, approved 
 		entry.Args = t.LogArgs([]byte(call.Arguments))
 	}
 	needs := t.NeedsApproval || (t.NeedsApprovalFor != nil && t.NeedsApprovalFor(json.RawMessage(call.Arguments)))
+	if a.ReadOnly && needs {
+		return execResult{text: "error: this conversation is read-only, so " + call.Name + " is not available: say what you found, and what you would do if it were allowed"}
+	}
 	risk := t.RiskOf(json.RawMessage(call.Arguments))
 	if a.Ask == AskDestructive {
 		needs = risk != 0 // what a tool would rather be asked about does not matter: only deleting and posting do
@@ -514,6 +524,10 @@ func (a *Agent) executeAs(ctx context.Context, call provider.ToolCall, approved 
 					entry.Status = "waiting for permission"
 					return execResult{text: note}
 				}
+			}
+			if a.RefuseRisky && risk != 0 {
+				metrics.Inc("talaria_approvals_total", "decision", "denied")
+				return execResult{text: "error: this would delete or post something, which this run may not do"}
 			}
 			if a.Approve == nil || !a.Approve(name, shown) {
 				metrics.Inc("talaria_approvals_total", "decision", "denied")
@@ -697,3 +711,17 @@ func plainArgs(s string) string {
 // Safe is text with known secrets removed, as it is before it is logged or kept: for a front end that writes down
 // what the agent did.
 func (a *Agent) Safe(s string) string { return a.scrub(s) }
+
+// SetSystem changes the system prompt in the middle of a conversation: the next request to the model carries the new
+// one, and what was said so far stays.
+func (a *Agent) SetSystem(s string) {
+	a.System = s
+	switch {
+	case len(a.messages) > 0 && a.messages[0].Role == provider.RoleSystem && s != "":
+		a.messages[0].Content = s
+	case len(a.messages) > 0 && a.messages[0].Role == provider.RoleSystem:
+		a.messages = a.messages[1:]
+	case len(a.messages) > 0 && s != "":
+		a.messages = append([]provider.Message{{Role: provider.RoleSystem, Content: s}}, a.messages...)
+	}
+}

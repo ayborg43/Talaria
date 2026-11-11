@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"talaria/internal/persona"
+	"talaria/internal/routine"
 	"talaria/internal/runlog"
 	"time"
 
@@ -110,6 +112,8 @@ type Sources struct {
 	// Runs connects the Activity view to steering a running task and following up a finished one. Nil leaves
 	// those out; the record itself is Server.Runs.
 	Runs *RunHooks
+	// Routines connects saved routines to the scheduler. Nil leaves running and scheduling out.
+	Routines *RoutineHooks
 	// Zone is the time zone the person lives in.
 	Zone *time.Location
 }
@@ -128,7 +132,15 @@ type Server struct {
 	Push    *Pusher
 	Sources Sources
 	// Runs is the record of what each background run did, for the Activity view. Nil leaves Activity out.
-	Runs      *runlog.Log
+	Runs *runlog.Log
+	// Rec and Routines record what the user does by hand in the agent's browser, and keep the routines made from it.
+	// Nil leaves routines out.
+	Rec      *routine.Recorder
+	Routines *routine.Store
+	// liveFor, if set, finds the tab a live view drives; tests use it to drive a stand-in.
+	liveFor func(id string) liveTab
+	// Agents are the named agents; with Convos they let a conversation be with one. Nil leaves them out.
+	Agents    *persona.Store
 	Pause     Pauser
 	PublicURL string // https://talaria.example.com: where people reach it, for the origin check
 	Model     string
@@ -244,6 +256,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/recipes", s.authed(s.recipesPost))
 	mux.HandleFunc("GET /api/suggestions", s.authed(s.suggestionsGet))
 	mux.HandleFunc("POST /api/suggestions", s.authed(s.suggestionsPost))
+	mux.HandleFunc("GET /api/personas", s.authed(s.personasGet))
+	mux.HandleFunc("POST /api/personas", s.authed(s.personasPost))
+	mux.HandleFunc("GET /api/routines", s.authed(s.routinesGet))
+	mux.HandleFunc("POST /api/routines", s.authed(s.routinesPost))
 	mux.HandleFunc("GET /api/runs", s.authed(s.runsGet))
 	mux.HandleFunc("GET /api/runs/{id}", s.authed(s.runGet))
 	mux.HandleFunc("POST /api/runs/{id}/steer", s.authed(s.runSteer))
@@ -258,6 +274,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/computer/transfer", s.authed(s.computerTransfer))
 	mux.HandleFunc("GET /api/browser", s.authed(s.browserTabs))
 	mux.HandleFunc("GET /api/browser/shot", s.authed(s.browserShot))
+	mux.HandleFunc("GET /api/browser/live", s.authed(s.browserLive))
 	mux.HandleFunc("GET /api/browser/stream", s.authed(s.browserStream))
 	mux.HandleFunc("POST /api/browser/act", s.authed(s.browserAct))
 	// The AG-UI door checks its own key: a client that is not this page has no session to show.
@@ -310,7 +327,7 @@ func (s *Server) headers(next http.Handler) http.Handler {
 			}
 		}()
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' "+wsSources(r)+"; manifest-src 'self'; worker-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("X-Frame-Options", "DENY")
@@ -450,7 +467,16 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	if s.Convos != nil { // a side chat says what it was opened beside, so the page can say where "back" goes
 		out["side"] = s.Convos.SideOf()
 		if title, icon, color, purpose, ok := s.Convos.ActiveChannel(); ok {
-			out["channel"] = map[string]string{"title": title, "icon": icon, "color": color, "purpose": purpose}
+			ch := map[string]string{"title": title, "icon": icon, "color": color, "purpose": purpose}
+			if id := s.Convos.ActiveAgent(); id != "" && s.Agents != nil {
+				if a, ok := s.Agents.Get(id); ok {
+					ch["agent"] = a.Name
+					if a.ReadOnly {
+						ch["read_only"] = "1"
+					}
+				}
+			}
+			out["channel"] = ch
 		}
 	}
 	writeJSON(w, http.StatusOK, out)

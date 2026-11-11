@@ -1148,6 +1148,56 @@ What it did** lists the latest ones, working ones first. Tap a run, or the name 
 - **Small.** The last 30 runs are kept in `~/.talaria/runs.json` (mode 0600); a run in progress lives in memory; a run is at most
   40 one-line steps and 4,000 characters of result. Other chat apps' jobs are not recorded.
 
+### How the live browser view works
+
+Taking over the agent's browser is a live connection, not a series of requests. The app opens one WebSocket to `/api/browser/live`:
+the browser **pushes a picture whenever the page paints** (Chromium's screencast), and **taps, drags, wheel, keys and typed text go back
+on the same connection, in order**, straight to the page with no waiting for it to settle or for a picture to be taken first. On a
+local test the time from a key press to the changed picture was 10 to 20 ms; over a real network it is the round trip plus a frame.
+
+- **Real pointer.** With a mouse, press, drag and release reach the page as they happen (so drags select, double clicks are double clicks, right click works).
+  With a finger, a tap is a click and a drag scrolls the page as it moves.
+- **Typing.** Every character you type, at the picture or in the box under it, is sent as you type it. A phone keyboard's completed word or an accented
+  letter is sent whole. A password still goes through the masked box and nowhere else.
+- **Keeps up with a slow connection.** A picture is only requested once the last one is on the wire, so a slow phone gets newer pictures, never a queue of old
+  ones, and picture size and sharpness step down on a slow link and back up on a fast one. One view of a tab at a time: opening it on another screen takes over, and the first says so.
+- **Safe.** Only the signed-in app can open it (the connection must come from the app's own address), the content policy allows a WebSocket to this host only,
+  and what you type is never logged. A routine being recorded is noted from this connection exactly as before, with private fields never kept.
+- **Falls back.** If a proxy blocks WebSockets, the app uses the older way (a stream of pictures and a request per action), which is slower but works.
+- **Memory.** A view holds one picture at a time and nothing is kept. At most three views run at once.
+
+### Routines: show it once
+
+In the web app, **Tasks, The agent's computer, Browser** has a **Record** button. Press it, do something by hand in the agent's
+browser (open a page, click, type, press Enter, scroll, go back), and stop: Talaria shows what you did as plain steps, in words
+("Click the link "Orders"", "Type "red shoes" into the field "Search""), never as pixel positions. Untick what should not be part
+of it, name it, and save. It is then listed under **Tasks, Up next, Routines**, where it can be run now or put on a schedule.
+
+- **Nothing private is kept.** What you type into a password field, a card or code field (by its type, its autocomplete hint or its
+  label), or the sign-in form is never stored, only that something private was entered there. A step shows as "you did this
+  yourself and it was not kept". Page addresses are kept without their query, and what a page showed is never recorded.
+  A recording is at most 40 steps, stops by itself after 30 minutes of nothing, and a routine is stored in `~/.talaria/routines.json` (mode 0600; at most 20).
+- **It repeats the steps with the browser tools.** The model is given the steps (read fresh at each run, so editing or deleting a routine
+  applies at once), looks at each page, and adapts if it changed. It is an ordinary background task or scheduled job: your rules
+  that forbid starting work or scheduling apply, quiet hours and **Pause all** hold, and its runs appear under Activity.
+- **What it may do alone.** It may click, type, press keys and choose from lists in the browser without asking, and nothing else that
+  would ask: no shell, files or mail, and nothing that follows something read on a page. A click or keypress that would delete or post is refused
+  outright, even if your rules would allow it. If a page wants a password or a code it uses `browser_handoff` and asks you to take over.
+
+### Named agents
+
+**Tasks, Up next, Your agents** lets you make up to eight named agents: a name, an icon, what it is for and how it should behave
+(up to 1,500 characters), optionally its own model profile, and a **Looks only** switch. **Chat** opens a conversation with it,
+kept like a channel, and the header says who you are talking to.
+
+- It is the same Talaria with those instructions added after the usual ones. They can only narrow it: the instructions say that your
+  safety rules and approvals are unchanged, and nothing here lets an agent do what would otherwise ask first.
+- **Looks only** is enforced, not requested: any tool that needs approval is refused for that agent, even if one of your rules would allow it,
+  so what is left is reading and searching. The model is told so and says what it would have done.
+- Its model profile applies while you talk with it, and jobs started from that conversation start on it too. Going back to an
+  ordinary conversation puts the usual instructions and model back. Edit or remove an agent at any time; the conversations stay, as ordinary ones.
+- Agents share one memory, one set of goals and watches, and one set of rules with the rest of Talaria. They are kept in `~/.talaria/agents.json`.
+
 ### Goals
 
 For something you want pursued over days, the agent takes on a **goal** with `goal_create`: an objective (what done looks
@@ -1458,6 +1508,8 @@ and how it ended.
 | `internal/subagent` | the `delegate` tool: isolated sub-conversations, run in parallel, bounded |
 | `internal/mcp` | MCP client: stdio and HTTP transports, both protocol eras, tool registration |
 | `internal/sse` | server-sent-events reader shared by the model providers and MCP |
+| `internal/routine` | the recorder that writes down what you do by hand in the agent's browser, and the saved routines made from it |
+| `internal/persona` | named agents: a name, instructions, a model profile and a looks-only switch |
 | `internal/runlog` | the short record of each background run for the Activity view, and the queue of what you tell a running task |
 | `internal/goal` | goals: plan, progress notes, check-in schedule and the tools to work on them |
 | `internal/vault` | the encrypted store of saved logins, service sign-ins and where each may be used |

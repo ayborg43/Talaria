@@ -248,6 +248,13 @@ func (s *fakeState) handle(method string, p map[string]any) any {
 		s.mu.Unlock()
 		s.navigate(url, false)
 		return map[string]any{}
+	case "Page.startScreencast":
+		go func() { // a browser pushes a picture when the page paints; the fake paints once, when asked
+			s.event("Page.screencastFrame", map[string]any{"data": base64.StdEncoding.EncodeToString([]byte("\xff\xd8LIVE")), "sessionId": 7})
+		}()
+		return map[string]any{}
+	case "Page.stopScreencast", "Page.screencastFrameAck":
+		return map[string]any{}
 	case "Page.captureScreenshot":
 		return map[string]any{"data": base64.StdEncoding.EncodeToString([]byte("\xff\xd8FAKEJPEG"))}
 	case "Runtime.evaluate":

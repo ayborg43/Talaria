@@ -67,6 +67,7 @@ function computerCard() {
 // typed, in a masked box for a password (which a password manager can fill), and nowhere else.
 async function showBrowser(body) {
   let d;
+  await loadRoutines();
   try { d = await api('/api/browser'); } catch (e) { failed(e); body.replaceChildren(h('div', { class: 'card empty', text: e.message })); return; }
   if (COMPUTER.seg !== 'browser' || $('#panel').hidden) return;
   const tabs = d.tabs || [];
@@ -115,14 +116,60 @@ async function showBrowser(body) {
     busy = false;
   };
   const poll = () => { clearTimeout(PANEL.timer); if (!alive || live) return; PANEL.timer = setTimeout(async () => { await shot(); poll(); }, 1500); };
-  const startLive = () => {
-    if (!alive || document.hidden) return;
+  // The live view is one WebSocket: pictures arrive when the page paints, and taps, drags, keys and typed text go back on
+  // the same connection, in order, with no request for each. If a WebSocket cannot be had (a proxy that blocks it), the
+  // older way is used: a stream of pictures, and a request per action.
+  let ws = null, takenOver = false, wsBroken = false, shown = '', focusWanted = 0;
+  const wsOpen = () => !!ws && ws.readyState === 1;
+  const emit = (m) => { if (!wsOpen()) return false; ws.send(JSON.stringify(m)); return true; };
+  const drawPicture = (blob) => {
+    const u = URL.createObjectURL(blob), old = shown; shown = u; img.src = u;
+    if (old) setTimeout(() => URL.revokeObjectURL(old), 1500);
+  };
+  const fromServer = (m) => {
+    if (m.t === 'focus') {
+      if (m.url && document.activeElement !== addr) addr.value = m.url;
+      if (Date.now() - focusWanted < 2500) { focusWanted = 0; setMode(m.kind || 'none'); } // a tap (or Tab) on a field opens the right box to type into
+    } else if (m.t === 'taken') {
+      takenOver = true; toast('This view was opened on another screen. Tap reload to bring it back here.');
+    } else if (m.t === 'error') {
+      wsBroken = true;
+    }
+  };
+  const startStream = () => {
     live = true; livePill.hidden = true;
     img.src = '/api/browser/stream?id=' + encodeURIComponent(COMPUTER.tab) + '&t=' + Date.now();
   };
-  const stopLive = () => { live = false; livePill.hidden = true; img.removeAttribute('src'); };
-  img.addEventListener('load', () => { if (live) livePill.hidden = false; });
-  img.addEventListener('error', () => { if (live) { live = false; livePill.hidden = true; shot(); poll(); } }); // no live view: fall back to pictures
+  const startLive = () => {
+    if (!alive || document.hidden || takenOver) return;
+    if (wsBroken || !('WebSocket' in window)) { startStream(); return; }
+    let sock;
+    try { sock = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/browser/live?id=' + encodeURIComponent(COMPUTER.tab)); }
+    catch { wsBroken = true; startStream(); return; }
+    ws = sock; sock.binaryType = 'blob';
+    let got = false;
+    sock.onmessage = (e) => {
+      if (sock !== ws) return;
+      if (typeof e.data === 'string') { try { fromServer(JSON.parse(e.data)); } catch { /* not for us */ } return; }
+      if (!got) { got = true; live = true; livePill.hidden = false; }
+      drawPicture(e.data);
+    };
+    sock.onclose = () => {
+      if (sock !== ws) return;
+      ws = null; livePill.hidden = true;
+      if (!alive || document.hidden || takenOver) { live = false; return; }
+      if (!got) { wsBroken = true; startStream(); poll(); return; } // it never worked here: use the older way
+      live = false; setTimeout(() => { if (alive && !ws && !document.hidden && !takenOver) startLive(); }, 700); // it dropped: come back
+    };
+    sock.onerror = () => {};
+  };
+  const stopLive = () => {
+    live = false; livePill.hidden = true;
+    if (ws) { const w = ws; ws = null; try { w.close(); } catch { /* already gone */ } }
+    img.removeAttribute('src');
+  };
+  img.addEventListener('load', () => { if (live && !wsOpen()) livePill.hidden = false; });
+  img.addEventListener('error', () => { if (live && !wsOpen()) { live = false; livePill.hidden = true; shot(); poll(); } }); // no live view: fall back to pictures
   // the address and whether the tab is still there, now and then: a live view carries no headers
   const watch = async () => {
     if (!alive || document.hidden) return;
@@ -136,7 +183,7 @@ async function showBrowser(body) {
   const watcher = setInterval(watch, 3000);
   const vis = () => { if (document.hidden) stopLive(); else if (alive) { startLive(); poll(); } };
   document.addEventListener('visibilitychange', vis);
-  PANEL.onClose = () => { alive = false; stopLive(); clearInterval(watcher); document.removeEventListener('visibilitychange', vis); if (last) URL.revokeObjectURL(last); };
+  PANEL.onClose = () => { alive = false; stopLive(); clearInterval(watcher); document.removeEventListener('visibilitychange', vis); if (last) URL.revokeObjectURL(last); if (shown) URL.revokeObjectURL(shown); };
 
   const post = (a) => api('/api/browser/act', { method: 'POST', body: { id: COMPUTER.tab, ...a } }).catch((e) => { if (!(e instanceof AuthError)) failed(e); return null; });
   // Typing: what is in the box is sent to the page as it changes, as only the part that changed, in order. A password
@@ -157,6 +204,12 @@ async function showBrowser(body) {
     const now = typed.value; if (now === prev) return;
     let i = 0; while (i < prev.length && i < now.length && prev[i] === now[i]) i++;
     const del = prev.length - i, add = now.slice(i); prev = now;
+    if (wsOpen()) { // sent the moment it is typed, in order, on the open connection
+      if (del === 0) emit({ t: 'text', text: add });
+      else if (del <= 3 && !add) for (let k = 0; k < del; k++) emit({ t: 'key', key: 'Backspace' });
+      else emit({ t: 'replace', text: now });
+      return;
+    }
     chain = chain.then(async () => {
       if (del === 0) await post({ kind: 'type', text: add });
       else if (del <= 3 && !add) for (let k = 0; k < del; k++) await post({ kind: 'key', key: 'Backspace' });
@@ -164,13 +217,25 @@ async function showBrowser(body) {
       if (!live) shot();
     });
   };
-  typed.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(flush, 60); });
-  typed.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(timer); flush(); chain = chain.then(async () => { await post({ kind: 'key', key: 'Enter' }); if (!live) shot(); }); } });
+  typed.addEventListener('input', (e) => { if (e.isComposing) return; if (wsOpen()) flush(); else { clearTimeout(timer); timer = setTimeout(flush, 60); } });
+  typed.addEventListener('compositionend', () => flush());
+  typed.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault(); clearTimeout(timer); flush();
+    if (!emit({ t: 'key', key: 'Enter' })) chain = chain.then(async () => { await post({ kind: 'key', key: 'Enter' }); if (!live) shot(); });
+  });
   // Nothing else may reach the page before what is still in the typing box: a tap on another field (or on
   // Sign in) used to be able to overtake the last letters, which then landed in the wrong field.
   const flushNow = async () => { clearTimeout(timer); flush(); await chain; };
 
   const act = async (a) => {
+    if (wsOpen() && (a.kind === 'click' || a.kind === 'key' || a.kind === 'wheel')) { // one connection, in order: nothing to wait for
+      flush();
+      if (a.kind === 'click') { focusWanted = Date.now(); emit({ t: 'mouse', k: 'down', x: a.x, y: a.y, b: 'left', n: 1 }); emit({ t: 'mouse', k: 'up', x: a.x, y: a.y, b: 'left', n: 1 }); }
+      else if (a.kind === 'key') { if (a.key === 'Tab') focusWanted = Date.now(); emit({ t: 'key', key: a.key, mod: a.shift ? 8 : 0 }); }
+      else emit({ t: 'wheel', x: a.x, y: a.y, dy: a.dy });
+      return;
+    }
     await flushNow();
     const r = await post(a);
     if (r && r.url && document.activeElement !== addr) addr.value = r.url;
@@ -189,28 +254,73 @@ async function showBrowser(body) {
     if (!live) await shot();
     stage.scrollIntoView({ block: 'nearest' });
   });
-  // With a real keyboard, typing straight at the picture works too: click a field, then just type.
+  // With a real keyboard, typing straight at the picture works too: click a field, then just type. Each key goes to the
+  // page as it is pressed.
+  const typedKeys = { Enter: 'Enter', Tab: 'Tab', Escape: 'Escape', Backspace: 'Backspace', Delete: 'Delete', ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown', ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight', Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown' };
+  const sendText = (text) => { if (!emit({ t: 'text', text })) chain = chain.then(async () => { await post({ kind: 'type', text }); if (!live) shot(); }); };
   stage.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    const names = { Enter: 'Enter', Tab: 'Tab', Escape: 'Escape', Backspace: 'Backspace', Delete: 'Delete', ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown', ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight' };
-    if (names[e.key]) { e.preventDefault(); act({ kind: 'key', key: names[e.key] }); }
-    else if (e.key.length === 1) { e.preventDefault(); const text = e.key; chain = chain.then(async () => { await post({ kind: 'type', text }); if (!live) shot(); }); }
+    if (typedKeys[e.key]) { e.preventDefault(); act({ kind: 'key', key: typedKeys[e.key], shift: e.shiftKey }); }
+    else if (e.key.length === 1) { e.preventDefault(); sendText(e.key); }
   });
-  stage.addEventListener('paste', (e) => { const text = (e.clipboardData || {}).getData ? e.clipboardData.getData('text') : ''; if (text) { e.preventDefault(); chain = chain.then(async () => { await post({ kind: 'type', text }); if (!live) shot(); }); } });
+  stage.addEventListener('paste', (e) => { const text = (e.clipboardData || {}).getData ? e.clipboardData.getData('text') : ''; if (text) { e.preventDefault(); sendText(text); } });
   const point = (e) => { const b = img.getBoundingClientRect(); return { x: Math.round(((e.clientX - b.left) / b.width) * W), y: Math.round(((e.clientY - b.top) / b.height) * H) }; };
-  let swipe = null, ateClick = false;
-  img.addEventListener('pointerdown', (e) => { swipe = { y: e.clientY, x: e.clientX }; });
+  const scale = () => W / img.getBoundingClientRect().width; // a page pixel for each pixel of the picture on screen
+  // What the pointer does on the picture. On the live connection it is the pointer itself: press, drag and release reach
+  // the page as they happen, so a drag selects or moves things and a double click is a double click; a finger tap is a
+  // click and a finger drag scrolls the page as it moves. Without it, a tap is one click and a swipe is one scroll.
+  let drag = null, accScroll = null;
+  const sendScroll = (x, y, dx, dy) => {
+    if (accScroll) { accScroll.dx += dx; accScroll.dy += dy; accScroll.x = x; accScroll.y = y; return; }
+    accScroll = { x, y, dx, dy };
+    requestAnimationFrame(() => { const a = accScroll; accScroll = null; if (a && (a.dx || a.dy)) emit({ t: 'wheel', x: a.x, y: a.y, dx: Math.round(a.dx), dy: Math.round(a.dy) }); });
+  };
+  let swipe = null, ateClick = false, moveQueued = false, lastMove = null;
+  img.addEventListener('contextmenu', (e) => { if (wsOpen()) e.preventDefault(); });
+  img.addEventListener('pointerdown', (e) => {
+    if (!wsOpen()) { swipe = { y: e.clientY, x: e.clientX }; return; }
+    if (stage.classList.contains('zoomed') && e.pointerType !== 'mouse') return; // a finger on the enlarged picture moves the picture
+    e.preventDefault();
+    try { img.setPointerCapture(e.pointerId); stage.focus({ preventScroll: true }); } catch { /* not everywhere */ }
+    const touch = e.pointerType !== 'mouse', p = point(e), b = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
+    drag = { id: e.pointerId, touch, sx: e.clientX, sy: e.clientY, lx: e.clientX, ly: e.clientY, moved: false, p, b };
+    if (!touch) { focusWanted = Date.now(); emit({ t: 'mouse', k: 'down', x: p.x, y: p.y, b, n: Math.max(1, Math.min(3, e.detail || 1)) }); }
+  });
+  img.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id || !wsOpen()) return;
+    if (drag.touch) {
+      if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 10) return;
+      drag.moved = true;
+      const k = scale(), p = point(e);
+      sendScroll(p.x, p.y, -(e.clientX - drag.lx) * k, -(e.clientY - drag.ly) * k); // the page follows the finger
+      drag.lx = e.clientX; drag.ly = e.clientY;
+    } else if (e.buttons) {
+      lastMove = point(e);
+      if (!moveQueued) { moveQueued = true; requestAnimationFrame(() => { moveQueued = false; if (lastMove) emit({ t: 'mouse', k: 'move', x: lastMove.x, y: lastMove.y, b: drag ? drag.b : 'left' }); }); }
+    }
+  });
+  const release = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const d = drag; drag = null;
+    if (!wsOpen()) return;
+    const p = point(e);
+    if (!d.touch) { emit({ t: 'mouse', k: 'up', x: p.x, y: p.y, b: d.b, n: Math.max(1, Math.min(3, e.detail || 1)) }); return; }
+    if (!d.moved) { focusWanted = Date.now(); emit({ t: 'mouse', k: 'down', x: d.p.x, y: d.p.y, b: 'left', n: 1 }); emit({ t: 'mouse', k: 'up', x: d.p.x, y: d.p.y, b: 'left', n: 1 }); }
+  };
   img.addEventListener('pointerup', (e) => {
+    if (wsOpen()) { release(e); return; }
     if (!swipe) return;
     const dy = e.clientY - swipe.y, at = point(e); swipe = null;
     if (Math.abs(dy) < 24) return; // a tap, not a swipe: the click below handles it
     ateClick = true; // the tap this swipe ends with must not also click what it lands on
     act({ kind: 'wheel', ...at, dy: dy < 0 ? 400 : -400 }); // swipe up scrolls the page down, as a finger expects
   });
-  img.addEventListener('click', (e) => { if (ateClick) { ateClick = false; return; } try { stage.focus({ preventScroll: true }); } catch { /* not focusable everywhere */ } act({ kind: 'click', ...point(e) }); });
+  img.addEventListener('pointercancel', () => { drag = null; });
+  img.addEventListener('click', (e) => { if (wsOpen()) return; if (ateClick) { ateClick = false; return; } try { stage.focus({ preventScroll: true }); } catch { /* not focusable everywhere */ } act({ kind: 'click', ...point(e) }); });
   let wheelAt = 0;
   img.addEventListener('wheel', (e) => {
     e.preventDefault();
+    if (wsOpen()) { const p = point(e), k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? H : 1; sendScroll(p.x, p.y, e.deltaX * k, e.deltaY * k); return; }
     if (Date.now() - wheelAt < 250) return; // a wheel sends dozens of events: a few a second are enough
     wheelAt = Date.now();
     act({ kind: 'wheel', ...point(e), dy: Math.sign(e.deltaY) * 400 });
@@ -225,7 +335,7 @@ async function showBrowser(body) {
     ? h('div', { class: 'handoff-bar busy' }, h('span', { class: 'grow' }, h('b', { text: 'The agent is using this tab' }), h('span', { class: 's', text: 'Your taps work, but may collide with what it is doing.' })),
       h('button', { class: 'btn', type: 'button', text: 'Stop it', onclick: () => $('#stop').click() })) : null;
   body.className = 'panel-body browser';
-  body.replaceChildren(...[handoffBar(), busyBar, picker,
+  body.replaceChildren(...[handoffBar(), recordBar(), busyBar, picker,
     h('div', { class: 'toolbar' },
       ikey('back', 'Back a page', () => act({ kind: 'back' })),
       addr, livePill, h('button', { type: 'button', class: 'key go', text: 'Go', onclick: go })),
@@ -234,7 +344,7 @@ async function showBrowser(body) {
     h('div', { class: 'toolbar typing' }, typed, modeBtn),
     h('div', { class: 'toolbar keys' }, key('Enter', 'Enter'), key('Tab', 'Tab'), key('Esc', 'Escape'), ikey('del', 'Backspace', () => act({ kind: 'key', key: 'Backspace' })),
       ikey('up', 'Up arrow', () => act({ kind: 'key', key: 'ArrowUp' })), ikey('down', 'Down arrow', () => act({ kind: 'key', key: 'ArrowDown' })),
-      ikey('refresh', 'Reload the view', () => { if (live) { stopLive(); startLive(); } else shot(); }),
+      ikey('refresh', 'Reload the view', () => { takenOver = false; if (live || ws) { stopLive(); startLive(); } else { startLive(); shot(); } }),
       ikey('zoom', 'Make the picture bigger or smaller', () => stage.classList.toggle('zoomed'))),
     h('div', { class: 'field-note', text: 'You are working the same tab the agent uses. For a sign-in, use the username and password boxes above. For anything else: tap a field in the picture, then type in the box under it (or just type, with a keyboard). Swipe the picture to scroll. It is told you took control, and reads the page again before it carries on. What you type here is not shown to it.' })].filter(Boolean));
   startLive(); poll();
@@ -1110,6 +1220,183 @@ function drawSteer(r, box, again) {
   box.replaceChildren(h('div', { class: 'card' }, h('h2', null, live ? 'Steer it' : 'Follow up'),
     live ? null : h('div', { class: 'note', text: 'This starts a new background task that knows what this one was asked and what it reported. Like any background task it cannot send, post, pay or delete.' }),
     area, h('div', { class: 'btn-row' }, go)));
+}
+
+// ---------- routines: show it once, and it repeats it ----------
+// In the browser view, Record writes down what you do by hand as plain steps ("click the link Orders"). Passwords, codes
+// and card numbers are never kept, only that something private was entered. The routine can then be run now or put on a
+// schedule; it repeats the steps in the agent's browser, may click and type there without asking, and never deletes or posts.
+const ROUT = { on: false, recording: false, count: 0, steps: [], routines: [], canRun: false };
+async function loadRoutines() {
+  try {
+    const d = await api('/api/routines');
+    ROUT.on = !!d.available; ROUT.recording = !!d.recording; ROUT.count = d.count || 0; ROUT.steps = d.steps || []; ROUT.routines = d.routines || []; ROUT.canRun = !!d.can_run;
+  } catch (e) { if (e instanceof AuthError) return; }
+}
+async function routineAct(body) {
+  const d = await api('/api/routines', { method: 'POST', body });
+  ROUT.on = true; ROUT.recording = !!d.recording; ROUT.count = d.count || 0; ROUT.steps = d.steps || []; ROUT.routines = d.routines || []; ROUT.canRun = !!d.can_run;
+  return d;
+}
+function recordBar() {
+  if (!ROUT.on) return null;
+  const bar = h('div', { class: 'rec-bar' });
+  const count = h('b', { class: 'rec-count' });
+  const draw = () => {
+    if (ROUT.recording) {
+      count.textContent = ROUT.count + (ROUT.count === 1 ? ' step' : ' steps');
+      bar.replaceChildren(h('span', { class: 'pulse', 'aria-hidden': 'true' }), h('span', { class: 'grow' }, h('b', { text: 'Recording ' }), count, h('span', { class: 's', text: 'Do it by hand in the page below. Passwords and codes are not kept.' })),
+        h('button', { class: 'btn small primary', type: 'button', text: 'Stop', onclick: async () => { try { await routineAct({ action: 'stop' }); } catch (e) { failed(e); } draw(); } }));
+    } else if (ROUT.steps.length) {
+      bar.replaceChildren(saveRoutineForm(draw));
+    } else {
+      bar.replaceChildren(h('span', { class: 'grow' }, h('b', { text: 'Teach it a routine' }), h('span', { class: 's', text: 'Press Record, do something by hand here, then save it to run again.' })),
+        h('button', { class: 'btn small', type: 'button', text: 'Record', onclick: async () => { try { await routineAct({ action: 'start' }); } catch (e) { failed(e); } draw(); } }));
+    }
+  };
+  draw();
+  const tick = async () => {
+    if (!bar.isConnected) return;
+    if (ROUT.recording) { await loadRoutines(); if (ROUT.recording) count.textContent = ROUT.count + (ROUT.count === 1 ? ' step' : ' steps'); else draw(); }
+    setTimeout(tick, 1500);
+  };
+  setTimeout(tick, 1500);
+  return bar;
+}
+function saveRoutineForm(redraw) {
+  const keep = ROUT.steps.map(() => true);
+  const list = h('div', { class: 'rec-steps' }, ROUT.steps.map((st, i) => h('label', { class: 'check rec-step' + (st.secret ? ' private' : '') },
+    h('input', { type: 'checkbox', checked: true, onchange: (e) => { keep[i] = e.target.checked; } }), h('span', { text: (i + 1) + '. ' + st.line }))));
+  const name = h('input', { type: 'text', maxlength: '60', placeholder: 'Check my orders', autocomplete: 'off', 'aria-label': 'Name of the routine' });
+  const save = h('button', { class: 'btn primary', type: 'button', text: 'Save routine' });
+  save.addEventListener('click', async () => {
+    if (!name.value.trim()) { toast('Give the routine a name.'); return; }
+    save.disabled = true;
+    try { const d = await routineAct({ action: 'save', name: name.value, keep: keep.map((k, i) => (k ? i : -1)).filter((i) => i >= 0) }); toast('Saved “' + d.saved + '”. Find it under Tasks, Up next.'); redraw(); }
+    catch (e) { failed(e); save.disabled = false; }
+  });
+  return h('div', { class: 'rec-save' }, h('b', { text: 'Here is what you did' }), h('div', { class: 's', text: 'Untick anything that should not be part of it. A step marked private was done by you and is not kept.' }), list,
+    h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Name' }), name),
+    h('div', { class: 'btn-row' }, save, h('button', { class: 'btn', type: 'button', text: 'Throw it away', onclick: async () => { try { await routineAct({ action: 'discard' }); } catch (e) { failed(e); } redraw(); } })));
+}
+const DAY_CHOICES = [['daily', 'Every day'], ['weekdays', 'Every weekday'], ['weekly:mon', 'Every Monday'], ['weekly:tue', 'Every Tuesday'], ['weekly:wed', 'Every Wednesday'], ['weekly:thu', 'Every Thursday'], ['weekly:fri', 'Every Friday'], ['weekly:sat', 'Every Saturday'], ['weekly:sun', 'Every Sunday']];
+function dayWords(days) { const f = DAY_CHOICES.find((d) => d[0] === days); return f ? f[1].toLowerCase() : ''; }
+function routinesCard() {
+  if (!ROUT.on) return null;
+  const card = h('div', { class: 'card' }, h('h2', null, 'Routines', h('small', { text: ROUT.routines.length ? ROUT.routines.length + ' saved' : '' })));
+  if (!ROUT.routines.length) {
+    card.append(h('div', { class: 'field-note', text: 'Show it something once and it does it again. In the agent’s browser, press Record, do it by hand, and save it as a routine you can run or schedule.' }),
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Open the browser to record', onclick: () => openComputer('browser') })));
+    return card;
+  }
+  const rows = h('div', { class: 'rows' });
+  for (const r of ROUT.routines) {
+    const sc = r.schedule;
+    rows.append(h('button', { type: 'button', class: 'row runrow', onclick: () => openRoutine(r.id) },
+      h('span', { class: 'k job', text: 'ROUTINE' }),
+      h('span', { class: 'grow' }, h('span', { class: 't', text: r.name }), h('span', { class: 's', text: r.steps.length + (r.steps.length === 1 ? ' step' : ' steps') + (sc ? ' · ' + dayWords(sc.days) + ' at ' + sc.at : ' · not scheduled') }))));
+  }
+  card.append(rows, h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'button', text: 'Record another', onclick: () => openComputer('browser') })));
+  return card;
+}
+function openRoutine(id) {
+  const r = ROUT.routines.find((x) => x.id === id);
+  if (!r) return;
+  const body = openPanel(r.name, r.steps.length + (r.steps.length === 1 ? ' step' : ' steps') + ' you showed it');
+  body.className = 'panel-body routine';
+  const steps = h('ol', { class: 'routine-steps' }, r.steps.map((st) => h('li', { class: st.secret ? 'private' : '', text: st.line })));
+  const run = h('button', { class: 'btn primary', type: 'button', text: 'Run it now', disabled: ROUT.canRun ? null : true });
+  run.addEventListener('click', async () => {
+    run.disabled = true;
+    try { const d = await routineAct({ action: 'run', id: r.id }); toast(d.message || 'Started.'); closePanel(); loadAgentsPage(); }
+    catch (e) { failed(e); run.disabled = false; }
+  });
+  const days = h('select', { class: 'rule-select', 'aria-label': 'How often' }, DAY_CHOICES.map(([v, l]) => h('option', { value: v, text: l })));
+  const at = h('input', { type: 'time', step: '300', 'aria-label': 'Time of day' });
+  days.value = r.schedule ? r.schedule.days : 'weekdays'; at.value = r.schedule ? r.schedule.at : '08:00';
+  const set = h('button', { class: 'btn', type: 'button', text: r.schedule ? 'Change schedule' : 'Run it on a schedule' });
+  set.addEventListener('click', async () => {
+    set.disabled = true;
+    try { const d = await routineAct({ action: 'schedule', id: r.id, days: days.value, at: at.value }); toast(d.message || 'Scheduled.'); closePanel(); loadAgentsPage(); }
+    catch (e) { failed(e); set.disabled = false; }
+  });
+  const sched = h('div', { class: 'card' }, h('h2', null, 'Schedule'), r.schedule ? h('div', { class: 'field-note', text: 'Runs ' + dayWords(r.schedule.days) + ' at ' + r.schedule.at + (r.schedule.next ? '. Next: ' + fmtWhen(new Date(r.schedule.next)) : '') + (r.schedule.last ? '. Last: ' + r.schedule.last : '') + '.' }) : null,
+    h('div', { class: 'row-inline' }, days, at), h('div', { class: 'btn-row' }, set,
+      r.schedule ? h('button', { class: 'btn', type: 'button', text: 'Stop the schedule', onclick: async () => { try { await routineAct({ action: 'unschedule', id: r.id }); toast('Taken off the schedule.'); closePanel(); loadAgentsPage(); } catch (e) { failed(e); } } }) : null));
+  const del = h('button', { class: 'btn', type: 'button', text: 'Delete this routine' });
+  del.addEventListener('click', async () => {
+    if (!confirm('Delete “' + r.name + '”? Its schedule goes with it.')) return;
+    try { await routineAct({ action: 'remove', id: r.id }); toast('Deleted.'); closePanel(); loadAgentsPage(); } catch (e) { failed(e); }
+  });
+  body.replaceChildren(h('div', { class: 'card' }, h('h2', null, 'Steps'), steps),
+    h('div', { class: 'card' }, h('h2', null, 'What it may do'), h('div', { class: 'field-note', text: 'It follows these steps in the agent’s browser, clicking and typing as you did, without asking. It reads each page and adapts if it looks different. It cannot use your files, shell or mail, and it never deletes or posts. If a page needs a password or a code, it asks you to take over. Your rules and Pause all still apply.' }),
+      h('div', { class: 'btn-row' }, run)), sched, h('div', { class: 'btn-row' }, del));
+}
+
+// ---------- named agents ----------
+// An agent is a conversation with its own name, instructions and, if you like, its own model, and a switch that lets it
+// look and not touch. It is the same Talaria with those added: it can never do more than you have allowed.
+const AG = { available: false, agents: [], profiles: [], default_profile: '', colors: [], max: 8 };
+async function loadPersonas() {
+  try { const d = await api('/api/personas'); Object.assign(AG, { available: !!d.available, agents: d.agents || [], profiles: d.profiles || [], default_profile: d.default_profile || '', colors: d.colors || CHAN_COLORS, max: d.max || 8 }); }
+  catch (e) { if (e instanceof AuthError) return; }
+}
+function agentsCard() {
+  if (!AG.available) return null;
+  const card = h('div', { class: 'card' }, h('h2', null, 'Your agents', h('small', { text: AG.agents.length ? AG.agents.length + ' of ' + AG.max : '' })));
+  if (!AG.agents.length) card.append(h('div', { class: 'field-note', text: 'Give a job its own agent: a name, what it is for, how it should behave, and optionally its own model. For example “Inbox”, which only reads and sorts your mail. Each keeps its own conversation.' }));
+  const rows = h('div', { class: 'rows' });
+  for (const a of AG.agents) {
+    rows.append(h('div', { class: 'row' }, h('span', { class: 'chan-ico chan ' + a.color, text: a.icon || a.name.slice(0, 1).toUpperCase() }),
+      h('span', { class: 'grow' }, h('span', { class: 't', text: a.name + (a.active ? ' · open now' : '') }), h('span', { class: 's', text: [a.read_only ? 'Looks only' : 'Can act as you allow', a.profile ? 'Model ' + a.profile : ''].filter(Boolean).join(' · ') })),
+      h('span', { class: 'acts keep' }, h('button', { class: 'btn small primary', type: 'button', text: 'Chat', onclick: () => chatWithAgent(a) }), h('button', { class: 'btn small', type: 'button', text: 'Edit', onclick: () => openAgentForm(a) }))));
+  }
+  if (AG.agents.length) card.append(rows);
+  if (AG.agents.length < AG.max) card.append(h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'button', text: 'New agent', onclick: () => openAgentForm(null) })));
+  return card;
+}
+async function chatWithAgent(a) {
+  try { await api('/api/personas', { method: 'POST', body: { action: 'chat', id: a.id } }); } catch (e) { failed(e); return; }
+  closePanel(); location.hash = '#chat';
+  await loadState(); S.pinned = true; toBottom(); loadPersonas();
+}
+function openAgentForm(a) {
+  const body = openPanel(a ? a.name : 'New agent', 'A name, what it is for, and how it should behave');
+  body.className = 'panel-body';
+  let color = a ? a.color : 'brass';
+  const name = h('input', { type: 'text', maxlength: '30', placeholder: 'Inbox', autocomplete: 'off' });
+  const iconIn = h('input', { type: 'text', maxlength: '8', placeholder: '📥', autocomplete: 'off' });
+  const how = h('textarea', { maxlength: '1500', placeholder: 'For example: You look after my inbox. Sort what needs me from what can wait, draft replies but never send them, and keep answers to a few lines.' });
+  const model = h('select', { class: 'rule-select', 'aria-label': 'Model' }, h('option', { value: '', text: 'Same as the chat' }), AG.profiles.map((p) => h('option', { value: p, text: p + (p === AG.default_profile ? ' (default)' : '') })));
+  const look = h('input', { type: 'checkbox' });
+  if (a) { name.value = a.name; iconIn.value = a.icon || ''; how.value = a.instructions; model.value = a.profile || ''; look.checked = !!a.read_only; }
+  const sw = h('div', { class: 'swatches' }, (AG.colors.length ? AG.colors : CHAN_COLORS).map((c) => h('button', { type: 'button', class: 'chan ' + c, 'aria-label': c, 'aria-pressed': c === color ? 'true' : 'false', onclick: () => { color = c; for (const b of sw.children) b.setAttribute('aria-pressed', b.classList.contains(c) ? 'true' : 'false'); } })));
+  const save = h('button', { class: 'btn primary', type: 'button', text: a ? 'Save changes' : 'Create agent' });
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      const d = await api('/api/personas', { method: 'POST', body: { action: 'save', id: a ? a.id : '', name: name.value, icon: iconIn.value, color, instructions: how.value, profile: model.value, read_only: look.checked } });
+      Object.assign(AG, { agents: d.agents || [] }); toast('Saved “' + d.saved + '”.'); closePanel(); if (S.tab === 'agents') renderAgentsPage();
+    } catch (e) { failed(e); save.disabled = false; }
+  });
+  const acts = [save];
+  if (a) {
+    acts.push(h('button', { class: 'btn', type: 'button', text: 'Chat with it', onclick: () => chatWithAgent(a) }));
+    acts.push(h('button', { class: 'btn', type: 'button', text: 'Remove', onclick: async () => {
+      if (!confirm('Remove “' + a.name + '”? Its conversations stay, as ordinary ones.')) return;
+      try { const d = await api('/api/personas', { method: 'POST', body: { action: 'remove', id: a.id } }); AG.agents = d.agents || []; toast('Removed.'); closePanel(); if (S.tab === 'agents') renderAgentsPage(); loadState(); } catch (e) { failed(e); }
+    } }));
+  }
+  body.replaceChildren(h('div', { class: 'card chan-form' },
+    h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Name' }), name),
+    h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Icon (an emoji or a couple of letters)' }), iconIn),
+    h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Colour' }), sw),
+    h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'What it is for and how it should behave' }), how),
+    AG.profiles.length > 1 ? h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Model' }), model) : null,
+    h('label', { class: 'check' }, look, ' Looks only: it can read and search, and nothing that asks for approval is open to it'),
+    h('div', { class: 'field-note', text: 'It follows your instructions inside the same safety rules as the rest of Talaria: it can never do more than you have allowed.' }),
+    h('div', { class: 'btn-row' }, acts)));
+  name.focus();
 }
 
 // ---------- the greeting an empty chat opens with ----------

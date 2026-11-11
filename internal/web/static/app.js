@@ -493,7 +493,7 @@ function renderChrome() {
   // The status names the current work, not just that something is working.
   const current = count === 1 ? 'Working · ' + doingText(S.agents[0]) : count > 1 ? `${count} agents working` : busy ? 'Working…' : null;
   $('#status-text').textContent = !S.connected ? 'Reconnecting…' : S.paused ? 'Paused · chat still works'
-    : current || (S.channel ? 'Channel · ' + S.channel.title : (S.side ? 'Side chat · ' : 'Online') + (S.side ? S.side : S.model ? ' · ' + S.model : ''));
+    : current || (S.channel ? (S.channel.agent ? 'Agent · ' + S.channel.agent + (S.channel.read_only ? ' · looks only' : '') : 'Channel · ' + S.channel.title) : (S.side ? 'Side chat · ' : 'Online') + (S.side ? S.side : S.model ? ' · ' + S.model : ''));
   const n = pendingAsks().length + pendingHandoffs().length;
   const ab = $('#agent-badge');
   ab.hidden = n === 0 && S.agents.length === 0; ab.textContent = String(n || S.agents.length); ab.classList.toggle('work', n === 0);
@@ -570,7 +570,7 @@ async function loadAgentsPage() {
   if (!body.children.length) body.replaceChildren(h('div', { class: 'skeleton' }));
   try {
     loadSuggestions(); loadRecipes().then(() => { if (S.tab === 'agents' && S.tasksView === 'next') renderAgentsPage(); });
-    const [d, c] = await Promise.all([api('/api/agents'), api('/api/control'), loadRuns()]);
+    const [d, c] = await Promise.all([api('/api/agents'), api('/api/control'), loadRuns(), loadRoutines(), loadPersonas()]);
     recentAgents = d.recent || []; standing = d.jobs || []; doneTasks = d.tasks || []; ctl = c; S.paused = c.paused;
   } catch (e) { if (e instanceof AuthError) return; toast(e.message); }
   renderAgentsPage();
@@ -618,6 +618,8 @@ function renderAgentsPage() {
   } else if (view === 'next') {
     const sug = suggestionsCard(); if (sug) out.push(sug);
     const rec = recipesEntryCard(); if (rec) out.push(rec);
+    const rou = routinesCard(); if (rou) out.push(rou);
+    const ag = agentsCard(); if (ag) out.push(ag);
     out.push(standing.length ? jobsCard(standing, 'Set up to run on their own')
       : h('div', { class: 'card' }, h('h2', null, 'Set up to run on their own'), h('div', { class: 'empty', text: 'Nothing yet. Ask for a reminder, a watch on your mail, or a goal to work on, and it will show here.' })));
   } else {

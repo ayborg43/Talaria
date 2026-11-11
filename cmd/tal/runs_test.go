@@ -7,10 +7,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"talaria/internal/agent"
 	"talaria/internal/app"
 	"talaria/internal/cron"
 	"talaria/internal/provider"
+	"talaria/internal/routine"
 	"talaria/internal/runlog"
 )
 
@@ -157,5 +160,84 @@ func TestAStepSaysWhatWasAskedInPlainWordsAndNothingWhenNothingWas(t *testing.T)
 		if got := briefArgs(a, "list_dir", args); got != want {
 			t.Errorf("%s: got %q, want %q", args, got, want)
 		}
+	}
+}
+
+func TestARoutineJobIsAskedForItsSavedStepsAndMayOnlyUseTheBrowserWithoutAsking(t *testing.T) {
+	runs := &runlog.Log{}
+	runner := runnerOn(t, &steerModel{}, runs)
+	runner.routines = &routine.Store{Path: filepath.Join(t.TempDir(), "routines.json")}
+	saved, err := runner.routines.Add("Orders", []routine.Step{{Kind: routine.Open, URL: "https://shop.test/orders"}, {Kind: routine.Click, Target: `the link "Latest"`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := webJob()
+	j.Routine, j.Prompt = saved.ID, "Repeat the saved routine Orders."
+	prompt, _, _, err := runner.prepare(j)
+	if err != nil || !strings.Contains(prompt, "1. Open https://shop.test/orders") || !strings.Contains(prompt, `2. Click the link "Latest"`) {
+		t.Fatalf("%q %v", prompt, err)
+	}
+	// Edited, the next run does the new thing; deleted, it is dropped instead of run from memory.
+	runner.routines.Remove(saved.ID)
+	if _, _, _, err := runner.prepare(j); !errors.Is(err, cron.ErrDrop) {
+		t.Fatalf("%v", err)
+	}
+
+	ok := routineApprove(false)
+	for _, name := range []string{"browser_click", "browser_type", "browser_press", "browser_select"} {
+		if !ok(name, "") {
+			t.Errorf("%s should be allowed", name)
+		}
+	}
+	for _, name := range []string{"shell", "write_file", "mcp_mail_send_email", "browser_handoff", "email_send", agent.Flagged("browser_click")} {
+		if ok(name, "") {
+			t.Errorf("%s must not be approved for a routine", name)
+		}
+	}
+}
+
+func TestSchedulingARoutineReplacesItsOldScheduleAndIsReadBack(t *testing.T) {
+	k := newJobKit(t)
+	store := &routine.Store{Path: filepath.Join(t.TempDir(), "routines.json")}
+	jobs := &cron.Store{Path: filepath.Join(t.TempDir(), "jobs.json")}
+	r, _ := store.Add("Orders", []routine.Step{{Kind: routine.Back}})
+	zone, _ := time.LoadLocation("Europe/Paris")
+	hooks := webRoutineHooks(k.runner.rt, store, jobs, zone, func() *cron.Scheduler { return nil })
+
+	if _, err := hooks.Schedule(r.ID, "fortnightly", "07:30"); err == nil {
+		t.Fatal("an unknown rhythm")
+	}
+	if _, err := hooks.Schedule(r.ID, "weekdays", "7:3"); err == nil {
+		t.Fatal("a bad time")
+	}
+	if _, err := hooks.Schedule(r.ID, "weekdays", "07:30"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hooks.Schedule(r.ID, "weekly:fri", "18:00"); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := jobs.List()
+	if len(all) != 1 || all[0].Routine != r.ID || all[0].AllowRisky || all[0].Kind != "" {
+		t.Fatalf("one schedule per routine, and it is not allowed risky tools: %+v", all)
+	}
+	got := hooks.Scheduled()[r.ID]
+	if got.Days != "weekly:fri" || got.At != "18:00" {
+		t.Fatalf("%+v", got)
+	}
+	if err := hooks.Unschedule(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := jobs.List(); len(all) != 0 {
+		t.Fatalf("%+v", all)
+	}
+	// Running one now is a background task that carries the routine's id.
+	if _, err := hooks.Run(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := jobs.List(); len(all) != 1 || all[0].Routine != r.ID || all[0].Kind != cron.KindTask {
+		t.Fatalf("%+v", all)
+	}
+	if _, err := hooks.Run("nope"); err == nil {
+		t.Fatal("no such routine")
 	}
 }

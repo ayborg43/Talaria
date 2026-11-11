@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"talaria/internal/gateway/chat"
 	"talaria/internal/provider"
 )
 
@@ -47,6 +48,7 @@ func (s *Server) AdoptActiveConversation() {
 	if s.Convos == nil {
 		return
 	}
+	defer s.applyPersona() // an open conversation with a named agent carries on talking as it
 	id := s.Convos.ActiveID()
 	msgs, _, _, _ := s.Hub.Snapshot()
 	var hist []provider.Message
@@ -68,7 +70,7 @@ func (s *Server) AdoptActiveConversation() {
 	}
 	s.Hub.Replace(cv.Display)
 	if s.Engine != nil {
-		s.Engine.SetHistory(ChatID, cv.Transcript)
+		s.setHistory(cv.Transcript)
 	}
 }
 
@@ -81,7 +83,7 @@ func (s *Server) showConversation(id string) error {
 	}
 	s.Hub.Replace(cv.Display)
 	if s.Engine != nil {
-		s.Engine.SetHistory(ChatID, cv.Transcript)
+		s.setHistory(cv.Transcript)
 	}
 	return nil
 }
@@ -187,21 +189,21 @@ func (s *Server) switchChat(w http.ResponseWriter, r *http.Request) {
 		}
 		s.Hub.Replace(nil)
 		if s.Engine != nil {
-			s.Engine.SetHistory(ChatID, nil)
+			s.setHistory(nil)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
 	case in.Side:
 		id := s.Convos.NewSide()
 		s.Hub.Replace(nil)
 		if s.Engine != nil {
-			s.Engine.SetHistory(ChatID, nil)
+			s.setHistory(nil)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
 	case in.New:
 		id := s.Convos.New()
 		s.Hub.Replace(nil)
 		if s.Engine != nil {
-			s.Engine.SetHistory(ChatID, nil)
+			s.setHistory(nil)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
 	case strings.TrimSpace(in.Open) != "":
@@ -226,7 +228,33 @@ func (s *Server) newConversation() string {
 	id := s.Convos.New()
 	s.Hub.Replace(nil)
 	if s.Engine != nil {
-		s.Engine.SetHistory(ChatID, nil)
+		s.setHistory(nil)
 	}
 	return id
+}
+
+// setHistory puts a conversation's transcript back into the chat's agent and has it talk as the named agent that
+// conversation is with, if it is with one: its instructions, its model, and its limits.
+func (s *Server) setHistory(transcript []provider.Message) {
+	if s.Engine == nil {
+		return
+	}
+	s.Engine.SetHistory(ChatID, transcript)
+	s.applyPersona()
+}
+
+// applyPersona makes the chat's agent the named agent of the open conversation, or the usual one.
+func (s *Server) applyPersona() {
+	if s.Engine == nil {
+		return
+	}
+	var p *chat.Persona
+	if s.Agents != nil && s.Convos != nil {
+		if id := s.Convos.ActiveAgent(); id != "" {
+			if a, ok := s.Agents.Get(id); ok {
+				p = &chat.Persona{Name: a.Name, System: a.System(), Profile: a.Profile, ReadOnly: a.ReadOnly}
+			}
+		}
+	}
+	s.Engine.SetPersona(ChatID, p)
 }

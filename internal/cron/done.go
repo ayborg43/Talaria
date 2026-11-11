@@ -166,3 +166,20 @@ func StartFollowUp(s *Store, ctl Control, gateway string, chatID int64, name, pr
 	}
 	return j, nil
 }
+
+// StartRoutine starts a saved routine once, now, as a background task. It is like any task the user starts, and like a
+// follow-up it stays within the same limit on how many run at once.
+func StartRoutine(s *Store, ctl Control, gateway string, chatID int64, name, routineID string) (Job, error) {
+	if gateway == "" {
+		gateway = DefaultGateway
+	}
+	j, err := s.AddTask(Job{Name: name, Kind: KindTask, Prompt: "Repeat the saved routine " + name + ".", Gateway: gateway, ChatID: chatID, Routine: routineID, TimeoutSec: defaultTaskMinutes * 60},
+		runningTasks(ctl, gateway, chatID), maxTasksPerChat)
+	if err != nil {
+		return Job{}, err
+	}
+	if ctl != nil {
+		ctl.Wake()
+	}
+	return j, nil
+}

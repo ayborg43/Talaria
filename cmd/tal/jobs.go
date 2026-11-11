@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"talaria/internal/agent"
+	"talaria/internal/routine"
 	"talaria/internal/runlog"
 	"time"
 
@@ -58,6 +59,8 @@ type jobRunner struct {
 	routine func() string
 	// runs keeps a short record of each run of a web chat's jobs, for the Activity view and for steering a running task.
 	runs *runlog.Log
+	// routines holds the routines the user recorded; a job that names one repeats it.
+	routines *routine.Store
 }
 
 func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
@@ -102,8 +105,12 @@ func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
 	}
 
 	// Nobody is watching: risky tools run only if the job was created with allow_risky.
+	approve := func(string, string) bool { return r.yolo || j.AllowRisky }
+	if j.Routine != "" {
+		approve = routineApprove(r.yolo || j.AllowRisky)
+	}
 	a := r.rt.NewAgent(app.AgentOptions{
-		Approve:     func(string, string) bool { return r.yolo || j.AllowRisky },
+		Approve:     approve,
 		ExtraSystem: note,
 		// Only for the activity log, which says whose job made each call. A job has no
 		// cron tools: it must not schedule more jobs.
@@ -111,6 +118,7 @@ func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
 		// The morning brief may leave suggestions for the user to start or hide; no other job proposes anything.
 		Suggest: j.Kind == "" && j.Name == briefName,
 	})
+	a.RefuseRisky = j.Routine != "" // a routine clicks and types as shown, but never deletes or posts
 	if r.sink != nil {
 		id := activity.ID(ctx)
 		a.OnToolStart = func(name, _ string) { activity.Note(r.sink, id, name) }
@@ -149,6 +157,20 @@ func (r *jobRunner) environment(ctx context.Context, name string) (execenv.Env, 
 // no longer open is dropped, and one that has used its allowance of check-ins
 // pauses the goal and says so instead of running.
 func (r *jobRunner) prepare(j cron.Job) (prompt, note, final string, err error) {
+	if j.Routine != "" { // the steps are read now, so a routine the user has edited or deleted is run as it is
+		if r.routines == nil {
+			return "", "", "", cron.ErrDrop
+		}
+		rt, ok := r.routines.Get(j.Routine)
+		if !ok {
+			return "", "", "", cron.ErrDrop
+		}
+		note = r.taskNote
+		if note == "" {
+			note = taskNote
+		}
+		return rt.Prompt(), note, "", nil
+	}
 	switch j.Kind {
 	case cron.KindTask:
 		note = r.taskNote
@@ -266,4 +288,20 @@ func briefArgs(a *agent.Agent, name, args string) string {
 		}
 	}
 	return a.Safe(args)
+}
+
+// routineTools are the browser actions a routine may take without asking: it is repeating what the user did by hand.
+var routineTools = []string{"browser_click", "browser_type", "browser_press", "browser_select"}
+
+// routineApprove is the approver of a run that repeats a routine. It says yes to those browser actions and to
+// nothing else (no shell, no files, no mail), and never to a call flagged because it follows something read outside.
+// A call that would delete or post is refused before it gets here (Agent.RefuseRisky). With wider is set the job
+// already had leave to use risky tools, which a routine does not narrow.
+func routineApprove(wider bool) func(name, args string) bool {
+	return func(name, _ string) bool {
+		if wider {
+			return true
+		}
+		return !agent.IsFlagged(name) && slices.Contains(routineTools, name)
+	}
 }

@@ -547,7 +547,7 @@ func TestAMissingCardIsLeftOutNotWrittenAsTheWordNull(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(m), "body.replaceChildren(...[handoffBar(), busyBar, picker,") || !strings.Contains(string(m), ".filter(Boolean));") {
+	if !strings.Contains(string(m), "body.replaceChildren(...[handoffBar(), recordBar(), busyBar, picker,") || !strings.Contains(string(m), ".filter(Boolean));") {
 		t.Error("the browser panel no longer filters out a missing bar")
 	}
 }

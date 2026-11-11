@@ -58,6 +58,9 @@ type Page struct {
 	stop      func()
 
 	mu       sync.Mutex // one action at a time
+	castMu   sync.Mutex // guards the live view (see live.go)
+	castStop func()
+	castGen  int
 	refs     map[int]Element
 	lastURL  string
 	lastUsed atomic.Int64 // unix nanoseconds

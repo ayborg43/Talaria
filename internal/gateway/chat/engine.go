@@ -110,8 +110,12 @@ type chat struct {
 	pending []provider.Message // a stored conversation to take up when the next agent is built
 	cancel  context.CancelFunc
 	runCtx  context.Context
-	profile string     // model profile chosen with /model; "" is the default
-	live    *liveReply // the reply being streamed, while a task runs
+	profile string // model profile chosen with /model; "" is the default
+	// persona is the named agent this chat is talking with now, or nil; baseSystem is the system prompt the agent was
+	// built with, to which the persona's is added.
+	persona    *Persona
+	baseSystem string
+	live       *liveReply // the reply being streamed, while a task runs
 
 	envName      string             // environment chosen with /env; "" is the default
 	applied      string             // the environment this chat's agent is using now
@@ -408,6 +412,46 @@ func (e *Engine) History(chatID int64) []provider.Message {
 	return c.agent.Transcript()
 }
 
+// Persona is a named agent a conversation can take on: instructions added to the model's, a model profile of its
+// own, and, if ReadOnly, no tool that needs approval.
+type Persona struct {
+	Name     string
+	System   string // what the model is told, added after its usual instructions
+	Profile  string // the model profile it uses; "" follows the chat's
+	ReadOnly bool
+}
+
+// SetPersona makes the chat talk with a named agent, or with the usual one when p is nil. Call it after SetHistory,
+// which is what brings the conversation's own transcript back: the new instructions then replace the old ones in it.
+func (e *Engine) SetPersona(chatID int64, p *Persona) {
+	c := e.chatFor(chatID)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.persona = p
+	c.applyPersona()
+}
+
+// Persona is the named agent the chat is talking with now, or nil.
+func (e *Engine) Persona(chatID int64) *Persona {
+	c := e.chatFor(chatID)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.persona
+}
+
+// applyPersona puts the persona's instructions and limits on the chat's agent. The caller holds c.mu.
+func (c *chat) applyPersona() {
+	if c.agent == nil {
+		return
+	}
+	system := c.baseSystem
+	if c.persona != nil && c.persona.System != "" {
+		system += "\n\n" + c.persona.System
+	}
+	c.agent.SetSystem(system)
+	c.agent.ReadOnly = c.persona != nil && c.persona.ReadOnly
+}
+
 // SetHistory puts a stored conversation back into the chat: the running task
 // stops, and the next message carries on from the stored one. Nil starts
 // blank, forgetting what was there (the caller keeps it if it matters).
@@ -473,6 +517,8 @@ func (e *Engine) runOneWith(c *chat, text string, job *resumeJob) {
 	}
 	if c.agent == nil {
 		c.agent = e.NewAgent(c.id, func(name, args string) bool { return e.askApproval(c, name, args) })
+		c.baseSystem = c.agent.System
+		c.applyPersona()
 		c.applied, c.turns = e.defaultEnv(), 0 // a new agent starts in the default environment
 		if e.Held != nil {
 			c.agent.Defer = e.deferRequest(c)
@@ -749,6 +795,9 @@ func (e *Engine) Selection(chatID int64) (profile, environment string) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.persona != nil && c.persona.Profile != "" {
+		return c.persona.Profile, c.envName
+	}
 	return c.profile, c.envName
 }
 

@@ -388,7 +388,10 @@ func (g *Engine) applyBackend(c *chat, a *agent.Agent, text string) {
 		return
 	}
 	c.mu.Lock()
-	pinned := c.profile
+	pinned, ofAgent := c.profile, false
+	if c.persona != nil && c.persona.Profile != "" {
+		pinned, ofAgent = c.persona.Profile, true // a named agent's own model wins over the chat's choice while it is the one talking
+	}
 	c.mu.Unlock()
 	name, effort := g.route(text, pinned)
 	use := pinned
@@ -406,11 +409,13 @@ func (g *Engine) applyBackend(c *chat, a *agent.Agent, text string) {
 	be, err := open(use)
 	if err != nil && use != b.Default {
 		g.send(c.id, fmt.Sprintf("The %s profile cannot be used now (%v), so I'm using %s.", use, err, b.Default))
-		c.mu.Lock()
-		c.profile = ""
-		c.mu.Unlock()
-		if g.Prefs != nil {
-			g.Prefs.SetProfile(c.id, "")
+		if !ofAgent { // the chat's own choice is forgotten; a named agent's is left for its owner to fix
+			c.mu.Lock()
+			c.profile = ""
+			c.mu.Unlock()
+			if g.Prefs != nil {
+				g.Prefs.SetProfile(c.id, "")
+			}
 		}
 		be, err = b.Open(b.Default)
 	}
