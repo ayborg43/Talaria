@@ -82,7 +82,18 @@ async function showBrowser(body) {
   const addr = h('input', { type: 'text', class: 'addr', 'aria-label': 'Address', autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', enterkeyhint: 'go' });
   addr.value = (tabs.find((t) => t.id === COMPUTER.tab) || {}).url || '';
   const img = h('img', { class: 'shot', alt: 'The page the agent has open', draggable: 'false' });
-  const stage = h('div', { class: 'stage' }, img);
+  const stage = h('div', { class: 'stage', tabindex: '0', 'aria-label': 'Page. Click a field here, then type: on a keyboard, type directly; on a phone, use the box under the page.' }, img);
+  // Signing in without aiming at a picture: a real form (so a password manager can fill it) whose values are
+  // typed into the page's own username and password fields and then cleared here. Shown only on a page that
+  // is asking for a password; the watcher below keeps that up to date as the page moves.
+  const cur = tabs.find((t) => t.id === COMPUTER.tab) || {};
+  const userIn = h('input', { type: 'text', name: 'username', autocomplete: 'username', 'aria-label': 'Username or email', placeholder: 'Username or email', autocapitalize: 'none', spellcheck: 'false', enterkeyhint: 'next' });
+  const passIn = h('input', { type: 'password', name: 'password', autocomplete: 'current-password', 'aria-label': 'Password', placeholder: 'Password', enterkeyhint: 'go' });
+  const loginBtn = h('button', { class: 'btn primary', type: 'submit', text: 'Fill sign-in fields' });
+  const loginForm = h('form', { class: 'login-form', hidden: cur.login ? false : true },
+    h('div', { class: 'login-title', text: 'This page asks you to sign in' }),
+    userIn, passIn, loginBtn,
+    h('div', { class: 'field-note', text: 'These go into the page’s own fields and nowhere else: not to the agent, not saved here. Then tap the page’s Sign in button in the picture, or press Enter below.' }));
   const livePill = h('span', { class: 'pill ok live-pill', text: 'LIVE', hidden: '' });
   let alive = true, busy = false, last = '', live = false;
   // one picture, fetched now: the fallback when no live view can be had, and a refresh after a tap
@@ -119,6 +130,7 @@ async function showBrowser(body) {
       const t = ((await api('/api/browser')).tabs || []).find((x) => x.id === COMPUTER.tab);
       if (!t) { alive = false; showComputer(); return; }
       if (t.url && document.activeElement !== addr) addr.value = t.url;
+      loginForm.hidden = !t.login; // a page that starts (or stops) asking for a password gets (or loses) the sign-in box
     } catch { /* the next one will try again */ }
   };
   const watcher = setInterval(watch, 3000);
@@ -134,11 +146,11 @@ async function showBrowser(body) {
   const setMode = (kind) => {
     typed.value = ''; prev = '';
     typed.type = kind === 'password' ? 'password' : 'text';
-    typed.setAttribute('autocomplete', kind === 'password' ? 'current-password' : 'off');
-    typed.placeholder = kind === 'password' ? 'Password: your password manager can fill this' : 'Type into the page…';
+    typed.setAttribute('autocomplete', kind === 'password' ? 'current-password' : kind === 'text' ? 'username' : 'off');
+    typed.placeholder = kind === 'password' ? 'Password — tap here and type (manager can fill)' : kind === 'text' ? 'Tap here and type into the field you tapped' : 'Tap a field in the page, then type here…';
     modeBtn.textContent = kind === 'password' ? 'Show text' : 'Password';
     typed.classList.toggle('secret', kind === 'password');
-    if (kind !== 'none') { try { typed.focus({ preventScroll: true }); } catch { /* a phone may want the box tapped */ } }
+    if (kind !== 'none') { try { typed.focus({ preventScroll: false }); typed.scrollIntoView({ block: 'nearest' }); } catch { /* a phone may want the box tapped */ } }
   };
   const modeBtn = h('button', { type: 'button', class: 'key', text: 'Password', title: 'Type a password into a masked box', onclick: () => setMode(typed.type === 'password' ? 'text' : 'password') });
   const flush = () => {
@@ -154,15 +166,48 @@ async function showBrowser(body) {
   };
   typed.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(flush, 60); });
   typed.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(timer); flush(); chain = chain.then(async () => { await post({ kind: 'key', key: 'Enter' }); if (!live) shot(); }); } });
+  // Nothing else may reach the page before what is still in the typing box: a tap on another field (or on
+  // Sign in) used to be able to overtake the last letters, which then landed in the wrong field.
+  const flushNow = async () => { clearTimeout(timer); flush(); await chain; };
 
   const act = async (a) => {
+    await flushNow();
     const r = await post(a);
     if (r && r.url && document.activeElement !== addr) addr.value = r.url;
-    if (r && a.kind === 'click') setMode(r.focus || 'none'); // a tap on a field opens the right box to type into
+    if (r && (a.kind === 'click' || a.kind === 'key')) setMode(r.focus || 'none'); // a tap (or Tab) on a field opens the right box to type into
     if (!live) await shot();
   };
+  loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!userIn.value && !passIn.value) { (passIn.value ? userIn : passIn).focus(); toast('Type your username or password first.'); return; }
+    loginBtn.disabled = true;
+    const r = await post({ kind: 'login', username: userIn.value, password: passIn.value });
+    loginBtn.disabled = false;
+    if (!r) return;
+    userIn.value = ''; passIn.value = ''; // filled into the page; kept nowhere here
+    toast('Filled in the page. Now tap its Sign in button in the picture.');
+    if (!live) await shot();
+    stage.scrollIntoView({ block: 'nearest' });
+  });
+  // With a real keyboard, typing straight at the picture works too: click a field, then just type.
+  stage.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const names = { Enter: 'Enter', Tab: 'Tab', Escape: 'Escape', Backspace: 'Backspace', Delete: 'Delete', ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown', ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight' };
+    if (names[e.key]) { e.preventDefault(); act({ kind: 'key', key: names[e.key] }); }
+    else if (e.key.length === 1) { e.preventDefault(); const text = e.key; chain = chain.then(async () => { await post({ kind: 'type', text }); if (!live) shot(); }); }
+  });
+  stage.addEventListener('paste', (e) => { const text = (e.clipboardData || {}).getData ? e.clipboardData.getData('text') : ''; if (text) { e.preventDefault(); chain = chain.then(async () => { await post({ kind: 'type', text }); if (!live) shot(); }); } });
   const point = (e) => { const b = img.getBoundingClientRect(); return { x: Math.round(((e.clientX - b.left) / b.width) * W), y: Math.round(((e.clientY - b.top) / b.height) * H) }; };
-  img.addEventListener('click', (e) => act({ kind: 'click', ...point(e) }));
+  let swipe = null, ateClick = false;
+  img.addEventListener('pointerdown', (e) => { swipe = { y: e.clientY, x: e.clientX }; });
+  img.addEventListener('pointerup', (e) => {
+    if (!swipe) return;
+    const dy = e.clientY - swipe.y, at = point(e); swipe = null;
+    if (Math.abs(dy) < 24) return; // a tap, not a swipe: the click below handles it
+    ateClick = true; // the tap this swipe ends with must not also click what it lands on
+    act({ kind: 'wheel', ...at, dy: dy < 0 ? 400 : -400 }); // swipe up scrolls the page down, as a finger expects
+  });
+  img.addEventListener('click', (e) => { if (ateClick) { ateClick = false; return; } try { stage.focus({ preventScroll: true }); } catch { /* not focusable everywhere */ } act({ kind: 'click', ...point(e) }); });
   let wheelAt = 0;
   img.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -184,13 +229,14 @@ async function showBrowser(body) {
     h('div', { class: 'toolbar' },
       ikey('back', 'Back a page', () => act({ kind: 'back' })),
       addr, livePill, h('button', { type: 'button', class: 'key go', text: 'Go', onclick: go })),
+    loginForm,
     stage,
-    h('div', { class: 'toolbar' }, typed, modeBtn),
+    h('div', { class: 'toolbar typing' }, typed, modeBtn),
     h('div', { class: 'toolbar keys' }, key('Enter', 'Enter'), key('Tab', 'Tab'), key('Esc', 'Escape'), ikey('del', 'Backspace', () => act({ kind: 'key', key: 'Backspace' })),
       ikey('up', 'Up arrow', () => act({ kind: 'key', key: 'ArrowUp' })), ikey('down', 'Down arrow', () => act({ kind: 'key', key: 'ArrowDown' })),
       ikey('refresh', 'Reload the view', () => { if (live) { stopLive(); startLive(); } else shot(); }),
       ikey('zoom', 'Make the picture bigger or smaller', () => stage.classList.toggle('zoomed'))),
-    h('div', { class: 'field-note', text: 'You are working the same tab the agent uses. Tap a field, then type below: it goes straight to the page. It is told you took control, and reads the page again before it carries on. What you type here is not shown to it.' })].filter(Boolean));
+    h('div', { class: 'field-note', text: 'You are working the same tab the agent uses. For a sign-in, use the username and password boxes above. For anything else: tap a field in the picture, then type in the box under it (or just type, with a keyboard). Swipe the picture to scroll. It is told you took control, and reads the page again before it carries on. What you type here is not shown to it.' })].filter(Boolean));
   startLive(); poll();
 }
 

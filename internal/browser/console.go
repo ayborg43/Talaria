@@ -148,6 +148,92 @@ func (p *Page) GoBack(ctx context.Context) error {
 	return nil
 }
 
+const hasPasswordJS = `!!document.querySelector('input[type="password"]')`
+
+// HasPassword says whether the page as it is now asks for a password, so the
+// app can offer its sign-in box instead of making the user tap a tiny field
+// in a picture of the page. It says only that one is there, never its value.
+func (p *Page) HasPassword(ctx context.Context) bool {
+	var has bool
+	if err := p.eval(ctx, hasPasswordJS, &has); err != nil {
+		return false
+	}
+	return has
+}
+
+// FillLogin puts the user's own username and password into the page's sign-in
+// fields, username first, so they never have to aim at fields in a picture of
+// the page. Either may be empty (a site may already have one filled); what is
+// typed is the user's, so like InsertText it is never returned, logged or
+// shown to the model. It does not submit the form: the user taps the page's
+// own sign-in button, or presses Enter, when they are ready.
+func (p *Page) FillLogin(ctx context.Context, username, password string) error {
+	if len(username) > 4000 || len(password) > 4000 {
+		return errors.New("that is too much to type at once")
+	}
+	if username == "" && password == "" {
+		return errors.New("type a username or a password first")
+	}
+	snap, err := p.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	passAt := -1
+	for i, e := range snap.Elements {
+		if e.Tag == "input" && e.Type == "password" {
+			passAt = i
+			break
+		}
+	}
+	if passAt < 0 {
+		return errors.New("this page has no password field to fill: tap the field in the page and type below instead")
+	}
+	if username != "" {
+		ref, ok := loginUserRef(snap.Elements[:passAt])
+		if !ok {
+			return errors.New("could not find the username field on this page: tap it in the page and type below instead")
+		}
+		p.took()
+		if err := p.Type(ctx, ref, username, true, false); err != nil {
+			return err
+		}
+	}
+	if password != "" {
+		p.took()
+		if err := p.TypeInto(ctx, snap.Elements[passAt].Ref, password, true, false, "password"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// loginUserRef picks the field a username belongs in among the elements before
+// the password field: one labelled for a user, email or login if there is one,
+// else the nearest plain text-like field. A search box is never it.
+func loginUserRef(els []Element) (int, bool) {
+	nearest, hinted := 0, 0
+	for _, e := range els {
+		if e.Tag != "input" || e.Disabled {
+			continue
+		}
+		switch e.Type {
+		case "", "text", "email", "tel":
+		default:
+			continue
+		}
+		nearest = e.Ref
+		hint := strings.ToLower(e.Label + " " + e.Placeholder)
+		if strings.Contains(hint, "user") || strings.Contains(hint, "email") || strings.Contains(hint, "e-mail") ||
+			strings.Contains(hint, "login") || strings.Contains(hint, "phone") || strings.Contains(hint, "account") {
+			hinted = e.Ref
+		}
+	}
+	if hinted != 0 {
+		return hinted, true
+	}
+	return nearest, nearest != 0
+}
+
 // focusKindJS says what the page has focused: a password field, some other text field, or nothing that takes typing.
 const focusKindJS = `(() => {
   const e = document.activeElement;

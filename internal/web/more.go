@@ -557,6 +557,9 @@ func (s *Server) computerTransfer(w http.ResponseWriter, r *http.Request) {
 type BrowserTab struct {
 	ID  string `json:"id"`
 	URL string `json:"url"`
+	// Login says the page is asking for a password now, so the app offers its
+	// sign-in box (username and password typed straight into the page).
+	Login bool `json:"login"`
 }
 
 func (s *Server) managers() []*browser.Manager {
@@ -585,7 +588,7 @@ func (s *Server) browserTabs(w http.ResponseWriter, r *http.Request) {
 	for i, m := range s.managers() {
 		for _, owner := range m.Owners() {
 			if p := m.Peek(owner); p != nil {
-				tabs = append(tabs, BrowserTab{ID: strconv.Itoa(i) + "." + owner, URL: p.Where(ctx)})
+				tabs = append(tabs, BrowserTab{ID: strconv.Itoa(i) + "." + owner, URL: p.Where(ctx), Login: p.HasPassword(ctx)})
 			}
 		}
 	}
@@ -614,14 +617,16 @@ func (s *Server) browserShot(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) browserAct(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		ID   string  `json:"id"`
-		Kind string  `json:"kind"` // click, type, replace, key, wheel, open, back
-		X    float64 `json:"x"`
-		Y    float64 `json:"y"`
-		DY   float64 `json:"dy"`
-		Text string  `json:"text"`
-		Key  string  `json:"key"`
-		URL  string  `json:"url"`
+		ID       string  `json:"id"`
+		Kind     string  `json:"kind"` // click, type, replace, key, wheel, open, back, login
+		X        float64 `json:"x"`
+		Y        float64 `json:"y"`
+		DY       float64 `json:"dy"`
+		Text     string  `json:"text"`
+		Key      string  `json:"key"`
+		URL      string  `json:"url"`
+		Username string  `json:"username"` // login only: the user's own, typed into the page and never kept
+		Password string  `json:"password"` // login only: likewise, and never echoed back
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -649,6 +654,8 @@ func (s *Server) browserAct(w http.ResponseWriter, r *http.Request) {
 		err = m.Go(ctx, p, in.URL)
 	case "back":
 		err = p.GoBack(ctx)
+	case "login":
+		err = p.FillLogin(ctx, in.Username, in.Password)
 	default:
 		err = errors.New("unknown action")
 	}
@@ -657,7 +664,7 @@ func (s *Server) browserAct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{"ok": true, "url": p.Where(ctx)}
-	if in.Kind == "click" { // what the click focused, so the page can offer the right box to type into
+	if in.Kind == "click" || in.Kind == "key" || in.Kind == "login" { // what now has focus, so the page can offer the right box to type into (Tab can move it to a password field)
 		out["focus"] = p.FocusKind(ctx)
 	}
 	writeJSON(w, http.StatusOK, out)

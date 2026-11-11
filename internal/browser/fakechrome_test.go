@@ -365,6 +365,15 @@ func (s *fakeState) evaluate(expr string) any {
 			return val("text")
 		}
 		return val("none")
+	case expr == hasPasswordJS:
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		for _, e := range s.els {
+			if e.Type == "password" {
+				return val(true)
+			}
+		}
+		return val(false)
 	case expr == "location.href":
 		s.mu.Lock()
 		defer s.mu.Unlock()

@@ -773,9 +773,13 @@ holds live login cookies, so keep Dokploy access tight and back up the data volu
   app password under Settings, Connections is the reliable route, and X can also be used through its API token.
 - **The browser view is live and typing is direct.** The page picture is a live view (a stream of pictures sent when the page changes, drawn by a
   plain image, shown only while the panel is open, at most three at once) with a **LIVE** mark; if it cannot be had it falls back to a picture
-  about every second and a half. What you type in the box under it goes to the page as you type, only the part that changed. Tapping a password
-  field switches the box to a masked one (**Password** switches by hand), so your phone's password manager can fill it, and the value goes to
-  the page and nowhere else: it is not shown to the agent, logged or kept. While the agent is working in the tab and nobody has asked for you,
+  about every second and a half. A page that asks for a password gets a **sign-in box** above the picture — real username and password fields
+  (your password manager can fill them) with **Fill sign-in fields**, which types them into the page's own fields and clears them here, so you
+  never have to aim at a tiny field in a picture; you then tap the page's own Sign in button. For anything else, tap a field in the picture and
+  type in the box under it (it sticks to the bottom of the screen), or, with a keyboard, just type at the picture; swipe the picture to scroll.
+  What you type goes to the page as you type, only the part that changed, and a tap never overtakes letters still on their way. Tapping a password
+  field (or tabbing into one) switches the box to a masked one (**Password** switches by hand), and the value goes to the page and nowhere else:
+  it is not shown to the agent, logged or kept. While the agent is working in the tab and nobody has asked for you,
   the panel says so and offers **Stop it**.
 - **Suggestions you start with a tap.** The agent can leave suggestions (`idea_add`, with a title, why, a source and a prompt), and the morning brief
   proposes up to three a day after it has written the brief, skipping any already open. The newest waits above the message box as **Suggested**, with
