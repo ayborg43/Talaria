@@ -172,6 +172,9 @@ type Server struct {
 	// Browsers lists the browsers the agent has started, for taking control of a tab. Nil offers none.
 	Browsers func() []*browser.Manager
 
+	voiceMu sync.Mutex
+	voice   voiceLimiter
+
 	receiptMu sync.Mutex
 	cacheMu   sync.Mutex
 	todayAt   time.Time
@@ -227,6 +230,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/handoff", s.authed(s.handoffPost))
 	mux.HandleFunc("GET /api/rules", s.authed(s.rulesGet))
 	mux.HandleFunc("POST /api/rules", s.authed(s.rulesPost))
+	mux.HandleFunc("GET /api/voice", s.authed(s.voiceGet))
+	mux.HandleFunc("POST /api/voice", s.authed(s.voicePost))
+	mux.HandleFunc("POST /api/voice/test", s.authed(s.voiceTest))
+	mux.HandleFunc("POST /api/transcribe", s.authed(s.transcribe))
 	mux.HandleFunc("GET /api/recipes", s.authed(s.recipesGet))
 	mux.HandleFunc("POST /api/recipes", s.authed(s.recipesPost))
 	mux.HandleFunc("GET /api/suggestions", s.authed(s.suggestionsGet))

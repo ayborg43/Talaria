@@ -783,6 +783,7 @@ function setupItems() {
   add('calendar', 'Your calendar', cc ? (cc.ok ? 'ready' : 'todo') : have ? 'unchecked' : 'todo', cc ? cc.detail : have ? 'Set up. Press Check again to try it.' : 'Only its own calendar is there. Add yours to see your day in the brief.', 'connections');
   const brief = S.brief || {};
   if (brief.available) add('brief', 'Morning brief', brief.enabled ? 'ready' : 'todo', brief.enabled ? 'Arrives at ' + brief.at + ' every day.' : 'Off. Turn it on under You to get one message each morning.', 'you');
+  add('voice', 'Voice notes', S.voice && S.voice.available ? 'ready' : 'todo', S.voice && S.voice.available ? 'Voice notes are typed out by ' + S.voice.model + '.' : 'Optional: record a note and have it typed out. Until a service is set up the button uses the browser’s own dictation, where there is one.', 'voice', true);
   add('push', 'Notifications on this device', S.push === 'on' ? 'ready' : S.push === 'unsupported' ? 'unchecked' : 'todo', S.push === 'on' ? 'On.' : S.push === 'needs-install' ? 'Add Talaria to your Home Screen first.' : S.push === 'denied' ? 'Blocked in the browser.' : 'Off: it cannot reach you when the app is closed.', 'notifications', true);
   const tg = (s.chats || []).find((c) => c.service === 'telegram');
   add('telegram', 'Telegram', tg && tg.connected ? 'ready' : 'todo', tg && tg.connected ? 'Connected.' : 'Not connected. Optional: lets it message you away from the app.', 'connections', true);
@@ -1280,4 +1281,172 @@ function routineCard(s) {
   const using = s.routine_using ? 'Routine jobs run on ' + s.routine_using + '.' : 'Routine jobs run on the same model as the chat.';
   return h('div', { class: 'card' }, h('h2', null, 'Routine jobs'),
     h('div', { class: 'field-note', text: 'Reminders, the morning brief and recipes run by themselves, and rarely need your strongest model. ' + using + ' A job that names its own model keeps it, and background tasks you start use the chat’s model.' }), sel);
+}
+
+// ---------- voice notes ----------
+// The microphone button records, turns the recording into a small mono 16 kHz WAV in the browser (every speech service
+// takes that, whatever the phone records in), and the server turns it into words with the speech service chosen in
+// Settings, Voice. The words land in the message box to check, or are sent at once if you chose that. Nothing is
+// stored: not on the phone, not on the server. With no speech service the button uses the browser's own dictation,
+// where it has one, as before.
+const VOICE = { cur: null, busy: false, wired: false };
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+function voiceServer() { return !!(S.voice && S.voice.available && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder && (window.AudioContext || window.webkitAudioContext)); }
+async function loadVoice() {
+  try { S.voice = await api('/api/voice'); } catch (e) { if (e instanceof AuthError) return; }
+  initMic();
+}
+function initMic() {
+  const mic = $('#mic'); if (!mic) return;
+  mic.hidden = !(voiceServer() || SpeechRec);
+  mic.setAttribute('aria-label', voiceServer() ? 'Record a voice note' : 'Dictate');
+  if (VOICE.wired) return;
+  VOICE.wired = true;
+  let dictating = null;
+  mic.addEventListener('click', () => {
+    if (voiceServer()) { if (VOICE.busy) return; if (VOICE.cur) stopVoice(); else startVoice(); return; }
+    if (!SpeechRec) return;
+    if (dictating) { dictating.stop(); return; }
+    const rec = dictating = new SpeechRec(); rec.lang = navigator.language; rec.interimResults = false; rec.continuous = false;
+    mic.classList.add('live');
+    rec.onresult = (e) => { input.value = (input.value + ' ' + [...e.results].map((r) => r[0].transcript).join(' ')).trim(); autosize(); renderChrome(); };
+    rec.onend = rec.onerror = () => { dictating = null; mic.classList.remove('live'); };
+    try { rec.start(); } catch { dictating = null; mic.classList.remove('live'); }
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && VOICE.cur) cancelVoice(); });
+}
+function voiceClock(ms) { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+function voiceBar(content) {
+  const bar = $('#voicebar'); if (!bar) return;
+  if (!content) { bar.hidden = true; bar.replaceChildren(); return; }
+  bar.hidden = false; bar.replaceChildren(content);
+}
+async function startVoice() {
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+  catch (e) { toast(e && e.name === 'NotAllowedError' ? 'The microphone is blocked. Allow it for this site in the browser or phone settings.' : 'No microphone could be opened.'); return; }
+  const chunks = [];
+  const rec = new MediaRecorder(stream);
+  const cur = VOICE.cur = { rec, stream, chunks, t0: Date.now(), cancelled: false, timer: 0 };
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  rec.onstop = () => finishVoice(cur);
+  const label = h('span', { class: 'grow', text: 'Recording 0:00' });
+  voiceBar(h('div', { class: 'voice-row' }, h('span', { class: 'rec-dot', 'aria-hidden': 'true' }), label,
+    h('button', { class: 'btn small', type: 'button', text: 'Cancel', onclick: cancelVoice }), h('button', { class: 'btn small primary', type: 'button', text: 'Done', onclick: stopVoice })));
+  const max = ((S.voice && S.voice.max_seconds) || 120) * 1000;
+  cur.timer = setInterval(() => {
+    const ms = Date.now() - cur.t0;
+    label.textContent = 'Recording ' + voiceClock(ms) + ' of ' + voiceClock(max);
+    if (ms >= max) { toast('That is the longest a voice note can be.'); stopVoice(); }
+  }, 250);
+  $('#mic').classList.add('live'); $('#mic').setAttribute('aria-label', 'Stop recording');
+  rec.start();
+}
+function endRecording(cur) {
+  clearInterval(cur.timer);
+  for (const t of cur.stream.getTracks()) t.stop(); // the microphone is released the moment recording ends
+  $('#mic').classList.remove('live'); $('#mic').setAttribute('aria-label', 'Record a voice note');
+}
+function stopVoice() { const cur = VOICE.cur; if (!cur || cur.rec.state === 'inactive') return; cur.rec.stop(); }
+function cancelVoice() { const cur = VOICE.cur; if (!cur) return; cur.cancelled = true; if (cur.rec.state !== 'inactive') cur.rec.stop(); else finishVoice(cur); }
+async function finishVoice(cur) {
+  if (VOICE.cur !== cur) return;
+  endRecording(cur);
+  VOICE.cur = null;
+  if (cur.cancelled) { voiceBar(null); return; }
+  VOICE.busy = true;
+  voiceBar(h('div', { class: 'voice-row' }, icon('spin'), h('span', { class: 'grow', text: 'Turning your voice into text…' })));
+  try {
+    if (!cur.chunks.length) { toast('Nothing was recorded. Check that the microphone is working.'); return; }
+    const wav = await blobToWav(new Blob(cur.chunks, { type: cur.rec.mimeType || 'audio/webm' }));
+    if (wav.seconds < 0.4) { toast('That was too short to hear.'); return; }
+    if (wav.peak < 0.01) { toast('I did not hear anything. Check that the microphone is working.'); return; }
+    const d = await api('/api/transcribe', { method: 'POST', raw: true, body: wav.blob });
+    const text = (d.text || '').trim();
+    if (!text) { toast('No words were heard.'); return; }
+    input.value = (input.value + ' ' + text).trim(); autosize(); renderChrome(); input.focus();
+    if (S.voice && S.voice.auto_send) $('#composer').requestSubmit();
+  } catch (e) { if (!(e instanceof AuthError)) toast(e.message || 'The voice note could not be turned into text.'); }
+  finally { VOICE.busy = false; voiceBar(null); }
+}
+// A recording in whatever the browser makes (webm, mp4) becomes mono 16-bit 16 kHz PCM in a WAV: small, and the one
+// format every speech service reads. peak is how loud it got, 0 to 1, so silence is not sent anywhere.
+async function blobToWav(blob) {
+  const AC = window.AudioContext || window.webkitAudioContext, OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const ctx = new AC();
+  let buf;
+  try { const ab = await blob.arrayBuffer(); buf = await new Promise((ok, no) => ctx.decodeAudioData(ab, ok, no)); }
+  catch { throw new Error('This browser could not read the recording.'); }
+  finally { ctx.close && ctx.close(); }
+  const rate = 16000, off = new OAC(1, Math.max(1, Math.ceil(buf.duration * rate)), rate);
+  const src = off.createBufferSource(); src.buffer = buf; src.connect(off.destination); src.start();
+  const out = await off.startRendering();
+  return encodeWav(out.getChannelData(0), rate);
+}
+function encodeWav(samples, rate) {
+  const n = samples.length, view = new DataView(new ArrayBuffer(44 + n * 2));
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) view.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, 'RIFF'); view.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, rate, true);
+  view.setUint32(28, rate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true); str(36, 'data'); view.setUint32(40, n * 2, true);
+  let peak = 0;
+  for (let i = 0; i < n; i++) {
+    const v = Math.max(-1, Math.min(1, samples[i]));
+    peak = Math.max(peak, Math.abs(v));
+    view.setInt16(44 + i * 2, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+  }
+  return { blob: new Blob([view], { type: 'audio/wav' }), peak, seconds: n / rate };
+}
+
+// ---------- settings: voice ----------
+async function saveVoice(body, done) {
+  try { S.voice = await api('/api/voice', { method: 'POST', body }); if (done) toast(done); }
+  catch (e) { failed(e); return false; }
+  initMic(); renderSettings();
+  return true;
+}
+function paneVoice() {
+  const v = S.voice;
+  if (!v) return [h('div', { class: 'card empty', text: 'Voice settings are not available here.' })];
+  const presets = v.presets || [];
+  const text = (id, label, value, ph, type) => h('div', { class: 'field' }, h('label', { class: 'field-label', for: id, text: label }), h('input', { id, type: type || 'text', value: value || '', placeholder: ph || '', autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false' }));
+  const status = v.available
+    ? h('div', { class: 'verdict ok' }, icon('check'), 'On: ' + (v.provider === 'muse' ? 'Meta Muse' : 'speech service') + ', model ' + v.model + (v.has_key ? ' · key from ' + v.key_source : ''))
+    : h('div', { class: 'note', text: SpeechRec ? 'Not set up. The microphone button uses your browser’s own dictation until you add a service.' : 'Not set up. Your browser has no dictation of its own, so the microphone button is hidden until you add a service.' });
+  const pick = h('select', { id: 'voice-preset', class: 'rule-select', 'aria-label': 'Speech service' }, h('option', { value: '', text: 'Choose a service…' }), presets.map((p) => h('option', { value: p.id, text: p.label })));
+  const note = h('div', { class: 'field-note', text: '' });
+  const set = (id, val) => { const el = $('#' + id); if (el) el.value = val || ''; };
+  pick.addEventListener('change', () => {
+    const p = presets.find((x) => x.id === pick.value); if (!p) return;
+    voiceProvider = p.provider; set('voice-base', p.base_url); set('voice-model', p.model); set('voice-keyenv', p.key_env);
+    note.textContent = p.note || 'Your voice goes to this service, with your key. Talaria stores neither.';
+  });
+  let voiceProvider = v.provider;
+  const auto = h('input', { type: 'checkbox', checked: !!v.auto_send });
+  const read = () => ({
+    provider: voiceProvider, base_url: $('#voice-base').value.trim(), model: $('#voice-model').value.trim(), api_key: $('#voice-key').value,
+    api_key_env: $('#voice-keyenv').value.trim(), language: $('#voice-lang').value.trim(), vocabulary: $('#voice-vocab').value.trim(),
+    auto_send: auto.checked, max_seconds: Number($('#voice-max').value) || 0,
+  });
+  const out = [h('div', { class: 'card' }, h('h2', null, 'Speech to text'), status,
+    h('div', { class: 'field-note', text: 'Record a voice note with the microphone button and it is typed out for you. Talaria stores no audio and no words: the recording goes to the service you choose, with your key, and is dropped when it is done.' }),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', for: 'voice-preset', text: 'Service' }), pick), note,
+    text('voice-base', 'Address', v.base_url, 'https://…'), text('voice-model', 'Model', v.model, 'whisper-1'),
+    text('voice-key', 'API key', '', v.has_key ? 'saved: leave blank to keep it' : 'paste it here', 'password'),
+    text('voice-keyenv', 'Or the name of a variable that holds it', v.api_key_env, 'OPENAI_API_KEY'),
+    text('voice-lang', 'Language (optional)', v.language, 'en  (Muse: English)'), text('voice-vocab', 'Names and terms to listen for (optional)', v.vocabulary, 'Talaria, Ayo, Lagos'),
+    text('voice-max', 'Longest voice note, in seconds', String(v.max_seconds || 120), '120', 'number'),
+    h('label', { class: 'opt' + (auto.checked ? ' on' : '') }, auto, h('span', { class: 'grow' }, h('b', { text: 'Send it as soon as it is typed out' }), h('span', { class: 's', text: 'Off by default: the words wait in the message box so you can check them first.' }))),
+    h('div', { class: 'field-note', text: 'Save first, then Test: the test sends a second of silence to the saved service and checks that it answers.' }),
+    h('div', { class: 'btn-row' },
+      h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: () => saveVoice(read(), 'Saved. It applies to your next voice note.') }),
+      h('button', { class: 'btn', type: 'button', text: 'Test', onclick: async (e) => {
+        const b = e.currentTarget; b.disabled = true; b.textContent = 'Testing…';
+        try { const r = await api('/api/voice/test', { method: 'POST', body: {} }); toast(r.ok ? 'It works.' : r.detail); const n = $('#voice-result'); n.textContent = r.detail; n.className = 'recipe-note ' + (r.ok ? 'ok' : 'bad'); n.hidden = false; }
+        catch (err) { failed(err); }
+        b.disabled = false; b.textContent = 'Test';
+      } }),
+      v.available || v.base_url ? h('button', { class: 'btn', type: 'button', text: 'Turn off', onclick: () => saveVoice({ disconnect: true }, 'Voice notes are off.') }) : null),
+    h('div', { id: 'voice-result', class: 'recipe-note', hidden: '' }))];
+  return out;
 }

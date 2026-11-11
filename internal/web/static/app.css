@@ -899,3 +899,11 @@ html{caret-color:var(--brass-text);accent-color:var(--brass);scrollbar-color:var
 .recipe-prompt{margin:10px 0}.recipe-prompt summary{cursor:pointer;color:var(--muted);font-size:13.5px}
 .recipe-prompt pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.5 var(--mono,ui-monospace,monospace);background:var(--sunk);border-radius:10px;padding:10px 12px;margin:8px 0 0}
 .chips{flex:none}.panel-body.recipes{display:flex;flex-direction:column;gap:10px}
+
+/* voice notes */
+.voicebar{flex:none;padding:0 16px 8px;max-width:640px;width:100%;margin:0 auto}
+.voice-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--bad-line);border-radius:18px;background:var(--bad-tint);font-weight:600;font-size:14px}
+.rec-dot{width:10px;height:10px;border-radius:50%;background:var(--bad);animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.rec-dot{animation:none}}
+@media (min-width:900px){.voicebar{max-width:860px;padding:0 32px 8px}}

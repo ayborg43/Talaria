@@ -747,6 +747,18 @@ holds live login cookies, so keep Dokploy access tight and back up the data volu
   that failed, with Retry and Dismiss), **Working now**, and **Ready for review**, finished background work you check off with **Done**. That
   moves it to **Resolved** under **History**, on every device (the list of checked-off ids is a small file, `web_reviewed.json`). **Up next** is
   what runs on its own, and **History** holds what finished lately, Resolved, the answered requests and the activity chart.
+- **Voice notes.** With a speech service set up (Settings, **Voice**), the microphone button records a voice note and types it out. Press it, speak,
+  press **Done** (or **Cancel**, or Escape); a bar shows the time against the longest note allowed (120 seconds unless you change it, up to 300). The
+  words land in the message box to check, or are sent at once if you turn that on. The page turns the recording into a small mono 16 kHz WAV itself
+  (about 2 MB a minute, whatever the phone records in), because every speech service takes that and Meta's Muse takes nothing else; a recording that
+  is too short, or silent, is refused in the page and never sent. The server checks it again (a real WAV, not too long or too big, one at a time and
+  at most 20 a minute, only for a signed-in person), passes it to the service with your key, and drops it: **no audio and no words are stored or
+  logged**, only the length of the note. The microphone is released the moment recording ends. Services: **OpenAI Whisper**, **Groq Whisper**,
+  **Meta Muse Voice Transcribe**, or any server with an OpenAI-style `/audio/transcriptions` (whisper.cpp, faster-whisper), where one on this
+  machine needs no key. Save, then **Test**: it sends a second of silence to prove the address, model and key work. A key is kept in the
+  config or read from a variable, and is never sent back to the page; an address that is not on this machine must be https, because your voice and
+  the key would otherwise cross the internet in the clear. You can add a language and names to listen for. With no speech service the button uses the
+  browser's own dictation where there is one, as before, and is hidden where there is not. In the config file this is `transcription`.
 - **Recipes.** On the Tasks screen, **Up next** has **Recipes**: eleven ready-made jobs in three groups. *Daily rhythm:* an evening wrap-up, a weekly
   review, meeting prep, and a calendar guard that warns about clashes. *Mail:* a newsletter digest, a follow-up chaser that leaves polite nudges in
   your Drafts, and receipts collected into one expenses table (a page in Make). *Research and watching:* news on a topic you name, a price watch

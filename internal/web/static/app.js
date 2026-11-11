@@ -32,6 +32,7 @@ function keepScroll(body, fn) {
   if (sc) sc.scrollTop = top;
 }
 const ICONS = {
+  mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
   x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   spin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9"/></svg>',
@@ -807,20 +808,8 @@ $('#sheet').addEventListener('click', (e) => { if (e.target.closest('.scrim')) c
 for (const q of ['Give me my morning brief', 'What needs me?', "What's on today?", 'What are you watching for me?']) {
   $('#quick').append(h('button', { type: 'button', text: q, onclick: () => sendText(q) }));
 }
-// dictation, where the phone offers it
-const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
-if (Rec) {
-  const mic = $('#mic'); mic.hidden = false;
-  let rec = null;
-  mic.addEventListener('click', () => {
-    if (rec) { rec.stop(); return; }
-    rec = new Rec(); rec.lang = navigator.language; rec.interimResults = false; rec.continuous = false;
-    mic.classList.add('live');
-    rec.onresult = (e) => { input.value = (input.value + ' ' + [...e.results].map((r) => r[0].transcript).join(' ')).trim(); autosize(); renderChrome(); };
-    rec.onend = rec.onerror = () => { rec = null; mic.classList.remove('live'); };
-    try { rec.start(); } catch { rec = null; mic.classList.remove('live'); }
-  });
-}
+// the microphone button: voice notes when a speech service is set up, the browser's own dictation otherwise
+// (see initMic, with the rest of the voice code)
 
 // ---------- connection to the server ----------
 async function loadState() {
@@ -1443,6 +1432,7 @@ function uptime(sec) {
 }
 
 const SETTINGS_PAGES = [
+  { id: 'voice', title: 'Voice', icon: 'mic', sub: 'Turn voice notes into text.' },
   { id: 'setup', title: 'Setup', icon: 'check', sub: 'What Talaria needs, and what is ready.' },
   { id: 'you', title: 'You', icon: 'user', sub: 'Your name, the tone you like, and what it remembers.' },
   { id: 'models', title: 'AI models', icon: 'cpu', sub: 'Which models work for you, and when each is used.' },
@@ -1468,6 +1458,7 @@ function settingsSummary(id) {
       return on.length ? on.join(', ') : 'Nothing connected yet';
     }
     case 'notifications': return { on: 'On for this device', off: 'Off', denied: 'Blocked in the browser', unsupported: 'Not supported here', 'needs-install': 'Add the app to your Home Screen first' }[S.push] || '';
+    case 'voice': return S.voice && S.voice.available ? 'On: ' + S.voice.model : 'Using the browser’s dictation';
     case 'setup': { const t = setupItems(); const open = t.filter((x) => !x.optional && x.state !== 'ready').length; return open ? open + ' to do' : 'Everything it needs is ready'; }
     case 'about': return 'Talaria ' + (c.version || S.version || '');
     case 'you': {
@@ -1585,7 +1576,7 @@ function paneAbout() {
   return out;
 }
 
-const PANES = { setup: paneSetup, you: paneYou, models: paneModels, permissions: panePermissions, connections: paneConnections, notifications: paneNotifications, about: paneAbout };
+const PANES = { voice: paneVoice, setup: paneSetup, you: paneYou, models: paneModels, permissions: panePermissions, connections: paneConnections, notifications: paneNotifications, about: paneAbout };
 const wideScreen = () => window.matchMedia('(min-width: 900px)').matches;
 window.matchMedia('(min-width: 900px)').addEventListener?.('change', () => { if (S.tab === 'settings') renderSettings(); });
 $('#settings-back').addEventListener('click', () => { location.hash = '#settings'; });
@@ -1684,6 +1675,7 @@ async function start() {
   try { await loadState(); } catch (e) { if (e instanceof AuthError) return; $('#status-text').textContent = e.message; return; }
   $('#login').hidden = true; $('#app').hidden = false;
   connect(); route(); renderChrome(); flushOutbox();
+  loadVoice();
 }
 function presence() { if (!document.hidden && S.connected) api('/api/presence', { method: 'POST', body: { visible: true } }).catch(() => {}); }
 setInterval(presence, 20000);

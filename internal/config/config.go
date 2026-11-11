@@ -26,6 +26,7 @@ import (
 	"talaria/internal/guard"
 	"talaria/internal/mcp"
 	"talaria/internal/provider"
+	"talaria/internal/speech"
 	"talaria/internal/subagent"
 )
 
@@ -409,6 +410,8 @@ type Config struct {
 	// (rate limited, overloaded, unreachable). Refused keys and billing
 	// errors never fall back: another model would refuse them too.
 	FallbackProfile string `json:"fallback_profile,omitempty"`
+	// Transcription is the speech-to-text service behind the microphone button in the web app.
+	Transcription Transcription `json:"transcription,omitzero"`
 	// RoutineProfile names the profile scheduled prompts (reminders, the morning brief, recipes) run on when they
 	// name none, so routine work uses a cheaper model than the chat does. "default" turns that off: they use the
 	// chat's own. Left unset, a profile marked cheap in best_for is used if there is one.
@@ -964,4 +967,81 @@ func (c *Config) RoutineProfileName() string {
 		}
 		return ""
 	}
+}
+
+// Transcription says where voice notes are turned into text. Unset, the microphone button uses the browser's own
+// dictation where it has one and is hidden where it does not.
+type Transcription struct {
+	// Provider is "openai" (any OpenAI-style /audio/transcriptions endpoint: OpenAI, Groq, a local Whisper server)
+	// or "muse" (Meta's Muse Voice Transcribe). Empty with a key or address set means "openai".
+	Provider  string `json:"provider,omitempty"`
+	BaseURL   string `json:"base_url,omitempty"`
+	Model     string `json:"model,omitempty"`
+	APIKey    string `json:"api_key,omitempty"`     // prefer api_key_env: keep secrets out of files
+	APIKeyEnv string `json:"api_key_env,omitempty"` // the variable holding the key
+	// Language biases recognition: a code such as "en" (openai) or a name such as "English" (muse). Empty detects it.
+	Language string `json:"language,omitempty"`
+	// Vocabulary lists names and terms to listen for, separated by commas.
+	Vocabulary string `json:"vocabulary,omitempty"`
+	// AutoSend sends a voice note as soon as it is turned into text, instead of putting the words in the message box to check first.
+	AutoSend bool `json:"auto_send,omitempty"`
+	// MaxSeconds is the longest voice note, 10 to 300; 120 when unset.
+	MaxSeconds int `json:"max_seconds,omitempty"`
+}
+
+// Configured says whether a speech service has been chosen: an address, a key or a provider was set.
+func (t Transcription) Configured() bool {
+	return t.Provider != "" || t.BaseURL != "" || t.APIKey != "" || t.APIKeyEnv != ""
+}
+
+// Resolved fills in what was left out: the provider's usual address, model and key variable.
+func (t Transcription) Resolved(getenv func(string) string) (provider, baseURL, model, key string, maxSeconds int) {
+	provider = t.Provider
+	if provider != "muse" {
+		provider = "openai"
+	}
+	baseURL, model = t.BaseURL, t.Model
+	defBase, defModel, defEnv := speech.Defaults(provider)
+	if strings.TrimSpace(baseURL) == "" {
+		baseURL = defBase
+	}
+	if strings.TrimSpace(model) == "" {
+		model = defModel
+	}
+	key = strings.TrimSpace(t.APIKey)
+	if key == "" && getenv != nil {
+		env := strings.TrimSpace(t.APIKeyEnv)
+		if env == "" {
+			env = defEnv
+		}
+		key = strings.TrimSpace(getenv(env))
+	}
+	maxSeconds = t.MaxSeconds
+	if maxSeconds <= 0 {
+		maxSeconds = speech.DefaultMaxSeconds
+	}
+	return provider, strings.TrimRight(strings.TrimSpace(baseURL), "/"), strings.TrimSpace(model), key, min(max(maxSeconds, 10), speech.MaxSecondsCap)
+}
+
+// Service builds the speech client from the settings, or says there is none: no service has been chosen, or one that
+// needs a key has none (a local server on this machine may not).
+func (t Transcription) Service(getenv func(string) string) (*speech.Service, bool) {
+	if !t.Configured() {
+		return nil, false
+	}
+	provider, baseURL, model, key, _ := t.Resolved(getenv)
+	if key == "" && !localAddress(baseURL) {
+		return nil, false
+	}
+	return &speech.Service{Provider: provider, BaseURL: baseURL, Model: model, Key: key, Language: strings.TrimSpace(t.Language), Vocabulary: strings.TrimSpace(t.Vocabulary)}, true
+}
+
+// localAddress says an address is on this machine, where a speech server may run with no key.
+func localAddress(base string) bool {
+	u, err := url.Parse(base)
+	if err != nil {
+		return false
+	}
+	h := u.Hostname()
+	return h == "localhost" || h == "127.0.0.1" || h == "::1"
 }

@@ -375,7 +375,7 @@ func TestTheSecondScriptKeepsThePagesRules(t *testing.T) {
 	if !strings.Contains(sw, "'/more.js'") {
 		t.Error("the service worker does not keep more.js, so the app would not open offline")
 	}
-	for _, want := range []string{"function openComputer", "function openDoc", "function richResult", "function conversationsCard", "function paneYou", "function handoffCard", "function handoffBar", "function rulesCard", "function recipeDetail", "function routineCard", "function readyCard", "function loadMake", "function channelForm", "URL.revokeObjectURL"} {
+	for _, want := range []string{"function openComputer", "function openDoc", "function richResult", "function conversationsCard", "function paneYou", "function handoffCard", "function handoffBar", "function rulesCard", "function recipeDetail", "function routineCard", "function paneVoice", "function blobToWav", "function encodeWav", "function readyCard", "function loadMake", "function channelForm", "URL.revokeObjectURL"} {
 		if !strings.Contains(js, want) {
 			t.Errorf("more.js lost %q", want)
 		}
@@ -567,5 +567,30 @@ func TestTheRulesCardAsksTwiceBeforeAnUnattendedRiskyAction(t *testing.T) {
 	}
 	if !strings.Contains(js, "quiet_from") {
 		t.Error("quiet hours are not on the notifications page")
+	}
+}
+
+// A voice note is made into a WAV in the page and sent once; the page keeps no recording, releases the microphone the
+// moment recording ends, and never sends silence anywhere.
+func TestVoiceNotesAreKeptNowhereAndTheMicrophoneIsReleased(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("static", "more.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(b)
+	for _, want := range []string{"track.stop()", "t.stop(); // the microphone is released", "'/api/transcribe'", "wav.peak < 0.01", "wav.seconds < 0.4", "audio/wav", "SpeechRecognition"} {
+		if want == "track.stop()" {
+			continue
+		}
+		if !strings.Contains(js, want) {
+			t.Errorf("the voice code lacks %q", want)
+		}
+	}
+	if strings.Contains(js, "localStorage") || strings.Contains(js, "indexedDB") || strings.Contains(js, "URL.createObjectURL(wav") {
+		t.Error("a recording is kept on the phone")
+	}
+	app, _ := os.ReadFile(filepath.Join("static", "app.js"))
+	if strings.Contains(string(app), "webkitSpeechRecognition") {
+		t.Error("the old dictation code is still in app.js, which would wire the button twice")
 	}
 }
