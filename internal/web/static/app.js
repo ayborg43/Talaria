@@ -568,7 +568,7 @@ async function loadAgentsPage() {
   const body = $('#agents-body');
   if (!body.children.length) body.replaceChildren(h('div', { class: 'skeleton' }));
   try {
-    loadSuggestions();
+    loadSuggestions(); loadRecipes().then(() => { if (S.tab === 'agents' && S.tasksView === 'next') renderAgentsPage(); });
     const [d, c] = await Promise.all([api('/api/agents'), api('/api/control')]);
     recentAgents = d.recent || []; standing = d.jobs || []; doneTasks = d.tasks || []; ctl = c; S.paused = c.paused;
   } catch (e) { if (e instanceof AuthError) return; toast(e.message); }
@@ -616,6 +616,7 @@ function renderAgentsPage() {
     out.push(needsInputCard(), nowCard(), readyCard(), computerCard());
   } else if (view === 'next') {
     const sug = suggestionsCard(); if (sug) out.push(sug);
+    const rec = recipesEntryCard(); if (rec) out.push(rec);
     out.push(standing.length ? jobsCard(standing, 'Set up to run on their own')
       : h('div', { class: 'card' }, h('h2', null, 'Set up to run on their own'), h('div', { class: 'empty', text: 'Nothing yet. Ask for a reminder, a watch on your mail, or a goal to work on, and it will show here.' })));
   } else {
@@ -1486,6 +1487,7 @@ function paneModels(s) {
     h('div', { class: 'field-note', text: usable.length > 1
       ? 'Each message can go to the profile that suits it: one marked Code for programming, one marked Cheap & fast for quick questions. Helpers can be given any profile too, so a cheap model does the lookups while a strong one does the thinking. The Agents screen shows which model each is using.'
       : 'Add a second profile and Talaria can use a cheap model for quick jobs and a strong one for hard ones, and hand lookups to helpers on a cheaper model.' })));
+  const rc = routineCard(s); if (rc) out.push(rc);
   for (const p of ps) out.push(profileNameCard(p));
   if (!ps.length) out.push(h('div', { class: 'card' }, h('h2', null, 'Profiles'), h('div', { class: 'empty', text: (S.model ? S.model + ' comes from the server settings. ' : '') + 'Add a profile to keep more than one model and switch between them.' })));
   out.push(h('button', { class: 'btn big', type: 'button', text: 'Add an AI profile', onclick: newProfileForm }));

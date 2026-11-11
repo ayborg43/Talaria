@@ -312,3 +312,35 @@ func TestChatGrantsDoNotCoverJobs(t *testing.T) {
 		t.Fatal("a chat's grant let an unattended job write")
 	}
 }
+
+// Routine work (a plain scheduled prompt that names no model) runs on the routine profile when there is one; what a
+// job names itself, and background tasks, never change; a routine model that cannot be opened is not the job's own
+// choice, so the job runs on the chat's model instead of failing.
+func TestRoutineJobsRunOnTheRoutineProfile(t *testing.T) {
+	k := newJobKit(t)
+	k.runner.routine = func() string { return "claude" }
+	if out, err := k.runner.run(context.Background(), job("", "")); err != nil || out != "claude:in-local" {
+		t.Fatalf("a plain scheduled prompt should use the routine model: %q %v", out, err)
+	}
+	if out, _ := k.runner.run(context.Background(), job("openai", "")); out != "openai:in-local" {
+		t.Fatalf("a model the job names wins over the routine one: %q", out)
+	}
+	task := job("", "")
+	task.Kind = cron.KindTask
+	if out, _ := k.runner.run(context.Background(), task); out != "openai:in-local" {
+		t.Fatalf("a background task keeps the chat's model: %q", out)
+	}
+
+	k.runner.routine = func() string { return "broken" }
+	if out, err := k.runner.run(context.Background(), job("", "")); err != nil || out != "openai:in-local" {
+		t.Fatalf("a routine model with no key should fall back, not fail: %q %v", out, err)
+	}
+	k.runner.routine = func() string { return "retired" }
+	if out, err := k.runner.run(context.Background(), job("", "")); err != nil || out != "openai:in-local" {
+		t.Fatalf("a routine model that is gone should fall back: %q %v", out, err)
+	}
+	k.runner.routine = func() string { return "" }
+	if out, _ := k.runner.run(context.Background(), job("", "")); out != "openai:in-local" {
+		t.Fatalf("no routine model means the chat's: %q", out)
+	}
+}

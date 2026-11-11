@@ -100,6 +100,8 @@ type Sources struct {
 	HideSuggestion  func(id string) error
 	// ReviewTask checks a finished task off, so the Tasks screen files it under Resolved.
 	ReviewTask func(id string) error
+	// Recipes connects the ready-made recipes to the jobs and watches they create. Nil leaves recipes out.
+	Recipes *RecipeHooks
 	// Brief says whether the morning brief is on and when, and SetBrief turns it on or off at a time of day
 	// ("07:30", in Zone). Nil leaves the brief out of the app.
 	Brief    func() BriefInfo
@@ -225,6 +227,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/handoff", s.authed(s.handoffPost))
 	mux.HandleFunc("GET /api/rules", s.authed(s.rulesGet))
 	mux.HandleFunc("POST /api/rules", s.authed(s.rulesPost))
+	mux.HandleFunc("GET /api/recipes", s.authed(s.recipesGet))
+	mux.HandleFunc("POST /api/recipes", s.authed(s.recipesPost))
 	mux.HandleFunc("GET /api/suggestions", s.authed(s.suggestionsGet))
 	mux.HandleFunc("POST /api/suggestions", s.authed(s.suggestionsPost))
 	mux.HandleFunc("GET /api/brief", s.authed(s.briefGet))
@@ -468,8 +472,11 @@ type settingsView struct {
 	KeyEnvs        []string           `json:"key_envs"`
 	// Permissions is which calls ask first once saved; PermissionsRunning is what is in force now (it differs until a
 	// restart), and PermissionsEnv says TALARIA_PERMISSIONS overrides the file.
-	Permissions         string `json:"permissions"`
-	PermissionsRunning  string `json:"permissions_running"`
+	Permissions        string `json:"permissions"`
+	PermissionsRunning string `json:"permissions_running"`
+	// RoutineProfile is the choice made for routine jobs ("" is automatic) and RoutineUsing the profile they run on now ("" is the chat's own).
+	RoutineProfile      string `json:"routine_profile"`
+	RoutineUsing        string `json:"routine_using"`
 	PermissionsEnv      bool   `json:"permissions_env,omitempty"`
 	SubagentMaxSteps    int    `json:"subagent_max_steps"`
 	SubagentMaxParallel int    `json:"subagent_max_parallel"`
@@ -692,6 +699,8 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 		SubagentMaxSteps:    s.Cfg.Subagents.MaxSteps,
 		Permissions:         permissionsName(s.Cfg.Policy.Permissions),
 		PermissionsRunning:  permissionsName(s.Permissions),
+		RoutineProfile:      s.Cfg.RoutineProfile,
+		RoutineUsing:        s.Cfg.RoutineProfileName(),
 		PermissionsEnv:      s.Getenv != nil && s.Getenv("TALARIA_PERMISSIONS") != "",
 		SubagentMaxParallel: s.Cfg.Subagents.MaxParallel,
 		FilesRetentionHours: int(s.fileRetention() / time.Hour),
@@ -765,6 +774,7 @@ type settingsUpdateRequest struct {
 	TestCalendar        string                 `json:"test_calendar,omitempty"`         // read one feed for a day, saving nothing
 	TestX               bool                   `json:"test_x,omitempty"`                // check the X sign-in, saving nothing
 	Permissions         string                 `json:"permissions,omitempty"`           // which calls ask first: deletes_and_posts or strict
+	RoutineProfile      *string                `json:"routine_profile,omitempty"`       // the model routine jobs use: a profile, "default", or "" for automatic
 	FilesRetentionHours *int                   `json:"files_retention_hours,omitempty"` // how long downloads live, 1 to 168 hours
 	FilesMaxTotalMB     *int                   `json:"files_max_total_mb,omitempty"`    // cap on everything kept, 10 to 1024 MB
 }
@@ -881,6 +891,10 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Permissions != "" {
 		s.savePermissions(w, in.Permissions)
+		return
+	}
+	if in.RoutineProfile != nil {
+		s.saveRoutineProfile(w, strings.TrimSpace(*in.RoutineProfile))
 		return
 	}
 	if in.FilesRetentionHours != nil {
@@ -1043,6 +1057,20 @@ func permissionsName(p string) string {
 		return config.PermissionsStrict
 	}
 	return config.PermissionsDeletesAndPosts
+}
+
+// saveRoutineProfile chooses the model scheduled prompts (reminders, the morning brief, recipes) run on when they
+// name none. It is read at each run, so it applies at once.
+func (s *Server) saveRoutineProfile(w http.ResponseWriter, name string) {
+	if _, known := s.Cfg.Profiles[name]; name != "" && name != "default" && !known {
+		fail(w, http.StatusBadRequest, "that is not one of your profiles")
+		return
+	}
+	s.Cfg.RoutineProfile = name
+	if !s.writeConfig(w) {
+		return
+	}
+	okRestart(w, false)
 }
 
 // savePermissions chooses which calls ask the user first. The agents read it when they are built, so it applies

@@ -1179,3 +1179,105 @@ function rulesCard() {
     h('div', { class: 'field-note', text: 'These apply to every chat, background task and scheduled job. "Never" and "I’ll do it myself" cannot be undone by the agent, and a rule you set here is kept even after a restart.' }), rows,
     other.length ? h('div', { class: 'field-note', text: 'Also set by hand in the config file: ' + other.map(([k, v]) => k + ' is ' + v).join('; ') + '.' }) : null);
 }
+
+
+// ---------- recipes: ready-made jobs ----------
+// A recipe is a stored instruction with a time and a blank or two to fill in. Adding one makes an ordinary scheduled job
+// (or a page watch), shown under Up next like any other, and what it will ask the agent is shown in full before it is
+// added. It reads, drafts and writes pages, and cannot send, post, pay or delete: nobody is there to approve it.
+async function loadRecipes() {
+  try { S.recipes = await api('/api/recipes'); } catch (e) { if (!(e instanceof AuthError)) toast(e.message); }
+  return S.recipes;
+}
+function recipesEntryCard() {
+  const r = S.recipes;
+  if (!r || !r.available) return null;
+  const added = (r.recipes || []).filter((x) => x.added).length;
+  return h('div', { class: 'card' }, h('h2', null, 'Recipes', h('small', { text: added ? added + ' set up' : (r.recipes || []).length + ' ready-made' })),
+    h('div', { class: 'field-note', text: 'Ready-made jobs: an evening wrap-up, meeting prep, a receipts table, a price watch. Each is a scheduled job you can see, move and remove.' }),
+    h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Browse recipes', onclick: openRecipes })));
+}
+async function openRecipes() {
+  const body = openPanel('Recipes', 'Ready-made jobs you can add with a tap');
+  body.className = 'panel-body recipes';
+  body.replaceChildren(h('div', { class: 'skeleton' }));
+  await loadRecipes();
+  S.recipeGroup = S.recipeGroup || 'All';
+  recipeList(body);
+}
+function recipeStatus(x) {
+  if (x.added) return 'Set up' + (x.when ? ' · ' + x.days + ' at ' + x.added.at : '');
+  if (!x.ready) return 'Needs ' + x.missing.join(' and ');
+  return x.kind === 'watch' ? 'Watches a page' : x.days + ' at ' + x.when;
+}
+function recipeList(body) {
+  const r = S.recipes;
+  if (!r || !r.available) { body.replaceChildren(h('div', { class: 'card empty', text: 'Recipes are not set up here.' })); return; }
+  const groups = ['All', ...(r.groups || [])];
+  const chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Group' }, groups.map((g) =>
+    h('button', { type: 'button', 'aria-pressed': g === S.recipeGroup ? 'true' : 'false', text: g, onclick: () => { S.recipeGroup = g; recipeList(body); } })));
+  const rows = h('div', { class: 'rows' });
+  for (const x of (r.recipes || []).filter((y) => S.recipeGroup === 'All' || y.group === S.recipeGroup)) {
+    rows.append(h('button', { class: 'row recipe-row', type: 'button', onclick: () => recipeDetail(body, x.id) },
+      h('span', { class: 'grow' }, h('span', { class: 't', text: x.title }), h('span', { class: 's', text: x.summary }), h('span', { class: 's recipe-status' + (x.added ? ' on' : x.ready ? '' : ' off'), text: recipeStatus(x) })),
+      x.added ? h('span', { class: 'pill ok', text: 'ADDED' }) : icon('chev')));
+  }
+  body.replaceChildren(chips, rows, h('div', { class: 'field-note', text: 'A recipe runs by itself, with no one to approve anything, so it can read, draft and make pages but cannot send, post, pay or delete. You see what it will do before you add it.' }));
+}
+function recipeDetail(body, id, done) {
+  const x = ((S.recipes || {}).recipes || []).find((y) => y.id === id);
+  if (!x) { recipeList(body); return; }
+  const values = { ...((x.added && x.added.values) || {}) }; // what was filled in when it was added, shown again
+  const fields = (x.params || []).map((p) => {
+    const input = h('input', { type: p.kind === 'number' ? 'text' : p.kind === 'url' ? 'url' : 'text', inputmode: p.kind === 'number' ? 'decimal' : null, placeholder: p.placeholder || '', autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false' });
+    input.value = values[p.id] || '';
+    input.addEventListener('input', () => { values[p.id] = input.value; });
+    return h('div', { class: 'field' }, h('label', { class: 'field-label', text: p.label }), input);
+  });
+  const at = x.kind === 'schedule' ? h('input', { type: 'time', value: (x.added && x.added.at) || x.when, step: '300' }) : null;
+  const note = h('div', { class: 'recipe-note', hidden: '' });
+  const say = (text, bad) => { note.hidden = false; note.className = 'recipe-note' + (bad ? ' bad' : ' ok'); note.textContent = text; };
+  const send = async (action) => {
+    const btns = [...body.querySelectorAll('button.act')]; btns.forEach((b) => { b.disabled = true; });
+    try {
+      const d = await api('/api/recipes', { method: 'POST', body: { action, id: x.id, values, at: at ? at.value : '' } });
+      S.recipes = { ...S.recipes, recipes: d.recipes, groups: d.groups, available: d.available };
+      if (action === 'remove') { toast('Removed.'); recipeList(body); return; }
+      recipeDetail(body, x.id, d.message);
+    } catch (e) { failed(e); say(e.message, true); btns.forEach((b) => { b.disabled = !x.ready; }); }
+  };
+  const act = (label, cls, action, always) => h('button', { class: 'btn act ' + cls, type: 'button', text: label, disabled: x.ready || always ? null : '', onclick: () => send(action) });
+  const buttons = [x.added ? act('Save changes', 'primary', 'add') : act('Add', 'primary', 'add'),
+    x.kind === 'schedule' ? act('Try it now', '', 'now') : null,
+    x.added ? act('Remove', '', 'remove', true) : null];
+  body.replaceChildren(
+    h('button', { class: 'btn small', type: 'button', text: '‹ All recipes', onclick: () => recipeList(body) }),
+    h('div', { class: 'card' }, h('h2', null, x.title, h('small', { text: x.group })), h('div', { class: 'field-note', text: x.summary }),
+      x.ready ? null : h('div', { class: 'recipe-note bad', text: 'This needs ' + x.missing.join(' and ') + ' first.' }, ' ', h('a', { href: '#settings/setup', onclick: () => closePanel(), text: 'Open Setup' })),
+      at ? h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Runs ' + x.days + ' at' }), at) : null,
+      ...fields,
+      h('details', { class: 'recipe-prompt' }, h('summary', { text: 'What it will do, in full' }), h('pre', { text: x.prompt })),
+      done ? h('div', { class: 'recipe-note ok', text: done }) : null, note,
+      h('div', { class: 'btn-row' }, ...buttons.filter(Boolean))));
+}
+
+
+// ---------- the model routine jobs use ----------
+// Scheduled prompts (reminders, the morning brief, recipes) that name no model run on this one, so routine work uses a
+// cheaper model than the chat does. Automatic picks a profile marked cheap, if there is one.
+function routineCard(s) {
+  const ps = (s.profiles || []).filter((p) => p.available);
+  if (ps.length < 2) return null; // with one model there is nothing to choose between
+  const sel = h('select', { class: 'rule-select', 'aria-label': 'Model for routine jobs' },
+    h('option', { value: '', text: 'Automatic' }), h('option', { value: 'default', text: 'Same as the chat' }), ps.map((p) => h('option', { value: p.name, text: p.name + (p.model ? ' (' + p.model + ')' : '') })));
+  sel.value = s.routine_profile || '';
+  sel.addEventListener('change', async () => {
+    sel.disabled = true;
+    try { await api('/api/settings', { method: 'POST', body: { routine_profile: sel.value } }); toast('Saved. Routine jobs use it from their next run.'); }
+    catch (e) { failed(e); }
+    loadSettings();
+  });
+  const using = s.routine_using ? 'Routine jobs run on ' + s.routine_using + '.' : 'Routine jobs run on the same model as the chat.';
+  return h('div', { class: 'card' }, h('h2', null, 'Routine jobs'),
+    h('div', { class: 'field-note', text: 'Reminders, the morning brief and recipes run by themselves, and rarely need your strongest model. ' + using + ' A job that names its own model keeps it, and background tasks you start use the chat’s model.' }), sel);
+}

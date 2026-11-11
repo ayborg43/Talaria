@@ -49,6 +49,9 @@ type jobRunner struct {
 	goals    *goal.Store
 	yolo     bool
 	sink     activity.Sink // tells a page who is working, if there is one; may be nil
+	// routine says which profile scheduled prompts that name none run on (see config.RoutineProfileName); it is
+	// asked at each run, so a change in Settings applies at once. Nil means the chat's own.
+	routine func() string
 }
 
 func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
@@ -60,12 +63,20 @@ func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
 	}
 
 	var backend *chat.Backend
-	if j.Profile != "" {
-		b, err := r.backend(j.Profile)
-		if err != nil {
-			return "", fmt.Errorf("this job runs on the %q model profile, which cannot be used: %w", j.Profile, err)
+	profile, routine := j.Profile, false
+	if profile == "" && j.Kind == "" && r.routine != nil { // a plain scheduled prompt that names no model: routine work
+		profile = r.routine()
+		routine = profile != ""
+	}
+	if profile != "" {
+		b, err := r.backend(profile)
+		switch {
+		case err == nil:
+			backend = &b
+		case !routine: // a model the job itself names must work, or it says so
+			return "", fmt.Errorf("this job runs on the %q model profile, which cannot be used: %w", profile, err)
 		}
-		backend = &b
+		// a routine model that cannot be opened (no key, removed) is not the job's own choice: it runs on the chat's model
 	}
 	var env execenv.Env
 	if j.Environment != "" {

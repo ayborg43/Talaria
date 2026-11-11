@@ -408,15 +408,19 @@ type Config struct {
 	// FallbackProfile names a second profile tried when the first is down
 	// (rate limited, overloaded, unreachable). Refused keys and billing
 	// errors never fall back: another model would refuse them too.
-	FallbackProfile string             `json:"fallback_profile,omitempty"`
-	Profiles        map[string]Profile `json:"profiles,omitempty"`
-	Telegram        Telegram           `json:"telegram,omitzero"`
-	Discord         Discord            `json:"discord,omitzero"`
-	X               X                  `json:"x,omitzero"`
-	Policy          Policy             `json:"policy,omitzero"`
-	Browser         Browser            `json:"browser,omitzero"`
-	Workspace       Workspace          `json:"workspace,omitzero"`
-	Vault           Vault              `json:"vault,omitzero"`
+	FallbackProfile string `json:"fallback_profile,omitempty"`
+	// RoutineProfile names the profile scheduled prompts (reminders, the morning brief, recipes) run on when they
+	// name none, so routine work uses a cheaper model than the chat does. "default" turns that off: they use the
+	// chat's own. Left unset, a profile marked cheap in best_for is used if there is one.
+	RoutineProfile string             `json:"routine_profile,omitempty"`
+	Profiles       map[string]Profile `json:"profiles,omitempty"`
+	Telegram       Telegram           `json:"telegram,omitzero"`
+	Discord        Discord            `json:"discord,omitzero"`
+	X              X                  `json:"x,omitzero"`
+	Policy         Policy             `json:"policy,omitzero"`
+	Browser        Browser            `json:"browser,omitzero"`
+	Workspace      Workspace          `json:"workspace,omitzero"`
+	Vault          Vault              `json:"vault,omitzero"`
 	// MCPServers are external tool servers, keyed by a short name.
 	MCPServers map[string]mcp.Server `json:"mcp_servers,omitempty"`
 	// Environments are places the shell and file tools can run instead of this
@@ -939,4 +943,25 @@ func Init(path string) error {
 	defer f.Close()
 	_, err = f.WriteString(Example)
 	return err
+}
+
+// RoutineProfileName is the profile scheduled prompts run on when they name none: the one chosen in routine_profile,
+// else the first profile marked cheap, else "" (the chat's own). A name that is not a profile is ignored.
+func (c *Config) RoutineProfileName() string {
+	switch name := strings.TrimSpace(c.RoutineProfile); name {
+	case "default":
+		return ""
+	case "":
+		for _, n := range c.ProfileNames() {
+			if slices.Contains(c.Profiles[n].BestFor, "cheap") {
+				return n
+			}
+		}
+		return ""
+	default:
+		if _, ok := c.Profiles[name]; ok {
+			return name
+		}
+		return ""
+	}
 }

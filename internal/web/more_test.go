@@ -375,7 +375,7 @@ func TestTheSecondScriptKeepsThePagesRules(t *testing.T) {
 	if !strings.Contains(sw, "'/more.js'") {
 		t.Error("the service worker does not keep more.js, so the app would not open offline")
 	}
-	for _, want := range []string{"function openComputer", "function openDoc", "function richResult", "function conversationsCard", "function paneYou", "function handoffCard", "function handoffBar", "function rulesCard", "function readyCard", "function loadMake", "function channelForm", "URL.revokeObjectURL"} {
+	for _, want := range []string{"function openComputer", "function openDoc", "function richResult", "function conversationsCard", "function paneYou", "function handoffCard", "function handoffBar", "function rulesCard", "function recipeDetail", "function routineCard", "function readyCard", "function loadMake", "function channelForm", "URL.revokeObjectURL"} {
 		if !strings.Contains(js, want) {
 			t.Errorf("more.js lost %q", want)
 		}

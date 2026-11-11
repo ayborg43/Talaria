@@ -1023,3 +1023,27 @@ func TestMuseSettingsAreValidated(t *testing.T) {
 		t.Fatal("Settings does not offer Muse as a one-click provider")
 	}
 }
+
+func TestRoutineProfileIsChosenOrACheapOneOrNone(t *testing.T) {
+	cfg := &Config{Profiles: map[string]Profile{"strong": {Model: "big"}, "zippy": {Model: "small", BestFor: []string{"cheap"}}, "coder": {BestFor: []string{"code"}}}}
+	if got := cfg.RoutineProfileName(); got != "zippy" {
+		t.Fatalf("unset should pick the profile marked cheap: %q", got)
+	}
+	cfg.RoutineProfile = "strong"
+	if got := cfg.RoutineProfileName(); got != "strong" {
+		t.Fatalf("a chosen profile wins: %q", got)
+	}
+	cfg.RoutineProfile = "default"
+	if got := cfg.RoutineProfileName(); got != "" {
+		t.Fatalf("default means the chat's own: %q", got)
+	}
+	cfg.RoutineProfile = "gone"
+	if got := cfg.RoutineProfileName(); got != "" {
+		t.Fatalf("a name that is not a profile is ignored: %q", got)
+	}
+	cfg.RoutineProfile = ""
+	delete(cfg.Profiles, "zippy")
+	if got := cfg.RoutineProfileName(); got != "" {
+		t.Fatalf("with nothing cheap there is nothing to pick: %q", got)
+	}
+}

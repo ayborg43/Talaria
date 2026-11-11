@@ -747,6 +747,22 @@ holds live login cookies, so keep Dokploy access tight and back up the data volu
   that failed, with Retry and Dismiss), **Working now**, and **Ready for review**, finished background work you check off with **Done**. That
   moves it to **Resolved** under **History**, on every device (the list of checked-off ids is a small file, `web_reviewed.json`). **Up next** is
   what runs on its own, and **History** holds what finished lately, Resolved, the answered requests and the activity chart.
+- **Recipes.** On the Tasks screen, **Up next** has **Recipes**: eleven ready-made jobs in three groups. *Daily rhythm:* an evening wrap-up, a weekly
+  review, meeting prep, and a calendar guard that warns about clashes. *Mail:* a newsletter digest, a follow-up chaser that leaves polite nudges in
+  your Drafts, and receipts collected into one expenses table (a page in Make). *Research and watching:* news on a topic you name, a price watch
+  (tells you when a page's price reaches your number), back in stock, and a watch on any page for what matters to you. Open one to see its time,
+  fill in its blanks, and read **what it will do, in full**, then **Add** (a scheduled job, or a model-free page watch) or **Try it now** (once, as
+  a background task). The answer is a plain read-back of exactly what was set up. A recipe is an ordinary job: it shows under Up next, moves
+  with a new time, is removed with one tap, obeys quiet hours and **Pause all**, and runs with **no risky tools**, so it can read, draft and
+  make pages but cannot send, post, pay, delete or change your calendar. It is held to your rules like anything else: if Settings, Permissions
+  says never (or "I'll do it myself") for scheduling or starting work, a recipe cannot add or start one. One that needs your email or calendar says
+  so and waits until they are connected. The values you fill in are checked (an address must be http or https, a price a number) and are data:
+  they are put into the instruction as text and cannot add lines or tools to it.
+- **A cheaper model for routine jobs.** Scheduled prompts that name no model (reminders, the morning brief, recipes) run on a **routine** profile
+  instead of the chat's. Settings, AI models, **Routine jobs** chooses it (**Automatic** uses a profile marked cheap, if you have one; **Same as the
+  chat** turns it off; or pick any profile), and `routine_profile` in the config file says the same. It is read at each run, so a change applies at
+  once. A job that names its own model keeps it, and background tasks you start keep the chat's. If the routine model cannot be used (no key, removed),
+  the job runs on the chat's model rather than failing.
 - **Rules for each kind of action.** Settings, Permissions has a rule for each kind of thing the agent can do that matters: send email, change your
   calendar, post on X, run commands, write and delete files, click and type in web pages, schedule and start work, and use connected apps. Each is
   **Default** (how Talaria always behaved), **Just do it** (no asking, even when you are away; a risky one asks twice before you can choose it),

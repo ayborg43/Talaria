@@ -197,7 +197,8 @@ func runGateway(c *cli) error {
 		if s.markdown {
 			note, taskText = cronNoteMarkdown, taskNoteMarkdown
 		}
-		runner := &jobRunner{rt: c.rt, backends: backends, envs: s.envs, allowed: s.allowed, note: note, taskNote: taskText, goals: c.rt.Goals(), yolo: c.yolo, sink: s.sink}
+		runner := &jobRunner{rt: c.rt, backends: backends, envs: s.envs, allowed: s.allowed, note: note, taskNote: taskText, goals: c.rt.Goals(), yolo: c.yolo, sink: s.sink,
+			routine: c.cfg.RoutineProfileName}
 		s.sched = &cron.Scheduler{
 			Store:    c.rt.Cron,
 			Gateway:  s.name,
@@ -408,6 +409,7 @@ func runGateway(c *cli) error {
 			srv.Sources.Suggestions, srv.Sources.StartSuggestion, srv.Sources.HideSuggestion = webSuggestions(ideas, c.rt.Cron, func() cron.Control { return s.sched })
 		}
 		srv.Sources.Brief, srv.Sources.SetBrief = webBrief(c.rt.Cron, zone), setBrief(c.rt.Cron, zone)
+		srv.Sources.Recipes = webRecipes(c.rt, c.rt.Cron, zone, func() cron.Control { return s.sched })
 		srv.Sources.RetryTask = func(id string) error {
 			_, err := cron.RetryChatTask(c.rt.Cron, s.sched, s.name, web.ChatID, id)
 			return err

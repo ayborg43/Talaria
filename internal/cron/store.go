@@ -52,6 +52,10 @@ type Job struct {
 	Goal string `json:"goal,omitempty"`
 	// Watch is the watch a KindWatch job polls.
 	Watch string `json:"watch,omitempty"`
+	// Recipe is the ready-made recipe a scheduled prompt was added from, so the app can show it as added and take it away.
+	Recipe string `json:"recipe,omitempty"`
+	// RecipeValues is what the user filled in for it (a topic), so the app can show it again when the recipe is changed.
+	RecipeValues map[string]string `json:"recipe_values,omitempty"`
 	// TimeoutSec overrides how long one run may take; 0 means the scheduler's own limit.
 	TimeoutSec int `json:"timeout_sec,omitempty"`
 	// Profile and Environment say which model profile the job runs on and where
@@ -193,7 +197,7 @@ func checkAdd(j Job, now time.Time) (Job, error) {
 		return Job{}, fmt.Errorf("prompt too long (%d bytes, max %d)", len(j.Prompt), maxPrompt)
 	case j.ChatID == 0:
 		return Job{}, errors.New("job has no delivery chat")
-	case !plainName(j.Profile) || !plainName(j.Environment) || !plainName(j.Gateway) || !plainName(j.Goal):
+	case !plainName(j.Profile) || !plainName(j.Environment) || !plainName(j.Gateway) || !plainName(j.Goal) || !plainName(j.Recipe):
 		return Job{}, errors.New("gateway, profile, environment and goal must be short plain names")
 	case j.Kind != "" && j.Kind != KindTask && j.Kind != KindGoal && j.Kind != KindWatch:
 		return Job{}, fmt.Errorf("unknown job kind %q", j.Kind)

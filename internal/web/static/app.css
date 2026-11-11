@@ -889,3 +889,13 @@ html{caret-color:var(--brass-text);accent-color:var(--brass);scrollbar-color:var
 .rule-row .s{white-space:normal;overflow:visible}
 .rule-select{flex:none;min-width:150px;padding:8px 10px;border-radius:12px;border:1px solid var(--line);background:var(--field);color:var(--ink);font:inherit;font-size:14px}
 @media (max-width:480px){.rule-select{width:100%}}
+
+/* recipes */
+.recipe-row{align-items:flex-start;text-align:left}
+.recipe-row .s{white-space:normal;overflow:visible}
+.recipe-status{color:var(--muted)}.recipe-status.on{color:var(--ok);font-weight:600}.recipe-status.off{color:var(--brass-text)}
+.recipe-note{margin:8px 0;padding:10px 12px;border-radius:12px;font-size:14px;background:var(--sunk);overflow-wrap:anywhere}
+.recipe-note.ok{background:var(--ok-tint);color:var(--ok)}.recipe-note.bad{background:var(--bad-tint);color:var(--bad)}
+.recipe-prompt{margin:10px 0}.recipe-prompt summary{cursor:pointer;color:var(--muted);font-size:13.5px}
+.recipe-prompt pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.5 var(--mono,ui-monospace,monospace);background:var(--sunk);border-radius:10px;padding:10px 12px;margin:8px 0 0}
+.chips{flex:none}.panel-body.recipes{display:flex;flex-direction:column;gap:10px}
