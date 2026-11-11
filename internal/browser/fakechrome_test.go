@@ -72,6 +72,13 @@ var fakePages = map[string]fakePage{
 		{Element: Element{Ref: 4, Tag: "input", Type: "text", Label: "Show password here"}},
 	}},
 	"http://login.test/home": {Title: "Home", Text: "Welcome back."},
+	"http://login.test/email": {Title: "Step 1", Text: "Sign in", Elements: []fakeEl{
+		{Element: Element{Ref: 1, Tag: "input", Type: "email", Label: "Email address"}},
+		{Element: Element{Ref: 2, Tag: "button", Label: "Next"}, Go: "http://login.test/pass"},
+	}},
+	"http://login.test/pass": {Title: "Step 2", Text: "Welcome", Elements: []fakeEl{
+		{Element: Element{Ref: 1, Tag: "input", Type: "password", Label: "Password"}},
+	}},
 	"http://login.test/shifty": {Title: "Shifty", Text: "x", Elements: []fakeEl{
 		{Element: Element{Ref: 1, Tag: "input", Type: "password", Label: "Password"}, RealType: "text"},
 	}},
@@ -82,16 +89,17 @@ var fakePages = map[string]fakePage{
 }
 
 type fakeState struct {
-	mu      sync.Mutex
-	url     string
-	history []string
-	els     []fakeEl
-	focus   int
-	clear   bool
-	located int
-	targets int
-	out     *os.File
-	log     *os.File
+	signRefs []int // the element each sign-in field in the last listing was
+	mu       sync.Mutex
+	url      string
+	history  []string
+	els      []fakeEl
+	focus    int
+	clear    bool
+	located  int
+	targets  int
+	out      *os.File
+	log      *os.File
 }
 
 func (s *fakeState) send(v any) {
@@ -359,6 +367,42 @@ func (s *fakeState) evaluate(expr string) any {
 			}
 		}
 		return val(map[string]any{"error": "no such option", "options": e.Options})
+	case expr == signInJS:
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		out := []map[string]any{}
+		s.signRefs = nil
+		for _, e := range s.els {
+			lab := strings.ToLower(e.Label)
+			switch {
+			case e.Tag == "input" && e.Type == "password":
+				out = append(out, map[string]any{"kind": "password", "label": e.Label})
+			case e.Tag == "input" && (e.Type == "email" || strings.Contains(lab, "user") || strings.Contains(lab, "mail")):
+				out = append(out, map[string]any{"kind": "username", "label": e.Label})
+			default:
+				continue
+			}
+			s.signRefs = append(s.signRefs, e.Ref)
+		}
+		return val(out)
+	case strings.HasPrefix(expr, signInFocusJS+"("):
+		var i int
+		fmt.Sscanf(strings.TrimPrefix(expr, signInFocusJS+"("), "%d)", &i)
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if i < 0 || i >= len(s.signRefs) {
+			return val(nil)
+		}
+		e := s.el(s.signRefs[i])
+		if e == nil {
+			return val(nil)
+		}
+		s.focus, s.clear = e.Ref, true
+		typ := e.Type
+		if e.RealType != "" {
+			typ = e.RealType
+		}
+		return val(map[string]any{"type": typ, "focused": true})
 	case expr == focusKindJS:
 		s.mu.Lock()
 		defer s.mu.Unlock()

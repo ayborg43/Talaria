@@ -1166,6 +1166,20 @@ local test the time from a key press to the changed picture was 10 to 20 ms; ove
 - **Falls back.** If a proxy blocks WebSockets, the app uses the older way (a stream of pictures and a request per action), which is slower but works.
 - **Memory.** A view holds one picture at a time and nothing is kept. At most three views run at once.
 
+### Signing in by hand: the boxes follow the page
+
+When the agent's tab reaches a sign-in, the browser view offers **only what that page is asking for**, in the page's own words: an
+email first on a two-step sign-in, then only a password on the next page, then a code if it asks for one; both boxes only on a page
+that shows both. A sign-up page's new and confirm passwords show as such. A search box or a newsletter's email field is not
+mistaken for a sign-in. The boxes are redrawn as the page changes (Next, a wrong password, a code step) with no tapping around.
+
+- What you type goes into the page's own field and nowhere else, as before: not to the agent, not kept, cleared once filled. Each box is typed into the field it
+  was drawn for; if the page has changed since, nothing is typed and you are asked to look again. A password goes only into a password field, and a
+  username or code never into one.
+- Detection looks at field types, `autocomplete` hints, labels and names, never at what is in a field. A box that is not recognised is still reachable by
+  tapping the field in the picture and typing below.
+- It fills; it does not submit. You tap the page's own button (Next, Sign in).
+
 ### Routines: show it once
 
 In the web app, **Tasks, The agent's computer, Browser** has a **Record** button. Press it, do something by hand in the agent's

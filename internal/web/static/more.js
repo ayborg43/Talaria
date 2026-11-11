@@ -88,13 +88,30 @@ async function showBrowser(body) {
   // typed into the page's own username and password fields and then cleared here. Shown only on a page that
   // is asking for a password; the watcher below keeps that up to date as the page moves.
   const cur = tabs.find((t) => t.id === COMPUTER.tab) || {};
-  const userIn = h('input', { type: 'text', name: 'username', autocomplete: 'username', 'aria-label': 'Username or email', placeholder: 'Username or email', autocapitalize: 'none', spellcheck: 'false', enterkeyhint: 'next' });
-  const passIn = h('input', { type: 'password', name: 'password', autocomplete: 'current-password', 'aria-label': 'Password', placeholder: 'Password', enterkeyhint: 'go' });
-  const loginBtn = h('button', { class: 'btn primary', type: 'submit', text: 'Fill sign-in fields' });
-  const loginForm = h('form', { class: 'login-form', hidden: cur.login ? false : true },
-    h('div', { class: 'login-title', text: 'This page asks you to sign in' }),
-    userIn, passIn, loginBtn,
-    h('div', { class: 'field-note', text: 'These go into the page’s own fields and nowhere else: not to the agent, not saved here. Then tap the page’s Sign in button in the picture, or press Enter below.' }));
+  // The boxes are whatever this page is asking for: only an email on the first page of a two-step sign-in, only a password on
+  // the second, a code on a third, the page's own word for each. They are rebuilt when the page's questions change.
+  let signKey = '', signInputs = [], signFields = [];
+  const loginForm = h('form', { class: 'login-form', hidden: true });
+  const words = (fs) => {
+    const w = [...new Set(fs.map((f) => (f.kind === 'password' ? (f.new ? 'a new password' : 'your password') : f.kind === 'code' ? 'a code' : 'your username or email')))];
+    return w.length > 1 ? w.slice(0, -1).join(', ') + ' and ' + w[w.length - 1] : w[0];
+  };
+  const drawSignIn = (fields) => {
+    fields = fields || [];
+    const key = JSON.stringify(fields);
+    if (key === signKey) return;
+    signKey = key; signFields = fields;
+    if (!fields.length) { signInputs = []; loginForm.hidden = true; loginForm.replaceChildren(); return; }
+    signInputs = fields.map((f, i) => h('input', {
+      type: f.kind === 'password' ? 'password' : 'text', name: f.kind + i, 'aria-label': f.label, placeholder: f.label,
+      autocomplete: f.kind === 'password' ? (f.new ? 'new-password' : 'current-password') : f.kind === 'code' ? 'one-time-code' : 'username',
+      inputmode: f.kind === 'code' ? 'numeric' : null, autocapitalize: 'none', spellcheck: 'false', enterkeyhint: i === fields.length - 1 ? 'go' : 'next' }));
+    loginForm.replaceChildren(h('div', { class: 'login-title', text: 'This page asks for ' + words(fields) }), ...signInputs,
+      h('button', { class: 'btn primary', type: 'submit', text: fields.length === 1 ? 'Fill ' + fields[0].label.toLowerCase() : 'Fill these in' }),
+      h('div', { class: 'field-note', text: 'These go into the page’s own fields and nowhere else: not to the agent, not saved here. Then tap the page’s own button (Next, Sign in) in the picture, or press Enter below.' }));
+    loginForm.hidden = false;
+  };
+  drawSignIn(cur.signin || (cur.login ? [{ kind: 'password', label: 'Password' }] : []));
   const livePill = h('span', { class: 'pill ok live-pill', text: 'LIVE', hidden: '' });
   let alive = true, busy = false, last = '', live = false;
   // one picture, fetched now: the fallback when no live view can be had, and a refresh after a tap
@@ -129,6 +146,7 @@ async function showBrowser(body) {
   const fromServer = (m) => {
     if (m.t === 'focus') {
       if (m.url && document.activeElement !== addr) addr.value = m.url;
+      if (m.signin) drawSignIn(m.signin);
       if (Date.now() - focusWanted < 2500) { focusWanted = 0; setMode(m.kind || 'none'); } // a tap (or Tab) on a field opens the right box to type into
     } else if (m.t === 'taken') {
       takenOver = true; toast('This view was opened on another screen. Tap reload to bring it back here.');
@@ -177,7 +195,7 @@ async function showBrowser(body) {
       const t = ((await api('/api/browser')).tabs || []).find((x) => x.id === COMPUTER.tab);
       if (!t) { alive = false; showComputer(); return; }
       if (t.url && document.activeElement !== addr) addr.value = t.url;
-      loginForm.hidden = !t.login; // a page that starts (or stops) asking for a password gets (or loses) the sign-in box
+      drawSignIn(t.signin); // a page that starts (or stops) asking for something gets (or loses) the right boxes
     } catch { /* the next one will try again */ }
   };
   const watcher = setInterval(watch, 3000);
@@ -244,13 +262,14 @@ async function showBrowser(body) {
   };
   loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    if (!userIn.value && !passIn.value) { (passIn.value ? userIn : passIn).focus(); toast('Type your username or password first.'); return; }
-    loginBtn.disabled = true;
-    const r = await post({ kind: 'login', username: userIn.value, password: passIn.value });
-    loginBtn.disabled = false;
+    const values = signInputs.map((inp, i) => ({ index: i, kind: signFields[i].kind, value: inp.value })).filter((v) => v.value);
+    if (!values.length) { (signInputs[0] || {}).focus && signInputs[0].focus(); toast('Type what the page asks for first.'); return; }
+    const btn = loginForm.querySelector('button[type=submit]'); if (btn) btn.disabled = true;
+    const r = await post({ kind: 'login', fields: values });
+    if (btn) btn.disabled = false;
     if (!r) return;
-    userIn.value = ''; passIn.value = ''; // filled into the page; kept nowhere here
-    toast('Filled in the page. Now tap its Sign in button in the picture.');
+    signInputs.forEach((inp) => { inp.value = ''; }); // filled into the page; kept nowhere here
+    toast('Filled in the page. Now tap its own button in the picture.');
     if (!live) await shot();
     stage.scrollIntoView({ block: 'nearest' });
   });

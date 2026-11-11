@@ -18,13 +18,13 @@ func TestTheBrowserPanelMakesSigningInEasy(t *testing.T) {
 	}
 	js := string(b)
 	for _, want := range []string{
-		"kind: 'login'", "autocomplete: 'username'", "autocomplete: 'current-password'",
-		"Fill sign-in fields", "loginForm.hidden = !t.login",
+		"kind: 'login'", "'username'", "'current-password'", "'new-password'", "'one-time-code'",
+		"loginForm.hidden = true", "drawSignIn(t.signin)", // the boxes are whatever the page asks for, and go when it stops asking
 		"const flushNow", "await flushNow();", // pending typing reaches the page before any tap
 		"a.kind === 'key'", // Tab moving focus updates the typing box (masked for a password)
 		"stage.addEventListener('keydown'", "stage.addEventListener('paste'",
-		"addEventListener('pointerup'", // a swipe scrolls instead of clicking what it lands on
-		"userIn.value = ''; passIn.value = '';",
+		"addEventListener('pointerup'",                     // a swipe scrolls instead of clicking what it lands on
+		"signInputs.forEach((inp) => { inp.value = ''; })", // what was typed is cleared once it is in the page
 	} {
 		if !strings.Contains(js, want) {
 			t.Errorf("more.js lost %q", want)

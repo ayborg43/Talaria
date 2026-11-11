@@ -242,7 +242,11 @@ func (s *Server) browserLive(w http.ResponseWriter, r *http.Request) {
 			pending.Store(false)
 			cctx, cc := context.WithTimeout(ctx, 3*time.Second)
 			defer cc()
-			b, _ := json.Marshal(map[string]string{"t": "focus", "kind": tab.FocusKind(cctx), "url": tab.Where(cctx)})
+			fields := tab.SignInFields(cctx)
+			if fields == nil {
+				fields = []browser.SignInField{}
+			}
+			b, _ := json.Marshal(map[string]any{"t": "focus", "kind": tab.FocusKind(cctx), "url": tab.Where(cctx), "signin": fields})
 			c.write(wsText, b)
 		})
 	}

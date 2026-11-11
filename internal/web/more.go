@@ -558,9 +558,10 @@ func (s *Server) computerTransfer(w http.ResponseWriter, r *http.Request) {
 type BrowserTab struct {
 	ID  string `json:"id"`
 	URL string `json:"url"`
-	// Login says the page is asking for a password now, so the app offers its
-	// sign-in box (username and password typed straight into the page).
-	Login bool `json:"login"`
+	// SignIn is what the page is asking for now to let you in (a username, a password, a code), so the app offers exactly
+	// those boxes, typed straight into the page. Login says there is something to offer.
+	SignIn []browser.SignInField `json:"signin"`
+	Login  bool                  `json:"login"`
 }
 
 func (s *Server) managers() []*browser.Manager {
@@ -589,7 +590,11 @@ func (s *Server) browserTabs(w http.ResponseWriter, r *http.Request) {
 	for i, m := range s.managers() {
 		for _, owner := range m.Owners() {
 			if p := m.Peek(owner); p != nil {
-				tabs = append(tabs, BrowserTab{ID: strconv.Itoa(i) + "." + owner, URL: p.Where(ctx), Login: p.HasPassword(ctx)})
+				fields := p.SignInFields(ctx)
+				if fields == nil {
+					fields = []browser.SignInField{}
+				}
+				tabs = append(tabs, BrowserTab{ID: strconv.Itoa(i) + "." + owner, URL: p.Where(ctx), SignIn: fields, Login: len(fields) > 0})
 			}
 		}
 	}
@@ -628,6 +633,8 @@ func (s *Server) browserAct(w http.ResponseWriter, r *http.Request) {
 		URL      string  `json:"url"`
 		Username string  `json:"username"` // login only: the user's own, typed into the page and never kept
 		Password string  `json:"password"` // login only: likewise, and never echoed back
+		// Fields is what a sign-in typed for each box the page is asking for (login only): the same rule, and the same silence.
+		Fields []browser.SignInValue `json:"fields"`
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -660,7 +667,11 @@ func (s *Server) browserAct(w http.ResponseWriter, r *http.Request) {
 	case "back":
 		err = p.GoBack(ctx)
 	case "login":
-		err = p.FillLogin(ctx, in.Username, in.Password)
+		if len(in.Fields) > 0 {
+			err = p.FillSignIn(ctx, in.Fields)
+		} else {
+			err = p.FillLogin(ctx, in.Username, in.Password)
+		}
 	default:
 		err = errors.New("unknown action")
 	}

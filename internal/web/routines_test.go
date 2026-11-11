@@ -14,11 +14,12 @@ import (
 )
 
 type fakePage struct {
-	url   string
-	under browser.Described
-	focus browser.Described
-	kind  string
-	blind bool
+	url    string
+	under  browser.Described
+	focus  browser.Described
+	kind   string
+	blind  bool
+	fields []browser.SignInField
 }
 
 func (f *fakePage) Where(context.Context) string { return f.url }
@@ -27,6 +28,7 @@ func (f *fakePage) DescribeAt(context.Context, float64, float64) (browser.Descri
 }
 func (f *fakePage) DescribeFocus(context.Context) (browser.Described, bool) { return f.focus, !f.blind }
 func (f *fakePage) FocusKind(context.Context) string                        { return f.kind }
+func (f *fakePage) SignInFields(context.Context) []browser.SignInField      { return f.fields }
 
 func routineRig(t *testing.T) *rig {
 	r := newRig(t)

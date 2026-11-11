@@ -189,6 +189,7 @@ type probe interface {
 	DescribeAt(ctx context.Context, x, y float64) (browser.Described, bool)
 	DescribeFocus(ctx context.Context) (browser.Described, bool)
 	FocusKind(ctx context.Context) string
+	SignInFields(ctx context.Context) []browser.SignInField
 }
 
 // recordStep works out what a takeover action is as a step, before it is done (a click is described by what is under

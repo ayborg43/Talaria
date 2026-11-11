@@ -150,6 +150,7 @@ func liveRig(t *testing.T) (*rig, *fakeLive, string) {
 	r.login()
 	f := &fakeLive{}
 	f.url = "https://shop.test/"
+	f.fields = []browser.SignInField{{Kind: "username", Label: "Email address"}}
 	r.srv.liveFor = func(id string) liveTab {
 		if id == "t1" {
 			return f
@@ -222,6 +223,9 @@ func TestPicturesArePushedAndInputArrivesInOrder(t *testing.T) {
 	for i := 0; i < 3 && !sawFocus; i++ {
 		if op, p, err := ws.next(t); err == nil && op == 1 && strings.Contains(string(p), `"focus"`) {
 			sawFocus = true
+			if !strings.Contains(string(p), `"signin":[{"kind":"username","label":"Email address"}]`) {
+				t.Fatalf("the page is told what it is asking for to sign in: %s", p)
+			}
 		}
 	}
 	if !sawFocus {
@@ -326,7 +330,7 @@ func TestThePageTriesTheLiveConnectionFirstAndSendsInputOnIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(b)
-	for _, want := range []string{"/api/browser/live?id=", "new WebSocket(", "startStream()", "emit({ t: 'text'", "emit({ t: 'mouse'", "emit({ t: 'wheel'", "wsBroken"} {
+	for _, want := range []string{"drawSignIn(", "fields: values", "/api/browser/live?id=", "new WebSocket(", "startStream()", "emit({ t: 'text'", "emit({ t: 'mouse'", "emit({ t: 'wheel'", "wsBroken"} {
 		if !strings.Contains(src, want) {
 			t.Errorf("more.js lacks %s", want)
 		}
