@@ -23,6 +23,7 @@ func GeneratePDF(title, body string) []byte {
 	objs = append(objs, []byte("<< /Type /Catalog /Pages 2 0 R >>"))
 	objs = append(objs, []byte(fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), nPages)))
 	contentIDs := []int{}
+	pageObj = 3 // the first loop walked it to the end: start again, so each page names its own content stream
 	for i := 0; i < nPages; i++ {
 		contentIDs = append(contentIDs, pageObj+1)
 		objs = append(objs, []byte(fmt.Sprintf(
@@ -40,8 +41,8 @@ func GeneratePDF(title, body string) []byte {
 	for i, o := range objs {
 		offsets = append(offsets, b.Len())
 		fmt.Fprintf(&b, "%d 0 obj\n", i+1)
-		if i >= 2 && (i-2)%2 == 1 {
-			// Content streams need length headers.
+		if i >= 2 && i < 2+2*nPages && (i-2)%2 == 1 {
+			// Content streams need length headers. (Only the page objects' own streams: the two fonts after them are plain.)
 			fmt.Fprintf(&b, "<< /Length %d >>\nstream\n", len(o))
 			b.Write(o)
 			b.WriteString("\nendstream\n")
