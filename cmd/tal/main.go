@@ -43,6 +43,7 @@ import (
 	"talaria/internal/guard"
 	"talaria/internal/idea"
 	"talaria/internal/mcp"
+	"talaria/internal/phone"
 	"talaria/internal/provider"
 	"talaria/internal/vault"
 	"talaria/internal/version"
@@ -269,6 +270,9 @@ func (c *cli) setupModel(gateway bool) (err error) {
 			Retention:     time.Duration(files.ClampRetention(c.cfg.Files.RetentionHours)) * time.Hour}}
 	if vlt != nil {
 		appCfg.Vault = vlt
+	}
+	if gateway {
+		appCfg.Phone = phone.NewHub() // only a gateway has a phone to link to
 	}
 	c.res, c.p = res, p
 	c.rt = app.Open(appCfg)

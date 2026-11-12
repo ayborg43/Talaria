@@ -36,6 +36,7 @@ type rule struct {
 // servers are only known once Talaria runs. TestKnownToolsMatchesTheRegisteredTools
 // keeps this list in step with the registrations.
 var knownTools = map[string]bool{
+	"phone_info": true, "phone_read": true,
 	"browser_back": true, "browser_click": true, "browser_close": true,
 	"choice_present": true, "choice_select": true,
 	"browser_fill": true, "browser_handoff": true, "browser_open": true, "browser_press": true,

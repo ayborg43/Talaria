@@ -1212,6 +1212,27 @@ kept like a channel, and the header says who you are talking to.
   ordinary conversation puts the usual instructions and model back. Edit or remove an agent at any time; the conversations stay, as ordinary ones.
 - Agents share one memory, one set of goals and watches, and one set of rules with the rest of Talaria. They are kept in `~/.talaria/agents.json`.
 
+### Your phone (the Android app)
+
+The Android app in `android/` can give the agent two **read-only** tools for the phone it is installed on. The phone holds one WebSocket to
+`/api/phone/link` while something is switched on and the app is connected; a tool call goes down it and the phone answers from its own data.
+No Google services and no push service are involved.
+
+| Tool | What it can ask |
+|---|---|
+| `phone_info` | `status` (battery, charging, network, free space, do-not-disturb, time zone) or `location` (a position rounded to about 100 m, with its age) |
+| `phone_read` | `contacts` (one name looked up, never the list), `calendar` (the phone's own calendars, 1 to 14 days) or `notifications` (what is showing now, newest first) |
+
+- **Everything starts off, on the phone.** Settings -> Your phone has one switch per kind; turning one on asks for Android's own permission at that moment.
+  A request for anything switched off, or whose permission was taken back, is refused on the phone, and the server refuses it first when the phone has not listed it.
+  The phone writes down each request (what, when, shared or refused) where you can read it.
+- **Read only.** There is no tool to send, change or delete anything on the phone.
+- **Outside text.** `phone_read` returns text other people wrote (a notification, an invite's title), so it counts as outside content: once the agent has read it,
+  anything that could send something out asks first, as after a web page. `phone_info` does not.
+- **Your rules apply.** **Read your phone** is a row in What it asks first (`phone_info`, `phone_read`): set it to Ask me to approve each look.
+- **Location needs one more step to answer with the app closed**: Android only gives a closed app a position if location is allowed "all the time"; without it the agent is told to ask again with the app open.
+- The link is only open while the phone is signed in and connected, and a newer connection replaces an older one. `GET /api/phone` says whether a phone is linked and what it shares.
+
 ### Goals
 
 For something you want pursued over days, the agent takes on a **goal** with `goal_create`: an objective (what done looks
@@ -1539,6 +1560,7 @@ and how it ended.
 | `internal/gateway/chat` | what every chat service shares: per-chat agents and workers, streamed edits, button approvals, `/model`, `/env`, message splitting; a service supplies a small `Transport` |
 | `internal/gateway/telegram` | Bot API client; long polling feeding the chat engine |
 | `internal/gateway/discord` | WebSocket client (RFC 6455), Gateway session (identify, heartbeat, resume), REST client; direct messages feeding the chat engine |
+| `internal/phone` | the link to the user's phone: one connection, requests and answers, and the read-only `phone_*` tools |
 | `internal/agent` | model <-> tools loop, approval gate |
 | `internal/provider` | `Provider` interface; OpenAI-compatible and Anthropic clients, SSE streaming, retries |
 | `internal/config` | config file, profiles, and how settings resolve |

@@ -390,7 +390,7 @@ func runGateway(c *cli) error {
 			Cfg:        c.cfg,
 			ApplyRules: applyRules(c.rt),
 			Mailbox:    c.rt.Mail(), Calendars: c.rt.Calendars(), X: c.rt.X(), Getenv: c.getenv,
-			Notes: c.rt.Notes(), Notices: notices, Env: c.rt.Env(), Browsers: c.rt.Browsers,
+			Notes: c.rt.Notes(), Notices: notices, Env: c.rt.Env(), Browsers: c.rt.Browsers, Phone: c.rt.Phone(),
 			ReceiptsPath: filepath.Join(c.home, "computer_receipts.json"),
 			AGUIKey:      webSet.AGUIKey,
 			Runs:         runs,

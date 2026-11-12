@@ -21,6 +21,7 @@ import (
 	"talaria/internal/mailbox"
 	"talaria/internal/memory"
 	"talaria/internal/notify"
+	"talaria/internal/phone"
 	"talaria/internal/provider"
 	"talaria/internal/skill"
 	"talaria/internal/tool"
@@ -147,6 +148,9 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 	}
 	if rt.cfg.X != nil {
 		x.RegisterTools(tools, rt.cfg.X)
+	}
+	if rt.cfg.Phone != nil {
+		phone.RegisterTools(tools, rt.cfg.Phone)
 	}
 	if send := rt.notifier(); send != nil {
 		notify.RegisterTool(tools, send, &rt.notifyLimit)

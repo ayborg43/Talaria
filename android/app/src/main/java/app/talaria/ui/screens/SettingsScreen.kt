@@ -91,6 +91,7 @@ fun SettingsScreen(activity: AppCompatActivity, repo: Repo, voice: VoiceControll
         "rules" -> RulesScreen(repo, onBack = { sub = null }, modifier = modifier)
         "voice" -> VoiceSetupScreen(repo, onBack = { sub = null }, modifier = modifier)
         "memory" -> MemoryScreen(repo, onBack = { sub = null }, modifier = modifier)
+        "phone" -> PhoneAccessScreen(activity, repo, onBack = { sub = null }, modifier = modifier)
         else -> SettingsHome(activity, repo, modifier, onOpen = { sub = it }, onAskNotifications = onAskNotifications)
     }
 }
@@ -151,6 +152,18 @@ private fun SettingsHome(activity: AppCompatActivity, repo: Repo, modifier: Modi
                 Panel(Modifier.fillMaxWidth()) {
                     Column {
                         LinkRow("Profile and memory", "Your name, the tone you like, and what Talaria remembers.", onClick = { onOpen("memory") })
+                    }
+                }
+
+                SectionTitle("Your phone")
+                Panel(Modifier.fillMaxWidth()) {
+                    Column {
+                        val phoneOps by (activity.application as app.talaria.TalariaApp).phone.ops.collectAsState()
+                        LinkRow(
+                            "What Talaria may read", "Location, contacts, calendar and notifications, only when you ask and only what you switch on.",
+                            trailing = { Pill(if (phoneOps.isEmpty()) "Off" else "${phoneOps.size} on", if (phoneOps.isEmpty()) Tone.Neutral else Tone.Brass) },
+                            onClick = { onOpen("phone") },
+                        )
                     }
                 }
 
@@ -302,7 +315,7 @@ private fun AlertRows(activity: AppCompatActivity, repo: Repo, conn: Conn) {
 }
 
 @Composable
-private fun ToggleRow(title: String, body: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
+internal fun ToggleRow(title: String, body: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable(enabled = enabled) { onChange(!checked) }.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleSmall)
@@ -313,7 +326,7 @@ private fun ToggleRow(title: String, body: String, checked: Boolean, enabled: Bo
 }
 
 @Composable
-private fun LinkRow(title: String, body: String, trailing: @Composable (() -> Unit)? = null, onClick: () -> Unit) {
+internal fun LinkRow(title: String, body: String, trailing: @Composable (() -> Unit)? = null, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleSmall)

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"talaria/internal/persona"
+	phonelink "talaria/internal/phone"
 	"talaria/internal/routine"
 	"talaria/internal/runlog"
 	"time"
@@ -189,6 +190,8 @@ type Server struct {
 	AGUIKey string
 	// Browsers lists the browsers the agent has started, for taking control of a tab. Nil offers none.
 	Browsers func() []*browser.Manager
+	// Phone is the link to the user's phone, which the agent's phone tools use. Nil leaves the door shut.
+	Phone *phonelink.Hub
 
 	voiceMu sync.Mutex
 	voice   voiceLimiter
@@ -274,6 +277,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/computer/transfer", s.authed(s.computerTransfer))
 	mux.HandleFunc("GET /api/browser", s.authed(s.browserTabs))
 	mux.HandleFunc("GET /api/browser/shot", s.authed(s.browserShot))
+	mux.HandleFunc("GET /api/phone", s.authed(s.phoneStatus))
+	mux.HandleFunc("GET /api/phone/link", s.authed(s.phoneLink))
 	mux.HandleFunc("GET /api/browser/live", s.authed(s.browserLive))
 	mux.HandleFunc("GET /api/browser/stream", s.authed(s.browserStream))
 	mux.HandleFunc("POST /api/browser/act", s.authed(s.browserAct))

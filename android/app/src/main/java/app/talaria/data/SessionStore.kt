@@ -66,6 +66,16 @@ class SessionStore(context: Context) : Credentials {
         return true
     }
 
+    // ---- what the agent may read on this phone (every one off until switched on) ----
+
+    var phoneOps: Set<String>
+        get() = prefs.getStringSet("phoneOps", emptySet()) ?: emptySet()
+        set(v) { prefs.edit().putStringSet("phoneOps", v).apply() }
+    /** The last things the agent asked of this phone, as JSON, newest first. */
+    var phoneLog: String
+        get() = prefs.getString("phoneLog", "[]") ?: "[]"
+        set(v) { prefs.edit().putString("phoneLog", v).apply() }
+
     // ---- alerts ----
 
     /** Approvals already shown as a notification, so a reconnect or a second check never shows one twice. */

@@ -26,6 +26,7 @@ import (
 	"talaria/internal/mcp"
 	"talaria/internal/memory"
 	"talaria/internal/notify"
+	"talaria/internal/phone"
 	"talaria/internal/provider"
 	"talaria/internal/skill"
 	"talaria/internal/subagent"
@@ -101,6 +102,8 @@ type Config struct {
 	// Files keeps uploads from the web app and PDFs the agent makes, served
 	// back as downloads. Nil turns the file tools off.
 	Files *files.Store
+	// Phone is the link to the user's phone, which gives the agent read-only phone tools. Nil leaves them out.
+	Phone *phone.Hub
 	// Log is where warnings go. Nil discards them.
 	Log *slog.Logger
 }
@@ -198,6 +201,9 @@ func (rt *Runtime) HasVault() bool { return rt.cfg.Vault != nil }
 
 // Notes is the agent's notes and the user's profile, for the app's own screen to show and edit.
 func (rt *Runtime) Notes() *memory.Notes { return rt.notes }
+
+// Phone is the link to the user's phone, nil when there is none.
+func (rt *Runtime) Phone() *phone.Hub { return rt.cfg.Phone }
 
 // Goals returns the goal store, nil if goals are off.
 func (rt *Runtime) Goals() *goal.Store { return rt.cfg.Goals }

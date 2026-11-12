@@ -15,6 +15,8 @@ class TalariaApp : Application() {
         private set
     lateinit var notifier: Notifier
         private set
+    lateinit var phone: app.talaria.phone.PhoneLink
+        private set
     val voice: app.talaria.voice.VoiceController by lazy { app.talaria.voice.VoiceController(this, repo) }
 
     override fun onCreate() {
@@ -23,6 +25,7 @@ class TalariaApp : Application() {
         notifier = Notifier(this, repo)
         notifier.start()
         repo.start()
+        phone = app.talaria.phone.PhoneLink(this, repo).also { it.start() }
         keepWidgetCurrent()
         // When the network comes back the connection is retried at once instead of at the end of its wait.
         runCatching {
