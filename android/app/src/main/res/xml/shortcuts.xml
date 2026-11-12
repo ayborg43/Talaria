@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="talk" android:enabled="true" android:icon="@drawable/ic_shortcut_talk" android:shortcutShortLabel="@string/shortcut_talk" android:shortcutLongLabel="@string/shortcut_talk_long">
+        <intent android:action="app.talaria.action.TALK" android:targetPackage="app.talaria" android:targetClass="app.talaria.MainActivity" />
+    </shortcut>
+    <shortcut android:shortcutId="new_chat" android:enabled="true" android:icon="@drawable/ic_shortcut_chat" android:shortcutShortLabel="@string/shortcut_new" android:shortcutLongLabel="@string/shortcut_new_long">
+        <intent android:action="app.talaria.action.NEW_CHAT" android:targetPackage="app.talaria" android:targetClass="app.talaria.MainActivity" />
+    </shortcut>
+    <shortcut android:shortcutId="approvals" android:enabled="true" android:icon="@drawable/ic_shortcut_approvals" android:shortcutShortLabel="@string/shortcut_approvals" android:shortcutLongLabel="@string/shortcut_approvals_long">
+        <intent android:action="app.talaria.action.APPROVALS" android:targetPackage="app.talaria" android:targetClass="app.talaria.MainActivity" />
+    </shortcut>
+</shortcuts>

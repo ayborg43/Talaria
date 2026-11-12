@@ -1,0 +1,14 @@
+<resources>
+    <color name="shortcut_bg">#47340D</color>
+    <color name="widget_bg">#1C1914</color>
+    <color name="widget_pill">#2B271F</color>
+    <color name="widget_ink">#F1ECE4</color>
+    <color name="widget_muted">#A9A49A</color>
+    <color name="widget_brass">#EEB53E</color>
+    <color name="widget_chip_quiet">#2E2A23</color>
+    <color name="widget_chip_work">#143320</color>
+    <color name="widget_chip_ask">#47340D</color>
+    <color name="widget_chip_quiet_text">#A9A49A</color>
+    <color name="widget_chip_work_text">#68CD8F</color>
+    <color name="widget_chip_ask_text">#EEC060</color>
+</resources>

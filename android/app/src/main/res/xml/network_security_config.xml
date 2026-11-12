@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Talaria is self-hosted, so a server on the home network may be plain http. The app itself refuses plain http
+     for any address that is not private (see Servers.kt); this only lets the platform carry the ones it accepts. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

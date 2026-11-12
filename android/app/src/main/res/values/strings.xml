@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">Talaria</string>
+    <string name="widget_description">Ask Talaria, start a voice conversation, and see what is running or waiting for you.</string>
+    <string name="shortcut_talk">Talk</string>
+    <string name="shortcut_talk_long">Talk with Talaria</string>
+    <string name="shortcut_new">New chat</string>
+    <string name="shortcut_new_long">Start a new chat</string>
+    <string name="shortcut_approvals">Approvals</string>
+    <string name="shortcut_approvals_long">See what needs your answer</string>
+    <string name="tile_label">Talk</string>
+</resources>

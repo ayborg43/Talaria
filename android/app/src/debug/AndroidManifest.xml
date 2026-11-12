@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Debug builds only: lets a test hand the voice pipeline a recording, where no one can speak into a microphone. -->
+        <receiver android:name="app.talaria.DebugReceiver" android:exported="true" />
+    </application>
+</manifest>
