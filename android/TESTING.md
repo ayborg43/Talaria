@@ -4,7 +4,7 @@
 
 ```bash
 cd android && export JAVA_HOME=/path/to/jdk17
-./gradlew :app:testDebugUnitTest     # 44 tests: voice detection, server-address rules, the API client against a mock server, Make, pins, search and quick-action helpers
+./gradlew :app:testDebugUnitTest     # 51 tests: voice detection, server-address rules, the API client against a mock server, Make, pins, search, quick-action and alert helpers
 ./gradlew :app:lintDebug             # no errors expected
 ```
 
@@ -14,6 +14,8 @@ Run a gateway you can sign in to (a throwaway password is fine), install `app-de
 Checked this way: sign-in, chat and Markdown, approvals (in the app and from a notification), uploads from "+" (photos, refused types), share-in,
 session expiry, recipes, routine recording and running, conversation rename / archive / restore / delete, the live browser, voice (through the debug hook),
 app lock, dark mode, large text, tablet layout, Make (every kind opens: PDF, page, slides, dashboard, document), saving a file to Downloads, Files screen, profile and notes (add, edit, forget), morning brief on / time / off, conversation search, pinning, plan card, the home-screen widget (placed on the launcher; quiet and "1 waiting" states; Ask opens the keyboard, New chat, Talk and the status chip open the right place; the status refreshed by itself after the question was cleared), launcher shortcuts and the quick-settings Talk tile (both open the app on the right action).
+Phase 3 (alerts without Firebase): two local gateways and the emulator. Checked: the connection notice turning to "Cannot reach your server" with the network off and back to "Connected" within seconds of it returning (the wait is cut short by the network callback); a second server added, switched to, removed, and signing out of the live one moving to the other; the quarter-hour check (run on demand with `adb shell am broadcast -a app.talaria.DEBUG_WATCHDOG -n app.talaria/.DebugReceiver`) announcing a question waiting on the server that is not in use, and tapping it switching to that server and the question; an approval notice (cleaned text, Allow/Deny) removed when answered in the app; a reply typed into a notification reaching the agent; replies during quiet hours landing in the Silent section; the battery-allowance dialog and its "Allowed" status; a service started again by the system after an update.
+Found while testing: Android does not allow a service to be started from an update broadcast (it does from a restart), so after an app update the live link returns when the app is opened; the quarter-hour check still announces waiting questions in between.
 
 ## Real-phone checklist (cannot be done on an emulator)
 
@@ -24,3 +26,5 @@ app lock, dark mode, large text, tablet layout, Make (every kind opens: PDF, pag
 5. **Takeover over mobile data**: open the browser view, scroll, type, pinch to zoom.
 6. **Upload**: send a photo from the gallery and a PDF from Files; share a photo from another app.
 7. **Quick access**: long-press the app icon (Talk, New chat, Approvals should be listed); add the widget and leave it for 30 minutes with the phone idle, then check it is still right; add the Talk tile and tap it from the lock screen (it should ask to unlock first); sign in with your password manager's fill, and see that it offers to save.
+8. **Alerts that survive the night**: allow "Run in the background", leave the phone on a table with the screen off for a few hours, then start a task that needs an approval from another device: the notice should arrive within a minute (deep sleep can delay the live link; the quarter-hour check is the backstop). Repeat with battery saver on, and after restarting the phone without opening the app.
+9. **Two servers**: sign in to both, make one ask for an approval while you are on the other; the notice should arrive within about 15 minutes and switch to that server when tapped.

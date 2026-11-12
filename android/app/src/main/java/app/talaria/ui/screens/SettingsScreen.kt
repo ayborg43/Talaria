@@ -3,6 +3,7 @@ package app.talaria.ui.screens
 import app.talaria.ui.theme.Ti
 
 import androidx.activity.compose.BackHandler
+import android.content.Intent
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -55,6 +56,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.talaria.BuildConfig
 import app.talaria.data.ControlDto
+import app.talaria.data.Conn
+import app.talaria.service.Alerts
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import app.talaria.data.RulesDto
 import app.talaria.data.Repo
 import app.talaria.data.Servers
@@ -91,8 +97,12 @@ fun SettingsScreen(activity: AppCompatActivity, repo: Repo, voice: VoiceControll
 
 @Composable
 private fun SettingsHome(activity: AppCompatActivity, repo: Repo, modifier: Modifier, onOpen: (String) -> Unit, onAskNotifications: () -> Unit) {
-    val control = rememberPolled(15_000, "control") { repo.api.getJson<ControlDto>("/api/control") }
-    val voiceInfo = rememberPolled(0, "voiceinfo") { repo.api.getJson<VoiceDto>("/api/voice") }
+    val base by repo.base.collectAsState()
+    val servers by repo.servers.collectAsState()
+    val conn by repo.conn.collectAsState()
+    var removing by remember { mutableStateOf<String?>(null) }
+    val control = rememberPolled(15_000, "control$base") { repo.api.getJson<ControlDto>("/api/control") }
+    val voiceInfo = rememberPolled(0, "voiceinfo$base") { repo.api.getJson<VoiceDto>("/api/voice") }
     val paused by repo.paused.collectAsState()
     val theme by repo.theme.collectAsState()
     val scope = rememberCoroutineScope()
@@ -108,14 +118,32 @@ private fun SettingsHome(activity: AppCompatActivity, repo: Repo, modifier: Modi
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
             item {
                 error?.let { ErrorNote(it); Gap(8.dp) }
-                SectionTitle("Server")
+                SectionTitle(if (servers.size > 1) "Servers" else "Server")
                 Panel(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(Servers.display(repo.store.baseUrl), style = MaterialTheme.typography.titleMedium)
-                        Gap(4.dp)
-                        Text(listOfNotNull(c?.model?.takeIf { it.isNotBlank() }, c?.version?.takeIf { it.isNotBlank() }).joinToString(" · ").ifBlank { "Connected" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Gap(12.dp)
-                        SecondaryButton(onClick = { confirmOut = true }, shape = MaterialTheme.shapes.medium) { Text("Sign out of this phone") }
+                    Column {
+                        servers.forEach { origin ->
+                            val live = origin == base
+                            Row(
+                                Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable(enabled = !live) {
+                                    if (repo.switchTo(origin)) { repo.toast("Now on ${Servers.display(origin)}"); ConnectionService.sync(activity) }
+                                }.padding(horizontal = 16.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(Servers.display(origin), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        if (live) listOfNotNull(c?.model?.takeIf { it.isNotBlank() }, c?.version?.takeIf { it.isNotBlank() }).joinToString(" · ").ifBlank { "Connected" } else "Tap to switch to it",
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                if (live) { if (servers.size > 1) Pill("In use", Tone.Brass) } else TextButton(onClick = { removing = origin }) { Text("Remove") }
+                            }
+                            HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        }
+                        LinkRow("Add another server", "Sign in to a second Talaria and switch between them. Only the one in use sends alerts live; the others are checked every quarter hour.", onClick = { repo.beginAdd() })
+                        Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
+                            SecondaryButton(onClick = { confirmOut = true }, shape = MaterialTheme.shapes.medium) { Text(if (servers.size > 1) "Sign out of ${Servers.display(base)}" else "Sign out of this phone") }
+                        }
                     }
                 }
 
@@ -157,6 +185,7 @@ private fun SettingsHome(activity: AppCompatActivity, repo: Repo, modifier: Modi
                             if (v) onAskNotifications() else ConnectionService.sync(activity)
                             ConnectionService.sync(activity)
                         }
+                        if (notifications) AlertRows(activity, repo, conn)
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                         val canLock = remember { Lock.available(activity) }
                         ToggleRow("Lock the app", if (canLock) "Ask for your fingerprint, face or PIN when you open it. Approvals from notifications then need unlocking first." else "Set a screen lock on this phone first.", lock, enabled = canLock) { v ->
@@ -187,12 +216,89 @@ private fun SettingsHome(activity: AppCompatActivity, repo: Repo, modifier: Modi
             }
         }
     }
+    removing?.let { origin ->
+        AlertDialog(
+            onDismissRequest = { removing = null }, title = { Text("Remove ${Servers.display(origin)}?") },
+            text = { Text("This phone will sign out of it and stop checking it. Your conversations stay on that server.") },
+            confirmButton = { TextButton(onClick = { removing = null; scope.launch { repo.forgetServer(origin) } }) { Text("Remove", color = MaterialTheme.extra.bad) } },
+            dismissButton = { TextButton(onClick = { removing = null }) { Text("Keep it") } },
+        )
+    }
     if (confirmOut) AlertDialog(
         onDismissRequest = { confirmOut = false }, title = { Text("Sign out?") },
-        text = { Text("This phone will forget the session. Your conversations stay on the server.") },
+        text = { Text(if (servers.size > 1) "This phone will forget its session on ${Servers.display(base)} and move to another server. Your conversations stay on the server." else "This phone will forget the session. Your conversations stay on the server.") },
         confirmButton = { TextButton(onClick = { confirmOut = false; scope.launch { repo.signOut(); ConnectionService.sync(activity) } }) { Text("Sign out", color = MaterialTheme.extra.bad) } },
         dismissButton = { TextButton(onClick = { confirmOut = false }) { Text("Stay signed in") } },
     )
+}
+
+/** What keeps alerts arriving: whether the live link is up, whether Android may pause it, quiet hours, and the system sounds. */
+@Composable
+private fun AlertRows(activity: AppCompatActivity, repo: Repo, conn: Conn) {
+    val divider = @Composable { HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)) }
+    var resumed by remember { mutableStateOf(0) }
+    DisposableEffect(activity) {
+        val o = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) resumed++ }
+        activity.lifecycle.addObserver(o)
+        onDispose { activity.lifecycle.removeObserver(o) }
+    }
+    val pm = activity.getSystemService(android.os.PowerManager::class.java)
+    val allowed = remember(resumed) { pm.isIgnoringBatteryOptimizations(activity.packageName) }
+    var quiet by remember { mutableStateOf(repo.store.quietHours) }
+    var from by remember { mutableStateOf(repo.store.quietFrom) }
+    var to by remember { mutableStateOf(repo.store.quietTo) }
+    var picking by remember { mutableStateOf<String?>(null) }
+
+    divider()
+    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Alert link", style = MaterialTheme.typography.titleSmall)
+            Text("The live connection to your server. If Android stops it, it is started again and checked every quarter hour.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        when (conn) {
+            is Conn.Online -> Pill("Live", Tone.Ok)
+            is Conn.Connecting -> Pill("Connecting", Tone.Neutral)
+            is Conn.Offline -> Pill("Offline", Tone.Bad)
+            else -> Pill("Off", Tone.Neutral)
+        }
+    }
+    divider()
+    LinkRow(
+        "Run in the background",
+        if (allowed) "Allowed. Android will not pause alerts to save battery." else "Android may pause alerts to save battery. Allow Talaria to keep running so they arrive on time.",
+        trailing = { Pill(if (allowed) "Allowed" else "Limited", if (allowed) Tone.Ok else Tone.Brass) },
+        onClick = {
+            val intent = if (allowed) Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            else Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, android.net.Uri.parse("package:${activity.packageName}"))
+            try { activity.startActivity(intent) } catch (_: Exception) { repo.toast("Open this phone's battery settings and allow Talaria to run in the background.") }
+        },
+    )
+    divider()
+    ToggleRow("Quiet hours", if (quiet) "Replies arrive without a sound from ${Alerts.clock(from)} to ${Alerts.clock(to)}. Questions that need your answer still sound." else "Replies arrive silently during hours you choose. Questions that need your answer still sound.", quiet) { quiet = it; repo.store.quietHours = it }
+    if (quiet) Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("Between", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        SecondaryButton(onClick = { picking = "from" }) { Text(Alerts.clock(from)) }
+        Text("and", style = MaterialTheme.typography.bodyMedium)
+        SecondaryButton(onClick = { picking = "to" }) { Text(Alerts.clock(to)) }
+    }
+    divider()
+    LinkRow("Sounds and vibration", "Choose how approvals and replies sound.", onClick = {
+        try { activity.startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, activity.packageName)) } catch (_: Exception) {}
+    })
+    picking?.let { which ->
+        val at = if (which == "from") from else to
+        val state = rememberTimePickerState(at / 60, at % 60, is24Hour = true)
+        AlertDialog(
+            onDismissRequest = { picking = null }, title = { Text(if (which == "from") "Quiet from" else "Quiet until") },
+            text = { TimePicker(state) },
+            confirmButton = { TextButton(onClick = {
+                val m = state.hour * 60 + state.minute
+                if (which == "from") { from = m; repo.store.quietFrom = m } else { to = m; repo.store.quietTo = m }
+                picking = null
+            }) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { picking = null }) { Text("Cancel") } },
+        )
+    }
 }
 
 @Composable

@@ -25,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import app.talaria.ui.components.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,12 +51,15 @@ import app.talaria.data.Repo
 import app.talaria.data.Servers
 import app.talaria.ui.components.ErrorNote
 import app.talaria.ui.components.Gap
+import app.talaria.ui.components.TextButton
 import app.talaria.ui.components.TalariaMark
 import kotlinx.coroutines.launch
 
 @Composable
 fun ConnectScreen(repo: Repo, notice: String? = null) {
-    var address by rememberSaveable { mutableStateOf(repo.store.lastServers.ifEmpty { repo.store.baseUrl }) }
+    val adding by repo.adding.collectAsState()
+    // Adding a second server starts from an empty address; signing back in to the only one remembers it.
+    var address by rememberSaveable { mutableStateOf(if (repo.adding.value) "" else repo.store.lastServers.ifEmpty { repo.store.baseUrl }) }
     var password by rememberSaveable { mutableStateOf("") }
     var show by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -131,6 +135,7 @@ fun ConnectScreen(repo: Repo, notice: String? = null) {
                 "The address is where you run Talaria. A server on your own network can use http; anything on the internet needs https. Your password is sent once to sign in. Talaria does not keep it; your phone's password manager can fill it in and remember it for you.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
             )
+            if (adding) { Gap(12.dp); TextButton(onClick = { repo.cancelAdd() }) { Text("Cancel") } }
         }
     }
 }

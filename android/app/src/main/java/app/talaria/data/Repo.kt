@@ -9,6 +9,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -37,13 +38,30 @@ sealed interface Conn {
  */
 class Repo(context: Context) {
     val store = SessionStore(context)
-    val api = Api(store).also { it.onAuthLost = { _sessionEnded.value = true; signOutLocal() } }
+    val api = Api(store).also { it.onAuthLost = { _sessionEnded.value = true; signOutLocal(ended = true) } }
     private val _sessionEnded = MutableStateFlow(false)
     /** The server stopped accepting this phone's session: the sign-in screen says so. */
     val sessionEnded: StateFlow<Boolean> = _sessionEnded.asStateFlow()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var loop: Job? = null
+    /** Counts server switches, so an answer that was in flight from the old server is not shown on the new one. */
+    @Volatile private var generation = 0
+    /** Cuts the wait before the next try short: the network came back. */
+    private val wake = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+    fun nudge() { wake.trySend(Unit) }
+
+    private val _base = MutableStateFlow(store.baseUrl)
+    /** The server this phone is talking to now. */
+    val base: StateFlow<String> = _base.asStateFlow()
+    private val _servers = MutableStateFlow(store.savedServers)
+    /** Every server the phone has a session for. */
+    val servers: StateFlow<List<String>> = _servers.asStateFlow()
+    private val _adding = MutableStateFlow(false)
+    /** The sign-in screen is showing to add another server, while one is still signed in. */
+    val adding: StateFlow<Boolean> = _adding.asStateFlow()
+    fun beginAdd() { _adding.value = true }
+    fun cancelAdd() { _adding.value = false }
 
     private val _conn = MutableStateFlow<Conn>(if (store.signedIn) Conn.Connecting else Conn.SignedOut)
     val conn: StateFlow<Conn> = _conn.asStateFlow()
@@ -105,25 +123,66 @@ class Repo(context: Context) {
     suspend fun signIn(input: String, password: String) {
         val origin = Servers.normalize(input)
         val cookie = api.login(origin, password)
+        // Another server may be live: let it go before the credentials change under it.
+        if (store.baseUrl != origin) { stop(); resetState() }
         store.baseUrl = origin
         store.cookie = cookie
+        store.remember(origin, cookie)
         store.lastServers = origin
+        _base.value = origin
+        _servers.value = store.savedServers
+        _adding.value = false
         _conn.value = Conn.Connecting
         _sessionEnded.value = false
         start()
     }
 
-    fun signOutLocal() {
+    private fun resetState() {
+        generation++
+        _messages.value = emptyList(); _workers.value = emptyList(); _running.value = false; _typing.value = false
+        _chats.value = emptyList(); _archived.value = emptyList(); _channel.value = null; _suggestion.value = null
+    }
+
+    /** Forgets the live server's session. With another server saved, the phone moves to it instead of the sign-in screen. */
+    fun signOutLocal(ended: Boolean = false) {
+        val gone = store.baseUrl
         stop()
         store.signOut()
-        _messages.value = emptyList(); _workers.value = emptyList(); _running.value = false; _typing.value = false
-        _chats.value = emptyList(); _channel.value = null; _suggestion.value = null
+        resetState()
+        _servers.value = store.savedServers
+        val next = store.savedServers.firstOrNull { it != gone }
+        if (next != null && switchTo(next)) {
+            toast(if (ended) "Your session on ${Servers.display(gone)} ended. Now on ${Servers.display(next)}." else "Signed out of ${Servers.display(gone)}.")
+            return
+        }
+        _base.value = ""
         _conn.value = Conn.SignedOut
     }
 
     suspend fun signOut() {
         runCatching { api.post("/api/logout") }
         signOutLocal()
+    }
+
+    /** Makes another saved server the live one. */
+    fun switchTo(origin: String): Boolean {
+        if (origin == store.baseUrl && store.cookie.isNotEmpty()) return true
+        if (!store.activate(origin)) return false
+        stop(); resetState()
+        _sessionEnded.value = false; _adding.value = false
+        _base.value = origin
+        _conn.value = Conn.Connecting
+        start()
+        return true
+    }
+
+    /** Signs out of one saved server, live or not. */
+    suspend fun forgetServer(origin: String) {
+        if (origin == store.baseUrl) { signOut(); return }
+        val c = store.cookieFor(origin)
+        if (c.isNotEmpty()) runCatching { Api(fixedCredentials(origin, c)).post("/api/logout") }
+        store.forget(origin)
+        _servers.value = store.savedServers
     }
 
     private suspend fun connectionLoop() {
@@ -137,6 +196,7 @@ class Repo(context: Context) {
                 everOnline = true
                 _conn.value = Conn.Online
                 backoff = 1000
+                announceWaiting(st.messages)
                 scope.launch { runCatching { refreshChats() } }
                 // Pausing is not announced on the event stream, so it is looked at now and then.
                 coroutineScope {
@@ -151,9 +211,19 @@ class Repo(context: Context) {
                 _conn.value = Conn.Offline(e.message ?: "The connection failed.")
             }
             if (_conn.value is Conn.Online) _conn.value = Conn.Offline("Reconnecting…")
-            delay(backoff)
-            backoff = (backoff * 2).coerceAtMost(15_000)
+            // The wait ends early when the network comes back.
+            withTimeoutOrNull(backoff) { wake.receive() }
+            backoff = (backoff * 2).coerceAtMost(30_000)
         }
+    }
+
+    /**
+     * An approval that arrived while the phone could not hear the server never came as an event. Looking at the
+     * state again after a reconnect finds it, and the notifier (which remembers what it has shown) announces it.
+     */
+    private fun announceWaiting(messages: List<Message>) {
+        messages.filter { it.role == "approval" && it.state == "pending" && it.token.isNotEmpty() }
+            .forEach { _events.tryEmit(EventDto(type = "msg", msg = it)) }
     }
 
     private fun applyState(st: StateDto) {
@@ -200,7 +270,8 @@ class Repo(context: Context) {
             }
             "agents" -> _workers.value = ev.agents.orEmpty()
             "reset" -> scope.launch {
-                runCatching { api.getJson<StateDto>("/api/state") }.onSuccess { applyState(it); refreshChats() }
+                val g = generation
+                runCatching { api.getJson<StateDto>("/api/state") }.onSuccess { if (g == generation) { applyState(it); refreshChats() } }
             }
         }
         _events.tryEmit(ev)
@@ -238,9 +309,13 @@ class Repo(context: Context) {
     val archived: StateFlow<List<ChatMeta>> = _archived.asStateFlow()
 
     suspend fun refreshChats() {
-        _chats.value = api.getJson<ChatsDto>("/api/chats").chats.filter { !it.archived }
+        val g = generation
+        val live = api.getJson<ChatsDto>("/api/chats").chats.filter { !it.archived }
         // Shelved conversations are listed separately by the server.
-        _archived.value = runCatching { api.getJson<ChatsDto>("/api/chats?archived=1").chats }.getOrDefault(emptyList())
+        val shelved = runCatching { api.getJson<ChatsDto>("/api/chats?archived=1").chats }.getOrDefault(emptyList())
+        if (g != generation) return // the phone moved to another server while this was on its way
+        _chats.value = live
+        _archived.value = shelved
     }
 
     suspend fun chatAction(body: Map<String, String>) {
@@ -273,4 +348,10 @@ class Repo(context: Context) {
 fun upsert(list: List<Message>, m: Message): List<Message> {
     val i = list.indexOfFirst { it.id == m.id }
     return if (i >= 0) list.toMutableList().also { it[i] = m } else list + m
+}
+
+/** Credentials for one server that is not the live one (to sign out of it, or to look at it from the background). */
+fun fixedCredentials(origin: String, cookieValue: String): Credentials = object : Credentials {
+    override val baseUrl = origin
+    override val cookie = cookieValue
 }

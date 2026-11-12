@@ -96,6 +96,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleIntent(i: Intent?) {
+        // A notification about another server switches to it first.
+        i?.getStringExtra("server")?.let { repo.switchTo(it) }
         QuickAction.from(i?.action)?.let { quick = it; return }
         if (i?.action != Intent.ACTION_SEND) return
         val text = i.getStringExtra(Intent.EXTRA_TEXT)

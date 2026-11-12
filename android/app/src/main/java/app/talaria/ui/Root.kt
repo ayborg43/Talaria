@@ -96,7 +96,8 @@ fun Root(
         if (conn is Conn.Online && repo.store.notifications && !repo.store.askedNotifications) { repo.store.askedNotifications = true; onAskNotifications() }
     }
 
-    if (conn is Conn.SignedOut) { Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) { ConnectScreen(repo, notice = if (repo.sessionEnded.collectAsState().value) "Your session ended. Sign in again." else null) }; return }
+    val adding by repo.adding.collectAsState()
+    if (conn is Conn.SignedOut || adding) { Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) { ConnectScreen(repo, notice = if (adding) "Add another server." else if (repo.sessionEnded.collectAsState().value) "Your session ended. Sign in again." else null) }; return }
     if (locked) { Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) { LockedScreen(activity, onUnlocked) }; return }
 
     var tab by rememberSaveable { mutableIntStateOf(0) }

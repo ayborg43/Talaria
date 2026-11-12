@@ -12,7 +12,8 @@ It talks to the same HTTP API as the web app (`internal/web`): a session cookie,
 |---|---|
 | Sign in | Server address (https required unless it is on your own network or VPN), password, session kept sealed with an Android Keystore key. |
 | Chat | Live conversation over the event stream, Markdown (headings, lists, tables, code, links), tool cards, approval cards (Allow / Always / Deny), several conversations (open, rename, archive, delete), suggestions, share-to-Talaria from any app. |
-| Alerts | Approval requests and replies as notifications while the app is closed; Allow and Deny straight from the notification (not offered while the app lock is on). |
+| Alerts | No Google services and no extra servers. The app keeps one live connection to your server (a small foreground service whose notice tells you if the link is up), reconnects the moment the network returns, and starts again after a restart. If Android stops it, a quarter-hourly check starts it again and looks for anything waiting for you. Approvals arrive with Allow and Deny buttons (not offered while the app lock is on), several fold into one stack, replies can be answered from the notification, replies can be silent during quiet hours, and a notice is removed as soon as you answer anywhere. Settings shows the link, and asks Android to let it run in the background. |
+| Servers | Sign in to more than one Talaria and switch between them. The one in use sends alerts live; the others are checked every quarter hour for questions waiting for you (tapping that notice switches to that server). |
 | Voice | Hands-free conversation: it listens, notices when you stop, transcribes with the speech service on your server, sends, reads the reply aloud with the phone's voice, then listens again. Speaking over a reply interrupts it. Speech service can be set up from the app. |
 | Tasks | What is working now, run activity (steps, files, result), steering and stopping a running task, following up a finished one, jobs (pause, resume, remove), suggestions, recipes, routines, named agents (create, edit, chat). |
 | Today | Calendar, mail that needs you, files the agent made (opened with the phone's own apps). |
@@ -36,7 +37,7 @@ cd android
 export JAVA_HOME=/path/to/jdk17
 ./gradlew :app:assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
 ./gradlew :app:assembleRelease      # minified, about 2.6 MB; signed with the debug key until you add your own
-./gradlew :app:testDebugUnitTest    # 44 tests: voice detection, server-address rules, the API client, Make, search and quick-action helpers
+./gradlew :app:testDebugUnitTest    # 51 tests: voice detection, server-address rules, the API client, Make, search, quick-action and alert helpers
 ```
 
 To publish, make your own key and describe it in `android/keystore.properties` (never commit either):

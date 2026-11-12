@@ -24,6 +24,12 @@ class TalariaApp : Application() {
         notifier.start()
         repo.start()
         keepWidgetCurrent()
+        // When the network comes back the connection is retried at once instead of at the end of its wait.
+        runCatching {
+            getSystemService(android.net.ConnectivityManager::class.java).registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) { repo.nudge() }
+            })
+        }
         // Whether a screen is showing decides if a reply is worth a notification.
         var started = 0
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {

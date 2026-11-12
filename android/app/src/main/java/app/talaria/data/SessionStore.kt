@@ -35,6 +35,58 @@ class SessionStore(context: Context) : Credentials {
 
     val signedIn: Boolean get() = baseUrl.isNotEmpty() && cookie.isNotEmpty()
 
+    init {
+        // A phone signed in before servers could be saved: its one server joins the list.
+        if (signedIn && cookieFor(baseUrl).isEmpty()) remember(baseUrl, cookie)
+    }
+
+    // ---- several servers: the phone keeps one session per server, and one of them is live at a time ----
+
+    private fun saved(): org.json.JSONObject = try { org.json.JSONObject(prefs.getString("saved", "{}") ?: "{}") } catch (_: Exception) { org.json.JSONObject() }
+
+    /** Every server this phone is signed in to, in the order they were added. */
+    val savedServers: List<String> get() = saved().keys().asSequence().toList()
+
+    fun cookieFor(origin: String): String = saved().optString(origin).takeIf { it.isNotEmpty() }?.let { open(it) } ?: ""
+
+    @Synchronized fun remember(origin: String, cookie: String) {
+        prefs.edit().putString("saved", saved().put(origin, seal(cookie)).toString()).apply()
+    }
+
+    @Synchronized fun forget(origin: String) {
+        prefs.edit().putString("saved", saved().apply { remove(origin) }.toString()).apply()
+    }
+
+    /** Makes [origin] the live server. False when the phone has no session for it. */
+    fun activate(origin: String): Boolean {
+        val c = cookieFor(origin)
+        if (c.isEmpty()) return false
+        baseUrl = origin
+        cookie = c
+        return true
+    }
+
+    // ---- alerts ----
+
+    /** Approvals already shown as a notification, so a reconnect or a second check never shows one twice. */
+    @Synchronized fun announce(token: String): Boolean {
+        val list = (prefs.getString("announced", "") ?: "").split('\n').filter { it.isNotEmpty() }
+        if (token in list) return false
+        prefs.edit().putString("announced", app.talaria.service.Alerts.remember(list, token).joinToString("\n")).apply()
+        return true
+    }
+
+    /** Replies made while these hours last arrive without a sound. Approvals always sound. */
+    var quietHours: Boolean
+        get() = prefs.getBoolean("quiet", false)
+        set(v) { prefs.edit().putBoolean("quiet", v).apply() }
+    var quietFrom: Int
+        get() = prefs.getInt("quietFrom", 22 * 60)
+        set(v) { prefs.edit().putInt("quietFrom", v).apply() }
+    var quietTo: Int
+        get() = prefs.getInt("quietTo", 7 * 60)
+        set(v) { prefs.edit().putInt("quietTo", v).apply() }
+
     var lockWithBiometrics: Boolean
         get() = prefs.getBoolean("lock", false)
         set(v) { prefs.edit().putBoolean("lock", v).apply() }
@@ -66,7 +118,8 @@ class SessionStore(context: Context) : Credentials {
         get() = prefs.getString("last", "") ?: ""
         set(v) { prefs.edit().putString("last", v).apply() }
 
-    fun signOut() { cookie = "" }
+    /** Forgets the live session and its saved copy. */
+    fun signOut() { if (baseUrl.isNotEmpty()) forget(baseUrl); cookie = "" }
 
     private fun key(): SecretKey {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
