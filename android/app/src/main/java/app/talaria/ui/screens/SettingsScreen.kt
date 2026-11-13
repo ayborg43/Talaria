@@ -184,8 +184,10 @@ private fun SettingsHome(activity: AppCompatActivity, repo: Repo, modifier: Modi
                 SectionTitle("Voice")
                 Panel(Modifier.fillMaxWidth()) {
                     Column {
+                        SpeechWhereRow(activity, repo)
+                        HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                         LinkRow(
-                            "Speech service", if (voiceInfo.value?.available == true) "On: ${voiceInfo.value?.model}" else "Not set up. Needed to talk to Talaria.",
+                            "Speech service on your server", if (voiceInfo.value?.available == true) "On: ${voiceInfo.value?.model}" else "Not set up. Only needed if you choose your server above.",
                             trailing = { Pill(if (voiceInfo.value?.available == true) "On" else "Off", if (voiceInfo.value?.available == true) Tone.Ok else Tone.Neutral) }, onClick = { onOpen("voice") },
                         )
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -246,6 +248,46 @@ private fun SettingsHome(activity: AppCompatActivity, repo: Repo, modifier: Modi
         confirmButton = { TextButton(onClick = { confirmOut = false; scope.launch { repo.signOut(); ConnectionService.sync(activity) } }) { Text("Sign out", color = MaterialTheme.extra.bad) } },
         dismissButton = { TextButton(onClick = { confirmOut = false }) { Text("Stay signed in") } },
     )
+}
+
+/**
+ * Who turns your voice into text. The phone's own recognizer is the default and needs nothing set up; with "keep it on
+ * this phone" on (also the default) it only ever uses a recognizer that runs on the phone, so your voice is not sent anywhere.
+ */
+@Composable
+private fun SpeechWhereRow(activity: AppCompatActivity, repo: Repo) {
+    var engine by remember { mutableStateOf(repo.store.speechEngine) }
+    var local by remember { mutableStateOf(repo.store.speechLocalOnly) }
+    var resumed by remember { mutableStateOf(0) }
+    DisposableEffect(activity) {
+        val o = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) resumed++ }
+        activity.lifecycle.addObserver(o)
+        onDispose { activity.lifecycle.removeObserver(o) }
+    }
+    val has = remember(resumed) { app.talaria.voice.PhoneSpeech.exists(activity) }
+    val support = app.talaria.voice.Engines.support(has.first, has.second, local)
+    Column(Modifier.fillMaxWidth().padding(16.dp)) {
+        Text("Who recognises your speech", style = MaterialTheme.typography.titleSmall)
+        Gap(8.dp)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = engine == "phone", onClick = { engine = "phone"; repo.store.speechEngine = "phone" }, label = { Text("This phone") })
+            FilterChip(selected = engine == "server", onClick = { engine = "server"; repo.store.speechEngine = "server" }, label = { Text("My server") })
+        }
+        Gap(6.dp)
+        Text(
+            when {
+                engine == "server" -> "Your voice is sent to the speech service set up on your server. You can talk over a reply to interrupt it."
+                support == app.talaria.voice.Support.OnDevice -> "Ready. Your voice is recognised on this phone and goes nowhere. Replies are not interrupted by speaking: tap to stop."
+                support == app.talaria.voice.Support.Online -> "Uses Android's online recognizer, so your voice may be sent to the company behind the phone's speech service."
+                else -> app.talaria.voice.Engines.why(has.first, has.second, local)
+            },
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    if (engine == "phone") {
+        HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        ToggleRow("Keep speech on this phone", "Only use a recogniser that runs on the phone. Turn off to let Android use its online one when there is no offline pack.", local) { local = it; repo.store.speechLocalOnly = it }
+    }
 }
 
 /** What keeps alerts arriving: whether the live link is up, whether Android may pause it, quiet hours, and the system sounds. */

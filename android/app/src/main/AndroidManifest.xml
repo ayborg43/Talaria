@@ -22,6 +22,11 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.location" android:required="false" />
 
+    <!-- Lets the app see whether this phone has a speech recognizer (Android 11 and later hide other apps' services). -->
+    <queries>
+        <intent><action android:name="android.speech.RecognitionService" /></intent>
+    </queries>
+
     <application
         android:name=".TalariaApp"
         android:allowBackup="false"

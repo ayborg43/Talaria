@@ -76,6 +76,17 @@ class SessionStore(context: Context) : Credentials {
         get() = prefs.getString("phoneLog", "[]") ?: "[]"
         set(v) { prefs.edit().putString("phoneLog", v).apply() }
 
+    // ---- voice: who recognises speech ----
+
+    /** "phone" (the default: Android's own recognizer) or "server" (the speech service on the person's server). */
+    var speechEngine: String
+        get() = prefs.getString("speechEngine", "phone") ?: "phone"
+        set(v) { prefs.edit().putString("speechEngine", v).apply() }
+    /** With the phone's recognizer: only use one that runs on the phone, never an online one. On unless turned off. */
+    var speechLocalOnly: Boolean
+        get() = prefs.getBoolean("speechLocalOnly", true)
+        set(v) { prefs.edit().putBoolean("speechLocalOnly", v).apply() }
+
     // ---- alerts ----
 
     /** Approvals already shown as a notification, so a reconnect or a second check never shows one twice. */
