@@ -135,6 +135,8 @@ func HomeDir(getenv func(string) string) (string, error) {
 type Runtime struct {
 	Cron *cron.Store // scheduled jobs
 
+	models func() []ModelInfo // the models a task can be given; set by the gateway
+
 	cfg      Config
 	provider provider.Provider
 	skills   *skill.Store

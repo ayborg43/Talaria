@@ -169,8 +169,9 @@ func runGateway(c *cli) error {
 		pool = gatewayPool(c.cfg, c.defEnv, c.env, buildFence(c.cfg, config.Path(c.home, c.getenv), c.home), c.getenv, c.log)
 		defer pool.Close() // stops every environment the chats started, and the default one too
 	}
-	backends := gatewayBackends(c.cfg, c.res, c.p, c.getenv)
-	c.rt.SetHelpers(helperModels(backends))
+	backends := gatewayBackends(c.cfg, c.res, c.p, c.getenv, c.health, c.log)
+	c.rt.SetHelpers(helperModels(backends, func(name string) string { return modelNote(c.cfg, c.health, name) }))
+	c.rt.SetModels(modelList(c.cfg, backends, c.health))
 
 	var webHub *web.Hub // the web app's hub, once it is made: it is also what shows who is working
 
@@ -390,7 +391,7 @@ func runGateway(c *cli) error {
 			Cfg:        c.cfg,
 			ApplyRules: applyRules(c.rt),
 			Mailbox:    c.rt.Mail(), Calendars: c.rt.Calendars(), X: c.rt.X(), Getenv: c.getenv,
-			Notes: c.rt.Notes(), Notices: notices, Env: c.rt.Env(), Browsers: c.rt.Browsers, Phone: c.rt.Phone(),
+			Notes: c.rt.Notes(), Notices: notices, Env: c.rt.Env(), Browsers: c.rt.Browsers, Phone: c.rt.Phone(), Health: c.health,
 			ReceiptsPath: filepath.Join(c.home, "computer_receipts.json"),
 			AGUIKey:      webSet.AGUIKey,
 			Runs:         runs,
@@ -537,7 +538,7 @@ const sharedNote = "warning: more than one person is allowed in. Their conversat
 
 // helperModels offers every profile that can be used right now to subagents, so the main agent can hand a plain
 // lookup to a cheap model and a hard problem to a strong one. A profile that cannot be opened (no key) is left out.
-func helperModels(b *chat.Backends) func() []subagent.Helper {
+func helperModels(b *chat.Backends, note func(string) string) func() []subagent.Helper {
 	return func() []subagent.Helper {
 		var out []subagent.Helper
 		names := b.Names
@@ -550,7 +551,7 @@ func helperModels(b *chat.Backends) func() []subagent.Helper {
 				continue
 			}
 			out = append(out, subagent.Helper{
-				Name: name, Desc: be.Desc, Best: be.Best,
+				Name: name, Desc: be.Desc + note(name), Best: be.Best,
 				Open: func() (provider.Provider, string, error) {
 					be, err := b.Open(name)
 					return be.Provider, be.Model, err
@@ -559,6 +560,46 @@ func helperModels(b *chat.Backends) func() []subagent.Helper {
 		}
 		if len(out) < 2 {
 			return nil // one model to choose from is no choice
+		}
+		return out
+	}
+}
+
+// modelNote is what the owner and the fallback chain have said about a profile, as a clause to add to its description:
+// what it is for, and that it is not working just now.
+func modelNote(cfg *config.Config, health *provider.Health, name string) string {
+	out := ""
+	if n := strings.TrimSpace(cfg.Profiles[name].Notes); n != "" {
+		out += ". " + strings.TrimSuffix(n, ".")
+	}
+	if st := health.Get(name); !st.Working && time.Now().Before(st.Until) {
+		out += " (NOT WORKING NOW: " + st.Reason + ")"
+	}
+	return out
+}
+
+// modelList is what the agent sees in model_list: every profile, what it is for, and whether it works now.
+func modelList(cfg *config.Config, b *chat.Backends, health *provider.Health) func() []app.ModelInfo {
+	return func() []app.ModelInfo {
+		names := b.Names
+		if b.List != nil {
+			names = b.List()
+		}
+		routine := cfg.RoutineProfileName()
+		var out []app.ModelInfo
+		for _, name := range names {
+			p := cfg.Profiles[name]
+			m := app.ModelInfo{Name: name, Type: p.Type, Model: p.Model, Notes: strings.TrimSpace(p.Notes), Best: p.BestFor,
+				Default: name == b.Default, Routine: name == routine, Fallbacks: cfg.FallbackChain(name)}
+			if be, err := b.Open(name); err != nil {
+				m.Problem = err.Error()
+			} else {
+				m.Model, m.Vision, m.Reasoning = be.Model, be.Vision, be.Reasoning
+				if st := health.Get(name); !st.Working && time.Now().Before(st.Until) {
+					m.Problem = st.Reason
+				}
+			}
+			out = append(out, m)
 		}
 		return out
 	}

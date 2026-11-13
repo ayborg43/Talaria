@@ -17,7 +17,7 @@ export OPENAI_API_KEY=sk-...         # or ANTHROPIC_API_KEY with -profile (see b
 
 ## Models and profiles
 
-Four provider types:
+Four provider types (and presets for many services, which are OpenAI-compatible and use `openai` with their own address):
 
 | `type` | Talks to | Default base URL |
 |---|---|---|
@@ -55,8 +55,23 @@ setups and switch between them, create a config file:
 - **Precedence**, highest first: flags, environment, the selected profile, built-in defaults.
   Flags and variables: `-profile` / `TALARIA_PROFILE`, `-model` / `TALARIA_MODEL`, `-base-url` / `TALARIA_BASE_URL`, `TALARIA_API_KEY`, and `TALARIA_PROVIDER` (`openai`, `anthropic`, `deepseek` or `muse`: with it and the provider's usual key variable, no config file is needed).
 - **Profile choice:** `-profile`, else `default_profile`, else the only profile if there is just one.
-- **Fallback:** `fallback_profile` names a second profile, tried when the first is down (rate-limited, overloaded,
-  unreachable). Refused keys and billing errors never fall back: another model would refuse them too.
+- **Fallback chain:** `fallback_profiles` lists profiles tried, in order, when a model is not working. A profile can carry its own
+  `fallbacks` list instead (`fallback_profile`, a single name, still works and counts as the first). It applies to **every**
+  profile, so a background task, a scheduled job or a delegated helper that names a model moves on too, not only the chat's.
+  "Not working" means: rate limited, overloaded or down (429, 5xx), unreachable, out of credit (402), a key that was refused
+  (401, 403), or a model the service does not have (404, or a 400 that says so). Changed from earlier versions, where a refused key
+  never fell back: with several services each profile has its own key, so one bad key should not stop the others.
+  A request the model rejected as malformed or too long is **not** passed on, as the next model would meet the same thing.
+  - A model that just failed is left alone for 90 seconds (10 minutes for a refused key, a missing model or no credit) rather than tried first on
+    every request; if every model in the chain is resting they are tried in order anyway.
+  - Once part of an answer has been shown, a second model's answer is never tacked on after it: the call fails instead.
+  - Each model is asked for by its own name, and the switch is written to the log (`main is not working (...): trying good`).
+  - Settings → AI models shows the order (move, add, take out) and marks a model that is failing, with why; pasting a new key clears it at once.
+- **Choosing a model per task.** Each profile can carry `notes` (a line, in your words: "free, fine for summaries") and `best_for`
+  (`code`, `cheap`, `fast`, `long`, `writing`; the router uses `code` and `cheap`, the agent reads all of them). The agent has a
+  `model_list` tool that lists every profile with its notes, strengths, whether it sees pictures or reasons, whether it is working now and
+  what it falls back to, and it can name a profile for a background task (`task_start`), a scheduled job (`cron_add`) or a helper
+  (`delegate`). A job may only name a profile the chat could switch to itself, so a model choice never reaches a profile you have not set up.
 - **Telegram and Discord:** `allowed_users`, `token_env` and `stream` can live in the `telegram` and `discord` sections;
   `TALARIA_TELEGRAM_TOKEN` / `TALARIA_TELEGRAM_ALLOWED_USERS` and `TALARIA_DISCORD_TOKEN` / `TALARIA_DISCORD_ALLOWED_USERS`
   override the first two. Discord user IDs may be written as strings (as Discord shows them, and safest) or numbers.
@@ -125,6 +140,26 @@ jobs and helpers); check Meta's model list, as the names change. One optional se
 - The key is sent only to `api.meta.ai`: a `muse` profile pointed at another address is not given `$MODEL_API_KEY` unless it names
   the variable itself. Keys of this shape (`LLM_<number>_<secret>`) are scrubbed from tool output, history and the log even if
   Talaria was never told them.
+
+### Itera Compute and NVIDIA
+
+Both are OpenAI-compatible, so they are `openai` profiles with their own address, and both are one-click presets in
+**Settings → AI models → Add an AI profile** (and in the Android app under Settings → AI models):
+
+| Service | Address | Key variable | A starting model |
+|---|---|---|---|
+| Itera Compute ([platform.iteracompute.com](https://platform.iteracompute.com)) | `https://api.iteracompute.com/v1` | `ITERACOMPUTE_API_KEY` | `qwen/qwen3.8-27b` (a free one) |
+| NVIDIA ([build.nvidia.com](https://build.nvidia.com)) | `https://integrate.api.nvidia.com/v1` | `NVIDIA_API_KEY` | `nvidia/nemotron-3-super-120b-a12b` |
+
+```json
+"itera":  {"type": "openai", "base_url": "https://api.iteracompute.com/v1", "api_key_env": "ITERACOMPUTE_API_KEY", "model": "qwen/qwen3.8-27b", "best_for": ["cheap"], "notes": "free; fine for summaries and lookups"},
+"nvidia": {"type": "openai", "base_url": "https://integrate.api.nvidia.com/v1", "api_key_env": "NVIDIA_API_KEY", "model": "nvidia/nemotron-3-super-120b-a12b"}
+```
+
+Paste a key in the form, or leave it empty and set the variable where Talaria runs. **Models** on the profile asks the service which models the key can use
+(Itera's catalogue is large, and its names are `vendor/model`; use the exact id from the list, with no extra prefix). `nvapi-` keys are scrubbed from
+tool output, history and the log, like the other key shapes. Neither service has a vision or thinking setting here: pictures are sent unless you set `"vision": false`.
+Put the cheap or free one first in `fallback_profiles` only if you want it to catch failures; order the list the way you would want work to move.
 
 Provider details worth knowing:
 

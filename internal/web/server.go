@@ -190,6 +190,8 @@ type Server struct {
 	AGUIKey string
 	// Browsers lists the browsers the agent has started, for taking control of a tab. Nil offers none.
 	Browsers func() []*browser.Manager
+	// Health is what the fallback chains have learned about each model, for Settings. Nil shows none.
+	Health *provider.Health
 	// Phone is the link to the user's phone, which the agent's phone tools use. Nil leaves the door shut.
 	Phone *phonelink.Hub
 
@@ -506,18 +508,20 @@ func (s *Server) activeModel() string {
 
 // settingsView is what the settings page shows: everything except actual API keys.
 type settingsView struct {
-	DefaultProfile string             `json:"default_profile"`
-	ActiveProfile  string             `json:"active_profile"` // the profile this chat is using; "" when switching is not set up
-	Profiles       []settingsProfile  `json:"profiles"`
-	Presets        []config.Preset    `json:"presets"`   // one-click starting points for a new profile
-	Strengths      []string           `json:"strengths"` // labels a profile can claim, so the router picks it
-	Email          settingsEmail      `json:"email"`
-	Calendars      []settingsCalendar `json:"calendars"`
-	Chats          []settingsChat     `json:"chats"`           // telegram and discord: status, never secrets
-	HasDefaultKey  bool               `json:"has_default_key"` // TALARIA_API_KEY is set
-	DefaultKeyEnv  string             `json:"default_key_env"`
-	DefaultKeySet  bool               `json:"default_key_set"`
-	KeyEnvs        []string           `json:"key_envs"`
+	DefaultProfile string            `json:"default_profile"`
+	ActiveProfile  string            `json:"active_profile"` // the profile this chat is using; "" when switching is not set up
+	Profiles       []settingsProfile `json:"profiles"`
+	Presets        []config.Preset   `json:"presets"`   // one-click starting points for a new profile
+	Strengths      []string          `json:"strengths"` // labels a profile can claim, so the router picks it
+	// FallbackOrder is the shared list of profiles tried, in order, when a model is not working.
+	FallbackOrder []string           `json:"fallback_order"`
+	Email         settingsEmail      `json:"email"`
+	Calendars     []settingsCalendar `json:"calendars"`
+	Chats         []settingsChat     `json:"chats"`           // telegram and discord: status, never secrets
+	HasDefaultKey bool               `json:"has_default_key"` // TALARIA_API_KEY is set
+	DefaultKeyEnv string             `json:"default_key_env"`
+	DefaultKeySet bool               `json:"default_key_set"`
+	KeyEnvs       []string           `json:"key_envs"`
 	// Permissions is which calls ask first once saved; PermissionsRunning is what is in force now (it differs until a
 	// restart), and PermissionsEnv says TALARIA_PERMISSIONS overrides the file.
 	Permissions        string `json:"permissions"`
@@ -625,6 +629,12 @@ type settingsProfile struct {
 	Status    string   `json:"status,omitempty"`    // what it is, or why it cannot be used
 	Best      []string `json:"best,omitempty"`      // what it is good at, for the router
 	Traits    []string `json:"traits,omitempty"`    // what it can do: vision, reasoning
+	Notes     string   `json:"notes,omitempty"`     // what the owner says it is for; the agent reads it
+	Fallbacks []string `json:"fallbacks,omitempty"` // this profile's own list of what to try when it is not working
+	// Failing says why the model is not being used right now (a failed call moved the work on to the next one); it
+	// clears by itself after a rest, or when the profile is edited. FailingHard marks one that will not clear on its own.
+	Failing     string `json:"failing,omitempty"`
+	FailingHard bool   `json:"failing_hard,omitempty"`
 }
 
 func (s *Server) getenv(k string) string {
@@ -773,8 +783,18 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 		view.DefaultKeyEnv = "TALARIA_API_KEY"
 		view.DefaultKeySet = true
 	}
+	view.FallbackOrder = s.Cfg.FallbackProfiles
+	if f := strings.TrimSpace(s.Cfg.FallbackProfile); f != "" && !slices.Contains(view.FallbackOrder, f) {
+		view.FallbackOrder = append([]string{f}, view.FallbackOrder...)
+	}
+	if view.FallbackOrder == nil {
+		view.FallbackOrder = []string{}
+	}
 	for name, p := range s.Cfg.Profiles {
-		sp := settingsProfile{Name: name, Type: p.Type, BaseURL: p.BaseURL, Model: p.Model, APIKeyEnv: p.APIKeyEnv, Best: p.BestFor}
+		sp := settingsProfile{Name: name, Type: p.Type, BaseURL: p.BaseURL, Model: p.Model, APIKeyEnv: p.APIKeyEnv, Best: p.BestFor, Notes: p.Notes, Fallbacks: p.Fallbacks}
+		if st := s.Health.Get(name); !st.Working && time.Now().Before(st.Until) {
+			sp.Failing, sp.FailingHard = st.Reason, st.Hard
+		}
 		if p.APIKey != "" {
 			sp.HasKey = true
 			sp.KeySource = "api_key in the config file"
@@ -814,6 +834,9 @@ type settingsUpdateRequest struct {
 	TestProfile         string                 `json:"test_profile,omitempty"`          // send one tiny prompt through a profile, saving nothing
 	ListModels          string                 `json:"list_models,omitempty"`           // ask a profile's provider which models its key can use, saving nothing
 	BestFor             []string               `json:"best_for,omitempty"`              // what the profile is good at, for the router
+	Notes               *string                `json:"notes,omitempty"`                 // what the owner says the profile is for
+	Fallbacks           *[]string              `json:"fallbacks,omitempty"`             // this profile's own fallback list ([] returns it to the shared one)
+	FallbackOrder       *[]string              `json:"fallback_order,omitempty"`        // the shared fallback list, in order
 	Email               *emailUpdate           `json:"email,omitempty"`                 // replace the mailbox settings
 	Calendar            *calendarUpdate        `json:"calendar,omitempty"`              // add, edit or delete a feed
 	ChatToken           *chatTokenUpdate       `json:"chat_token,omitempty"`            // replace a bot token
@@ -945,6 +968,10 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		s.saveRoutineProfile(w, strings.TrimSpace(*in.RoutineProfile))
 		return
 	}
+	if in.FallbackOrder != nil {
+		s.saveFallbackOrder(w, *in.FallbackOrder)
+		return
+	}
 	if in.FilesRetentionHours != nil {
 		s.saveFilesRetention(w, *in.FilesRetentionHours)
 		return
@@ -985,6 +1012,14 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var fb []string
+	if in.Fallbacks != nil {
+		var err error
+		if fb, err = s.checkProfileNames(*in.Fallbacks, in.Name); err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	// Copy on write: the engine reads these profiles while chats run.
 	profiles := make(map[string]config.Profile, len(s.Cfg.Profiles)+1)
 	for k, v := range s.Cfg.Profiles {
@@ -999,6 +1034,12 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		}
 		if in.BestFor != nil {
 			p.BestFor = in.BestFor
+		}
+		if in.Notes != nil {
+			p.Notes = tidyNotes(*in.Notes)
+		}
+		if in.Fallbacks != nil {
+			p.Fallbacks = fb
 		}
 		if in.BaseURL != "" {
 			p.BaseURL = in.BaseURL
@@ -1015,7 +1056,10 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		}
 		profiles[in.Name] = p
 	} else {
-		p := config.Profile{Type: in.Type, BaseURL: in.BaseURL, Model: in.Model, APIKeyEnv: in.APIKeyEnv, BestFor: in.BestFor}
+		p := config.Profile{Type: in.Type, BaseURL: in.BaseURL, Model: in.Model, APIKeyEnv: in.APIKeyEnv, BestFor: in.BestFor, Fallbacks: fb}
+		if in.Notes != nil {
+			p.Notes = tidyNotes(*in.Notes)
+		}
 		if in.APIKey != "" {
 			p.APIKey = in.APIKey
 		}
@@ -1027,6 +1071,7 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "could not save settings")
 		return
 	}
+	s.Health.Forget(in.Name) // an edited profile (a new key, say) is tried afresh
 	if s.Engine != nil && s.Engine.Backends != nil && s.Engine.Backends.Forget != nil {
 		s.Engine.Backends.Forget() // added and changed profiles work at once, with no restart
 	}
@@ -1109,6 +1154,48 @@ func permissionsName(p string) string {
 
 // saveRoutineProfile chooses the model scheduled prompts (reminders, the morning brief, recipes) run on when they
 // name none. It is read at each run, so it applies at once.
+// tidyNotes keeps a profile's note to a short plain line.
+func tidyNotes(n string) string {
+	n = strings.Join(strings.Fields(n), " ")
+	if r := []rune(n); len(r) > 200 {
+		n = string(r[:200])
+	}
+	return n
+}
+
+// checkProfileNames makes sure a list of fallbacks names profiles that exist, none twice and not the profile itself.
+func (s *Server) checkProfileNames(names []string, self string) ([]string, error) {
+	out := []string{}
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" || n == self || slices.Contains(out, n) {
+			continue
+		}
+		if _, ok := s.Cfg.Profiles[n]; !ok {
+			return nil, fmt.Errorf("%q is not one of your profiles", n)
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
+
+// saveFallbackOrder sets the shared list of models tried, in order, when one is not working. It takes effect at once.
+func (s *Server) saveFallbackOrder(w http.ResponseWriter, names []string) {
+	order, err := s.checkProfileNames(names, "")
+	if err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.Cfg.FallbackProfile, s.Cfg.FallbackProfiles = "", order
+	if !s.writeConfig(w) {
+		return
+	}
+	if s.Engine != nil && s.Engine.Backends != nil && s.Engine.Backends.Forget != nil {
+		s.Engine.Backends.Forget()
+	}
+	okRestart(w, false)
+}
+
 func (s *Server) saveRoutineProfile(w http.ResponseWriter, name string) {
 	if _, known := s.Cfg.Profiles[name]; name != "" && name != "default" && !known {
 		fail(w, http.StatusBadRequest, "that is not one of your profiles")

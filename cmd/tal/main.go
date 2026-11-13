@@ -82,6 +82,7 @@ type cli struct {
 	envName   string
 
 	servers *mcp.Manager
+	health  *provider.Health // what the fallback chains have learned about each profile
 	res     config.Resolved
 	p       provider.Provider
 	env     execenv.Env
@@ -211,19 +212,8 @@ func (c *cli) setupModel(gateway bool) (err error) {
 	if err != nil {
 		return err
 	}
-	if name := strings.TrimSpace(c.cfg.FallbackProfile); name != "" && name != res.Name {
-		if fb, ferr := c.cfg.Resolve(config.Overrides{Profile: name}, c.getenv); ferr != nil {
-			c.log.Warn("fallback profile " + name + " ignored: " + ferr.Error())
-		} else if ferr := fb.CheckKey(); ferr != nil {
-			c.log.Warn("fallback profile " + name + " ignored: " + ferr.Error())
-		} else if fp, ferr := provider.New(fb.Spec()); ferr != nil {
-			c.log.Warn("fallback profile " + name + " ignored: " + ferr.Error())
-		} else {
-			p = provider.Failover{Primary: p, Secondary: fp, OnFallback: func(err error) {
-				c.log.Warn("primary model down (" + err.Error() + "): trying " + fb.Model)
-			}}
-		}
-	}
+	c.health = provider.NewHealth()
+	p = withFallbacks(c.cfg, c.getenv, c.health, c.log, res.Name, res.Model, p)
 	// Where the shell and file tools run. A container or connection that cannot
 	// be set up stops us here: falling back to this machine would run things
 	// somewhere the user chose not to.
@@ -744,11 +734,43 @@ const cronNote = `You are running as a scheduled job with nobody watching, so yo
 
 const cronNoteMarkdown = `You are running as a scheduled job with nobody watching, so you cannot ask questions. Your final reply is delivered to the user's chat, which renders Markdown: keep it short. If there is nothing worth reporting, reply with exactly [SILENT]. Tools that need approval are denied unless this job was created with allow_risky; if one is denied, say what you could not do.`
 
+// withFallbacks puts the profile's fallbacks behind its provider: when its model is not working (down, out of credit,
+// a key refused, a model the service does not have) the next one in the chain answers instead, and the one that failed
+// is left alone for a while. A fallback that cannot be set up (no key, a typo) is left out with a warning.
+func withFallbacks(cfg *config.Config, getenv func(string) string, health *provider.Health, log *slog.Logger, name, model string, primary provider.Provider) provider.Provider {
+	links := []provider.Link{{Name: name, Model: model, Provider: primary}}
+	for _, fb := range cfg.FallbackChain(name) {
+		r, err := cfg.Resolve(config.Overrides{Profile: fb}, getenv)
+		if err == nil {
+			err = r.CheckKey()
+		}
+		var p provider.Provider
+		if err == nil {
+			p, err = provider.New(r.Spec())
+		}
+		if err != nil {
+			if log != nil {
+				log.Warn("fallback profile " + fb + " ignored: " + err.Error())
+			}
+			continue
+		}
+		links = append(links, provider.Link{Name: fb, Model: r.Model, Provider: p})
+	}
+	if len(links) == 1 {
+		return primary
+	}
+	return provider.Chain{Links: links, Health: health, OnSwitch: func(from, to provider.Link, err error) {
+		if log != nil {
+			log.Warn(from.Name + " is not working (" + provider.Short(err) + "): trying " + to.Name)
+		}
+	}}
+}
+
 // gatewayBackends offers every configured profile to chats. The
 // profile in use at startup keeps the provider already built for it; the others
 // are opened on first use, and one that cannot be used (a missing API key, say)
 // reports why instead of failing the gateway.
-func gatewayBackends(cfg *config.Config, def config.Resolved, defProvider provider.Provider, getenv func(string) string) *chat.Backends {
+func gatewayBackends(cfg *config.Config, def config.Resolved, defProvider provider.Provider, getenv func(string) string, health *provider.Health, log *slog.Logger) *chat.Backends {
 	describe := func(r config.Resolved) string { return r.Type + ", " + r.Model }
 
 	var mu sync.Mutex
@@ -780,6 +802,7 @@ func gatewayBackends(cfg *config.Config, def config.Resolved, defProvider provid
 		if err != nil {
 			return chat.Backend{}, err
 		}
+		p = withFallbacks(cfg, getenv, health, log, name, r.Model, p) // a task on any profile moves on when its model is not working
 		vision, reasoning, best := traits(name, r)
 		return chat.Backend{Provider: p, Model: r.Model, Desc: describe(r), Vision: vision, Reasoning: reasoning, Best: best}, nil
 	}

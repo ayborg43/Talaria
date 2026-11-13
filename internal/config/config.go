@@ -76,10 +76,10 @@ func Write(path string, cfg *Config) error {
 }
 
 // Profile is one way to reach a model.
-// ProfileStrengths are the labels a profile can claim in best_for, so the
-// router knows to pick it: code for programming, cheap for the quick and
-// light. Vision and reasoning need no label; they are detected.
-var ProfileStrengths = []string{"code", "cheap"}
+// ProfileStrengths are the labels a profile can claim in best_for. The router picks by code (programming) and
+// cheap (the quick and light); the rest are for the agent, which reads them when it chooses a model for a task:
+// fast, long (very long documents), writing. Vision and reasoning need no label; they are detected.
+var ProfileStrengths = []string{"code", "cheap", "fast", "long", "writing"}
 
 type Profile struct {
 	Type      string `json:"type,omitempty"`        // "openai" (default), "anthropic", "deepseek" or "muse"
@@ -96,6 +96,12 @@ type Profile struct {
 	// any of ProfileStrengths ("code", "cheap"). Vision and reasoning are
 	// detected from the profile itself.
 	BestFor []string `json:"best_for,omitempty"`
+	// Notes is a line or two, in the owner's words, on what this model is for ("my free one, fine for summaries").
+	// The agent reads it when it chooses a model for a task.
+	Notes string `json:"notes,omitempty"`
+	// Fallbacks are the profiles tried, in order, when this one is not working. Left out, the shared
+	// fallback_profiles of the config apply.
+	Fallbacks []string `json:"fallbacks,omitempty"`
 	// Thinking turns DeepSeek's thinking mode on or off (the service's default
 	// is on); ReasoningEffort is "low", "high" or "max". DeepSeek profiles only.
 	Thinking        *bool  `json:"thinking,omitempty"`
@@ -406,10 +412,11 @@ type Workspace struct {
 
 type Config struct {
 	DefaultProfile string `json:"default_profile,omitempty"`
-	// FallbackProfile names a second profile tried when the first is down
-	// (rate limited, overloaded, unreachable). Refused keys and billing
-	// errors never fall back: another model would refuse them too.
-	FallbackProfile string `json:"fallback_profile,omitempty"`
+	// FallbackProfile and FallbackProfiles name the profiles tried, in order, when a model is not working: rate
+	// limited, overloaded, unreachable, out of credit, a key refused, a model the service does not have. They apply
+	// to every profile that sets no fallbacks of its own, and each profile's own list replaces them.
+	FallbackProfile  string   `json:"fallback_profile,omitempty"`
+	FallbackProfiles []string `json:"fallback_profiles,omitempty"`
 	// Transcription is the speech-to-text service behind the microphone button in the web app.
 	Transcription Transcription `json:"transcription,omitzero"`
 	// RoutineProfile names the profile scheduled prompts (reminders, the morning brief, recipes) run on when they
@@ -533,6 +540,13 @@ func (c *Config) validate(path string) error {
 		}
 		if p := c.Profiles[name]; (p.Type == "" || p.Type == provider.TypeOpenAI) && strings.Contains(p.BaseURL, "api.deepseek.com") {
 			warnings = append(warnings, fmt.Sprintf("profile %q reaches DeepSeek as a plain openai profile, which drops the reasoning DeepSeek needs back once tools are used: set \"type\": \"deepseek\"", name))
+		}
+	}
+	for _, n := range append(append([]string{c.FallbackProfile}, c.FallbackProfiles...), c.profileFallbacks()...) {
+		if n = strings.TrimSpace(n); n != "" {
+			if _, ok := c.Profiles[n]; !ok {
+				warnings = append(warnings, fmt.Sprintf("a fallback names the profile %q, which is not defined: it is skipped", n))
+			}
 		}
 	}
 	for name, cal := range c.Calendars {
@@ -847,6 +861,35 @@ func (c *Config) profileNames() string {
 }
 
 // ProfileNames lists the configured profiles, sorted.
+// profileFallbacks is every fallback named inside a profile.
+func (c *Config) profileFallbacks() []string {
+	var out []string
+	for _, p := range c.Profiles {
+		out = append(out, p.Fallbacks...)
+	}
+	return out
+}
+
+// FallbackChain is the profiles to try, in order, after the named one is not working: its own fallbacks if it
+// has any, else the shared ones. The profile itself, repeats and names that are not defined are left out.
+func (c *Config) FallbackChain(primary string) []string {
+	names := c.Profiles[primary].Fallbacks
+	if len(names) == 0 {
+		names = c.FallbackProfiles
+		if f := strings.TrimSpace(c.FallbackProfile); f != "" {
+			names = append([]string{f}, names...)
+		}
+	}
+	var out []string
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if _, ok := c.Profiles[n]; ok && n != primary && !slices.Contains(out, n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 func (c *Config) ProfileNames() []string {
 	names := make([]string, 0, len(c.Profiles))
 	for n := range c.Profiles {

@@ -44,6 +44,7 @@ object Ti {
     val Close by lazy { make("close", line("M6 6l12 12", "M18 6 6 18")) }
     val Check by lazy { make("check", line("M5 12.5l4.5 4.5L19 7.5")) }
     val ChevronRight by lazy { make("chevronRight", line("M9.5 6l6 6-6 6")) }
+    val ChevronUp by lazy { make("chevronUp", line("M6 14.5l6-6 6 6")) }
     val ChevronDown by lazy { make("chevronDown", line("M6 9.5l6 6 6-6")) }
     val Back by lazy { make("back", line("M19 12H5", "M11.5 5.5 5 12l6.5 6.5")) }
     val Globe by lazy { make("globe", line("M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18z", "M3 12h18", "M12 3c2.4 2.5 3.6 5.5 3.6 9s-1.2 6.5-3.6 9c-2.4-2.5-3.6-5.5-3.6-9S9.6 5.5 12 3z")) }

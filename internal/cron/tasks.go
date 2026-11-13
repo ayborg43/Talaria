@@ -203,7 +203,7 @@ func (t Targets) taskSchema() json.RawMessage {
 		"timeout_minutes": map[string]any{"type": "integer", "description": "how long it may run; default 30, at most 120"},
 	}
 	if len(t.Profiles) > 0 {
-		props["profile"] = map[string]any{"type": "string", "enum": append([]string{"default"}, t.Profiles...), "description": "the model profile it runs on; left out, the one this chat uses now"}
+		props["profile"] = map[string]any{"type": "string", "enum": append([]string{"default"}, t.Profiles...), "description": "the model profile it runs on; left out, the one this chat uses now. model_list says what each is for and whether it is working: pick a cheap one for plain work, a strong one for hard work"}
 	}
 	if len(t.Environments) > 0 {
 		props["environment"] = map[string]any{"type": "string", "enum": append([]string{"default"}, t.Environments...), "description": "where its shell and file tools run; left out, where this chat's run now"}

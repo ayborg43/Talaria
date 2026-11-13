@@ -149,6 +149,9 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 	if rt.cfg.X != nil {
 		x.RegisterTools(tools, rt.cfg.X)
 	}
+	if rt.models != nil {
+		registerModelTool(tools, rt.models)
+	}
 	if rt.cfg.Phone != nil {
 		phone.RegisterTools(tools, rt.cfg.Phone)
 	}

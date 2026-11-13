@@ -1055,6 +1055,8 @@ function profileNameCard(p) {
   else if (p.default) head.append(h('span', { class: 'pill brass', text: 'DEFAULT' }));
   card.append(head);
   card.append(h('div', { class: 'field-note', text: [p.type, p.base_url, p.model && 'model ' + p.model].filter(Boolean).join(' · ') || 'No address or model set.' }));
+  if (p.notes) card.append(h('div', { class: 'field-note', text: p.notes }));
+  if (p.failing) card.append(h('div', { class: 'note', role: 'status', text: (p.failing_hard ? 'Not working: ' : 'Resting for a moment: ') + p.failing + (p.failing_hard ? '. Work moves on to the next model until you fix it.' : '. Work moves on to the next model meanwhile.') }));
   if (p.status) card.append(h('div', { class: 'field-note', text: p.available ? p.status : 'Unavailable: ' + p.status }));
   if (p.traits && p.traits.length) card.append(h('div', { class: 'field-note', text: 'Also: ' + p.traits.map((t) => t === 'vision' ? 'sees images' : 'reasons deeply').join(', ') }));
   const btns = h('div', { class: 'btn-row' });
@@ -1122,14 +1124,14 @@ async function useProfile(name) {
 }
 
 function strengthsRow(best, strengths) {
-  const names = { code: 'Code', cheap: 'Cheap & fast' };
+  const names = { code: 'Code', cheap: 'Cheap', fast: 'Fast', long: 'Long documents', writing: 'Writing' };
   const row = h('div', { class: 'checks' });
   for (const s of strengths || []) {
     const props = { type: 'checkbox', name: 'best-for', value: s };
     if ((best || []).includes(s)) props.checked = true;
     row.append(h('label', { class: 'check' }, h('input', props), ' ' + (names[s] || s)));
   }
-  return h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Good at (for auto-routing)' }), row);
+  return h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Good at (Code and Cheap steer auto-routing; the agent reads all of them)' }), row);
 }
 
 function editProfile(name) {
@@ -1144,6 +1146,7 @@ function editProfile(name) {
     h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key env var', for: 'prof-apikeyenv' }), h('input', { id: 'prof-apikeyenv', name: 'prof-apikeyenv', autocomplete: 'off', type: 'text', value: p.api_key_env || '' })),
     h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key', for: 'prof-apikey' }), h('input', { id: 'prof-apikey', name: 'prof-apikey', autocomplete: 'off', type: 'password', placeholder: 'leave blank to keep current' })),
     strengthsRow(p.best, S.settings.strengths),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'What it is for (the agent reads this when it picks a model for a task)', for: 'prof-notes' }), h('input', { id: 'prof-notes', name: 'prof-notes', autocomplete: 'off', type: 'text', maxlength: '200', value: p.notes || '', placeholder: 'e.g. my free one: fine for summaries and lookups' })),
     h('div', { class: 'field-note', text: 'The key is saved to config.json (mode 0600). Prefer api_key_env over pasting the key directly.' }),
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn primary big', type: 'button', text: 'Save', onclick: saveProfile }),
@@ -1182,6 +1185,7 @@ function newProfileForm() {
     h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key env var', for: 'prof-apikeyenv' }), h('input', { id: 'prof-apikeyenv', name: 'prof-apikeyenv', autocomplete: 'off', type: 'text', placeholder: 'OPENROUTER_API_KEY' })),
     h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'API key', for: 'prof-apikey' }), h('input', { id: 'prof-apikey', name: 'prof-apikey', autocomplete: 'off', type: 'password', placeholder: 'sk-…' })),
     strengthsRow([], S.settings.strengths),
+    h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'What it is for (the agent reads this when it picks a model for a task)', for: 'prof-notes' }), h('input', { id: 'prof-notes', name: 'prof-notes', autocomplete: 'off', type: 'text', maxlength: '200', placeholder: 'e.g. my free one: fine for summaries and lookups' })),
     h('div', { class: 'field-note', text: 'Pick provider type openai, anthropic, deepseek or muse. Keys are stored in config.json.' }),
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn primary big', type: 'button', text: 'Add', onclick: saveProfile }),
@@ -1200,6 +1204,7 @@ async function saveProfile() {
     api_key_env: $('#prof-apikeyenv').value.trim() || undefined,
     api_key: $('#prof-apikey').value.trim() || undefined,
     best_for: $$('#settings-pane input[name="best-for"]:checked').map((el) => el.value),
+    notes: $('#prof-notes') ? $('#prof-notes').value : undefined,
   };
   try {
     const d = await api('/api/settings', { method: 'POST', body });
@@ -1481,6 +1486,7 @@ function paneModels(s) {
       ? 'Each message can go to the profile that suits it: one marked Code for programming, one marked Cheap & fast for quick questions. Helpers can be given any profile too, so a cheap model does the lookups while a strong one does the thinking. The Agents screen shows which model each is using.'
       : 'Add a second profile and Talaria can use a cheap model for quick jobs and a strong one for hard ones, and hand lookups to helpers on a cheaper model.' })));
   const rc = routineCard(s); if (rc) out.push(rc);
+  const fc = fallbackCard(s); if (fc) out.push(fc);
   for (const p of ps) out.push(profileNameCard(p));
   if (!ps.length) out.push(h('div', { class: 'card' }, h('h2', null, 'Profiles'), h('div', { class: 'empty', text: (S.model ? S.model + ' comes from the server settings. ' : '') + 'Add a profile to keep more than one model and switch between them.' })));
   out.push(h('button', { class: 'btn big', type: 'button', text: 'Add an AI profile', onclick: newProfileForm }));

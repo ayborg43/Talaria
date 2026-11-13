@@ -67,7 +67,7 @@ func TestGatewayBackends(t *testing.T) {
 	def, _ := cfg.Resolve(config.Overrides{Profile: "openai"}, getenv)
 	defProvider := provider.NewOpenAI(def.BaseURL, def.APIKey)
 
-	b := gatewayBackends(cfg, def, defProvider, getenv)
+	b := gatewayBackends(cfg, def, defProvider, getenv, provider.NewHealth(), nil)
 	if b.Default != "openai" || strings.Join(b.Names, ",") != "claude,local,openai" {
 		t.Fatalf("default %q names %v", b.Default, b.Names)
 	}
@@ -90,7 +90,7 @@ func TestGatewayBackends(t *testing.T) {
 	}
 
 	// Once the key exists the profile opens as a native Anthropic provider, and is built once.
-	b = gatewayBackends(cfg, def, defProvider, envFn("OPENAI_API_KEY", "sk-1", "ANTHROPIC_API_KEY", "ak-1"))
+	b = gatewayBackends(cfg, def, defProvider, envFn("OPENAI_API_KEY", "sk-1", "ANTHROPIC_API_KEY", "ak-1"), provider.NewHealth(), nil)
 	first, err := b.Open("claude")
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +113,7 @@ func TestGatewayBackendsStayLiveAndCarryEffort(t *testing.T) {
 	}}
 	getenv := envFn("OPENAI_API_KEY", "sk-1")
 	def, _ := cfg.Resolve(config.Overrides{Profile: "main"}, getenv)
-	b := gatewayBackends(cfg, def, provider.NewOpenAI(def.BaseURL, def.APIKey), getenv)
+	b := gatewayBackends(cfg, def, provider.NewOpenAI(def.BaseURL, def.APIKey), getenv, provider.NewHealth(), nil)
 
 	be, err := b.Open("deep")
 	if err != nil || !be.Reasoning || !be.Vision || len(be.Best) != 1 || be.Best[0] != "code" {
@@ -149,7 +149,7 @@ func TestGatewayBackendsStayLiveAndCarryEffort(t *testing.T) {
 func TestGatewayBackendsWithoutAConfigFile(t *testing.T) {
 	cfg := &config.Config{}
 	def, _ := cfg.Resolve(config.Overrides{}, envFn("OPENAI_API_KEY", "sk-1"))
-	b := gatewayBackends(cfg, def, provider.NewOpenAI(def.BaseURL, def.APIKey), envFn())
+	b := gatewayBackends(cfg, def, provider.NewOpenAI(def.BaseURL, def.APIKey), envFn(), provider.NewHealth(), nil)
 	if b.Default != "default" || len(b.Names) != 1 || b.Names[0] != "default" {
 		t.Fatalf("the implicit profile should be offered under its own name: %q %v", b.Default, b.Names)
 	}

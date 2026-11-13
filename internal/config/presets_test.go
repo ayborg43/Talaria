@@ -39,3 +39,21 @@ func TestPresetsAreValidStartingPoints(t *testing.T) {
 		}
 	}
 }
+
+func TestItersAndNvidiaArePresetsWithTheirOwnAddresses(t *testing.T) {
+	want := map[string]struct{ base, env string }{
+		"Itera Compute": {"https://api.iteracompute.com/v1", "ITERACOMPUTE_API_KEY"},
+		"NVIDIA":        {"https://integrate.api.nvidia.com/v1", "NVIDIA_API_KEY"},
+	}
+	for _, p := range Presets() {
+		if w, ok := want[p.Label]; ok {
+			if p.Type != provider.TypeOpenAI || p.BaseURL != w.base || p.KeyEnv != w.env || !p.NeedsKey || p.Model == "" {
+				t.Errorf("%s: %+v", p.Label, p)
+			}
+			delete(want, p.Label)
+		}
+	}
+	for label := range want {
+		t.Errorf("no %s preset", label)
+	}
+}

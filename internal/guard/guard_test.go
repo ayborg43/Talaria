@@ -386,6 +386,7 @@ func TestRedactorRecognisesTokenShapes(t *testing.T) {
 		"aws":       "AKIAABCDEFGHIJKLMNOP",
 		"google":    "AIzaSyA-abcdefghijklmnopqrstuvwxyz01234",
 		"jwt":       "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop",
+		"nvidia":    "nvapi-" + "abcdefghijklmnopqrstuvwxyz0123_-ABCD", // split so a secret scanner does not mistake this fixture for a key
 		"telegram":  "123456789:AAEhBOweik6ad9r_QXMENQjcrTu-Qly7yOk",
 		"discord":   "MTIzNDU2Nzg5MDEyMzQ1Njc4" + ".GabcDE." + "abcdefghijklmnopqrstuvwxyz0", // split so a secret scanner does not mistake this fixture for a token
 		"bearer":    "Bearer abcdefghijklmnopqrstuvwxyz0123456789",

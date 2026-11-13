@@ -91,7 +91,7 @@ func (t Targets) schema() json.RawMessage {
 	}
 	if len(t.Profiles) > 0 {
 		props["profile"] = map[string]any{"type": "string", "enum": append([]string{"default"}, t.Profiles...),
-			"description": "the model profile the job runs on; left out, the one this chat uses now"}
+			"description": "the model profile the job runs on; left out, the one this chat uses now. model_list says what each is for and whether it is working"}
 	}
 	if len(t.Environments) > 0 {
 		props["environment"] = map[string]any{"type": "string", "enum": append([]string{"default"}, t.Environments...),

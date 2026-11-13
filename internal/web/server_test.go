@@ -645,7 +645,7 @@ func TestProfileStrengthsRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(b, &view); err != nil {
 		t.Fatalf("bad settings json: %v", err)
 	}
-	if len(view.Strengths) != 2 || len(view.Profiles) != 1 || len(view.Profiles[0].Best) != 2 {
+	if len(view.Strengths) != len(config.ProfileStrengths) || len(view.Profiles) != 1 || len(view.Profiles[0].Best) != 2 {
 		t.Fatalf("%+v", view)
 	}
 	if resp, _ := r.do("POST", "/api/settings", map[string]any{"name": "coder", "best_for": []string{}}); resp.StatusCode != 200 {

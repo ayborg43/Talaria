@@ -1710,6 +1710,37 @@ function routineCard(s) {
     h('div', { class: 'field-note', text: 'Reminders, the morning brief and recipes run by themselves, and rarely need your strongest model. ' + using + ' A job that names its own model keeps it, and background tasks you start use the chat’s model.' }), sel);
 }
 
+// ---------- when a model is not working ----------
+// An ordered list of the profiles tried when a model is down, out of credit, rate limited, or has a key the service
+// refused. It applies to every model: a task given to any profile moves on to the next one down this list, and a model
+// that just failed is left alone for a few minutes so the next request does not wait on it again.
+function fallbackCard(s) {
+  const all = (s.profiles || []);
+  if (all.length < 2) return null; // a second model is what there is to fall back to
+  const order = (s.fallback_order || []).filter((n) => all.some((p) => p.name === n));
+  const save = async (next) => {
+    try { await api('/api/settings', { method: 'POST', body: { fallback_order: next } }); toast('Saved. It applies from the next message.'); }
+    catch (e) { failed(e); }
+    loadSettings();
+  };
+  const rows = h('div', { class: 'rows' });
+  order.forEach((n, i) => {
+    const p = all.find((x) => x.name === n);
+    rows.append(h('div', { class: 'row' },
+      h('span', { class: 'grow' }, h('span', { class: 't', text: (i + 1) + '. ' + n }), h('span', { class: 's', text: (p.model || '') + (p.failing ? ' · not working now: ' + p.failing : '') })),
+      h('button', { class: 'btn small', type: 'button', text: '↑', 'aria-label': 'Move ' + n + ' up', disabled: i === 0 ? '' : null, onclick: () => { const x = order.slice(); [x[i - 1], x[i]] = [x[i], x[i - 1]]; save(x); } }),
+      h('button', { class: 'btn small', type: 'button', text: '↓', 'aria-label': 'Move ' + n + ' down', disabled: i === order.length - 1 ? '' : null, onclick: () => { const x = order.slice(); [x[i + 1], x[i]] = [x[i], x[i + 1]]; save(x); } }),
+      h('button', { class: 'btn small', type: 'button', text: 'Take out', onclick: () => save(order.filter((y) => y !== n)) })));
+  });
+  const addable = all.filter((p) => !order.includes(p.name));
+  const sel = h('select', { class: 'rule-select', 'aria-label': 'Add a fallback model' }, h('option', { value: '', text: 'Add a model…' }), addable.map((p) => h('option', { value: p.name, text: p.name + (p.model ? ' (' + p.model + ')' : '') })));
+  sel.addEventListener('change', () => { if (sel.value) save([...order, sel.value]); });
+  return h('div', { class: 'card' }, h('h2', null, 'If a model stops working'),
+    h('div', { class: 'field-note', text: 'When a model is down, rate limited, out of credit, or its key is refused, Talaria moves on to the next one here, for chats, background tasks and scheduled jobs alike. A model that just failed is left alone for a few minutes. The agent is told which are failing, and which to use for what.' }),
+    order.length ? rows : h('div', { class: 'field-note', text: 'No fallbacks yet: a model that stops working just fails.' }),
+    addable.length ? sel : null);
+}
+
 // ---------- voice notes ----------
 // The microphone button records, turns the recording into a small mono 16 kHz WAV in the browser (every speech service
 // takes that, whatever the phone records in), and the server turns it into words with the speech service chosen in
