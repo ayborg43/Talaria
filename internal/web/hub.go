@@ -18,6 +18,7 @@ import (
 
 	"talaria/internal/activity"
 	"talaria/internal/gateway/chat"
+	"talaria/internal/provider"
 )
 
 const (
@@ -56,6 +57,15 @@ type Message struct {
 	Always bool   `json:"always,omitempty"`
 	// URL, on a handoff message, is the page the agent is asking the user to take over.
 	URL string `json:"url,omitempty"`
+	// An assistant reply says which model wrote it, what kind of message the router took it for, and why that
+	// model was chosen. Vote is what the person said of it: "up" or "down".
+	Profile string `json:"profile,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Kind    string `json:"kind,omitempty"`
+	Why     string `json:"why,omitempty"`
+	Vote    string `json:"vote,omitempty"`
+
+	scored bool // how this reply was received has been counted
 
 	started time.Time
 }
@@ -101,6 +111,11 @@ type sub struct {
 // Hub is the web app as the chat engine sees it (a chat.Transport), and the record of the conversation
 // the page shows. Everything is safe for use from many goroutines.
 type Hub struct {
+	// Served, if set, says which model of a fallback chain answered last, so a reply names the one that did.
+	Served func(primary string) (provider.Served, bool)
+	// the model chosen for the task now running, and why
+	routeProfile, routeModel, routeKind, routeWhy string
+
 	Path     string   // where the conversation is kept between runs; "" keeps it in memory only
 	Notifier Notifier // may be nil
 	Now      func() time.Time
@@ -553,6 +568,7 @@ func (h *Hub) Send(_ context.Context, _ int64, text string) (int64, error) {
 	h.init()
 	h.count()
 	m := h.add(&Message{Role: "assistant", Text: clip(text)})
+	h.nameModelLocked(m)
 	h.tell(m.ID, "Talaria")
 	return m.ID, nil
 }
@@ -566,6 +582,9 @@ func (h *Hub) Edit(_ context.Context, _, msg int64, text string) error {
 		return errGone
 	}
 	m.Text = clip(text)
+	if m.Role == "assistant" {
+		h.nameModelLocked(m)
+	}
 	if m.Role == "approval" && m.State == "pending" { // the engine edits a question only to say it ended
 		m.State, m.Token = "expired", ""
 	}
@@ -649,6 +668,65 @@ func (h *Hub) NoteModel(_ int64, model string) {
 		w.Model = model
 		h.pushAgents()
 	}
+}
+
+// NoteRoute records how the model for the task now starting was chosen, so the replies it writes carry its name.
+func (h *Hub) NoteRoute(_ int64, profile, model, kind, why string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.routeProfile, h.routeModel, h.routeKind, h.routeWhy = profile, model, kind, why
+}
+
+// nameModelLocked puts the model that is answering on a reply. When the model asked for was not working and the work
+// moved on to a fallback, it is the fallback that is named, and the reason says so.
+func (h *Hub) nameModelLocked(m *Message) {
+	if h.routeProfile == "" {
+		return
+	}
+	m.Profile, m.Model, m.Kind, m.Why = h.routeProfile, h.routeModel, h.routeKind, h.routeWhy
+	if h.Served != nil {
+		if sv, ok := h.Served(h.routeProfile); ok && sv.Name != "" && sv.Name != h.routeProfile {
+			m.Profile, m.Model = sv.Name, sv.Model
+			m.Why = h.routeProfile + " was not working, so " + sv.Name + " answered"
+		}
+	}
+}
+
+// LastReply is the latest assistant reply that says which model wrote it, or nil.
+func (h *Hub) LastReply() *Message {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := len(h.msgs) - 1; i >= 0; i-- {
+		if m := h.msgs[i]; m.Role == "assistant" && m.Profile != "" {
+			return copyMsg(m)
+		}
+	}
+	return nil
+}
+
+// Score marks a reply's reception as counted, and says whether it was not before.
+func (h *Hub) Score(id int64) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if m := h.byID[id]; m != nil && !m.scored {
+		m.scored = true
+		return true
+	}
+	return false
+}
+
+// Vote records the person's thumbs on a reply and tells the page. It returns the reply as it was voted on.
+func (h *Hub) Vote(id int64, vote string) *Message {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	m := h.byID[id]
+	if m == nil || m.Role != "assistant" {
+		return nil
+	}
+	m.Vote = vote
+	h.publish(m)
+	h.scheduleSave()
+	return copyMsg(m)
 }
 
 // SetModel says which model a worker uses (activity.Modeler).

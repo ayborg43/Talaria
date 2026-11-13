@@ -108,6 +108,21 @@ type Profile struct {
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
+// Routing is how the model for each message is chosen when the person has not chosen one. The keyword rules always
+// apply; these add to them.
+type Routing struct {
+	// Smart asks a small model to say what a message is, when the keyword rules are not sure. It adds a short wait
+	// before the first reply (a couple of seconds at most), and falls back to the rules if the small model is slow.
+	Smart bool `json:"smart,omitempty"`
+	// Profile is the model that labels messages; left out, one marked cheap, else the default.
+	Profile string `json:"profile,omitempty"`
+	// Learn lets how replies were received (thumbs, retries, corrections, carrying on) steer the choice. On unless false.
+	Learn *bool `json:"learn,omitempty"`
+}
+
+// Learning reports whether routing learns from how replies were received.
+func (r Routing) Learning() bool { return r.Learn == nil || *r.Learn }
+
 // ChatGateway holds the settings the Telegram and Discord gateways share.
 type ChatGateway struct {
 	Token        string  `json:"token,omitempty"`
@@ -424,13 +439,15 @@ type Config struct {
 	// chat's own. Left unset, a profile marked cheap in best_for is used if there is one.
 	RoutineProfile string             `json:"routine_profile,omitempty"`
 	Profiles       map[string]Profile `json:"profiles,omitempty"`
-	Telegram       Telegram           `json:"telegram,omitzero"`
-	Discord        Discord            `json:"discord,omitzero"`
-	X              X                  `json:"x,omitzero"`
-	Policy         Policy             `json:"policy,omitzero"`
-	Browser        Browser            `json:"browser,omitzero"`
-	Workspace      Workspace          `json:"workspace,omitzero"`
-	Vault          Vault              `json:"vault,omitzero"`
+	// Routing says how a model is chosen for each message: see Routing.
+	Routing   Routing   `json:"routing,omitzero"`
+	Telegram  Telegram  `json:"telegram,omitzero"`
+	Discord   Discord   `json:"discord,omitzero"`
+	X         X         `json:"x,omitzero"`
+	Policy    Policy    `json:"policy,omitzero"`
+	Browser   Browser   `json:"browser,omitzero"`
+	Workspace Workspace `json:"workspace,omitzero"`
+	Vault     Vault     `json:"vault,omitzero"`
 	// MCPServers are external tool servers, keyed by a short name.
 	MCPServers map[string]mcp.Server `json:"mcp_servers,omitempty"`
 	// Environments are places the shell and file tools can run instead of this

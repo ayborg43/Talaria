@@ -949,3 +949,13 @@ html{caret-color:var(--brass-text);accent-color:var(--brass);scrollbar-color:var
 .rec-step.private span,.routine-steps li.private{color:var(--muted);font-style:italic}
 .routine-steps{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:6px;font-size:14px;overflow-wrap:anywhere}
 .row-inline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0}
+
+/* under a reply: which model wrote it, and how it was received */
+.reply-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:2px;font-size:12px;color:var(--muted)}
+.reply-meta .who{font-weight:600}
+.reply-meta .why{opacity:.85}
+.reply-meta .thumbs{display:inline-flex;gap:2px}
+.reply-meta .thumb{background:none;border:1px solid transparent;border-radius:999px;padding:2px 8px;min-height:28px;font:inherit;color:inherit;cursor:pointer}
+.reply-meta .thumb:hover{border-color:var(--line)}
+.reply-meta .thumb.on{background:var(--brass-soft);border-color:var(--brass-line)}
+.reply-meta .thumb:disabled{opacity:.5;cursor:default}

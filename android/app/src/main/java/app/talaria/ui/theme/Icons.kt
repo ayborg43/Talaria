@@ -68,6 +68,8 @@ object Ti {
     val WifiOff by lazy { make("wifiOff", line("M3.5 3.5l17 17", "M8.6 8.2A13.3 13.3 0 0 0 2.5 11.5", "M12 6.7a13.3 13.3 0 0 1 9.5 4.1", "M6.2 14.7a8.3 8.3 0 0 1 4-2.2", "M13.8 12.7a8.3 8.3 0 0 1 3.8 2", "M9.4 18a4 4 0 0 1 5.2 0") + dots("M12 21.2h.01")) }
     val Alert by lazy { make("alert", line("M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 0 0 0-17z", "M12 8v4.8") + dots("M12 16.3h.01")) }
     val External by lazy { make("external", line("M14 4.5h5.5V10", "M19.5 4.5l-8 8", "M17.5 14v3.5a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2H10")) }
+    val ThumbUp by lazy { make("thumbUp", line("M7.5 11.5V20H4.5a1 1 0 0 1-1-1v-6.5a1 1 0 0 1 1-1h3z", "M7.5 11.5l3-6.4a1.8 1.8 0 0 1 3.3 1.3L13.2 10h5.1a1.7 1.7 0 0 1 1.7 2l-1.2 6a2 2 0 0 1-2 1.6H7.5")) }
+    val ThumbDown by lazy { make("thumbDown", line("M7.5 12.5V4H4.5a1 1 0 0 0-1 1v6.5a1 1 0 0 0 1 1h3z", "M7.5 12.5l3 6.4a1.8 1.8 0 0 0 3.3-1.3L13.2 14h5.1a1.7 1.7 0 0 0 1.7-2l-1.2-6a2 2 0 0 0-2-1.6H7.5")) }
     val Copy by lazy { make("copy", line("M10 8.5h8.5a1 1 0 0 1 1 1V19a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V9.5a1 1 0 0 1 1-1z", "M5.5 15V5a1 1 0 0 1 1-1H16")) }
     val Shield by lazy { make("shield", line("M12 3.5l7 2.8v5.4c0 4.4-2.9 7.5-7 9-4.1-1.5-7-4.6-7-9V6.3z", "M9 12l2.2 2.2L15.2 10")) }
     val Hand by lazy { make("hand", line("M9 11V5.5a1.5 1.5 0 0 1 3 0V10", "M12 10V4.5a1.5 1.5 0 0 1 3 0V11", "M15 11V6.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-.5A6 6 0 0 1 5.8 17.6L4 14.5a1.5 1.5 0 0 1 2.5-1.6L9 16V11")) }

@@ -15,6 +15,7 @@ import (
 	"talaria/internal/agent"
 	"talaria/internal/metrics"
 	"talaria/internal/provider"
+	"talaria/internal/routing"
 	"talaria/internal/tool"
 )
 
@@ -70,6 +71,11 @@ type Engine struct {
 	Backends *Backends
 	Prefs    ChatPrefs
 
+	// RouterSettings, if set, is asked at each message for the smart-routing choices (see RouterSettings). Learn, if
+	// set, is what has been learned about how replies were received; the router consults it when Learn is on.
+	RouterSettings func() RouterSettings
+	Learn          *routing.Store
+
 	// MessagesPerMinute limits how fast one chat may give the agent work, a burst of that many
 	// included; 0 is no limit. Commands such as /stop are never limited.
 	MessagesPerMinute int
@@ -88,6 +94,9 @@ type Engine struct {
 	// is not offered, and one approval does not cover the rest of the conversation.
 	Destructive bool
 
+	classMu    sync.Mutex
+	classCache map[string]routing.Kind
+
 	lim     limiter
 	root    context.Context
 	workers sync.WaitGroup
@@ -105,12 +114,14 @@ type chat struct {
 	resume chan resumeJob // answered requests, to carry out and carry on from
 	task   string         // what the user last asked for, kept with a request that has to wait
 
-	mu      sync.Mutex
-	agent   *agent.Agent       // nil: build a fresh one on the next message
-	pending []provider.Message // a stored conversation to take up when the next agent is built
-	cancel  context.CancelFunc
-	runCtx  context.Context
-	profile string // model profile chosen with /model; "" is the default
+	mu       sync.Mutex
+	agent    *agent.Agent       // nil: build a fresh one on the next message
+	pending  []provider.Message // a stored conversation to take up when the next agent is built
+	cancel   context.CancelFunc
+	runCtx   context.Context
+	profile  string       // model profile chosen with /model; "" is the default
+	once     string       // a profile for the next task only: a retry on a stronger model
+	onceKind routing.Kind // what the reply it replaces was taken for
 	// persona is the named agent this chat is talking with now, or nil; baseSystem is the system prompt the agent was
 	// built with, to which the persona's is added.
 	persona    *Persona

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"talaria/internal/persona"
 	"talaria/internal/routine"
+	"talaria/internal/routing"
 	"talaria/internal/runlog"
 	"time"
 
@@ -172,6 +173,11 @@ func runGateway(c *cli) error {
 	backends := gatewayBackends(c.cfg, c.res, c.p, c.getenv, c.health, c.log)
 	c.rt.SetHelpers(helperModels(backends, func(name string) string { return modelNote(c.cfg, c.health, name) }))
 	c.rt.SetModels(modelList(c.cfg, backends, c.health))
+	// A model that failed a moment ago is not what the router picks for the next message.
+	backends.Resting = func(name string) bool { st := c.health.Get(name); return !st.Working && time.Now().Before(st.Until) }
+	learn := &routing.Store{Path: filepath.Join(c.home, "routing.json")}
+	router := &chat.RouterBox{}
+	router.Set(chat.RouterSettings{Smart: c.cfg.Routing.Smart, Profile: c.cfg.Routing.Profile, Learn: c.cfg.Routing.Learning()})
 
 	var webHub *web.Hub // the web app's hub, once it is made: it is also what shows who is working
 
@@ -356,7 +362,7 @@ func runGateway(c *cli) error {
 
 	if webOn {
 		allowed := map[int64]bool{web.UserID: true}
-		webHub = &web.Hub{Path: filepath.Join(c.home, "web_log.json")}
+		webHub = &web.Hub{Path: filepath.Join(c.home, "web_log.json"), Served: c.health.ServedBy}
 		subject := webSet.PublicURL
 		if subject == "" {
 			subject = "mailto:admin@localhost.invalid"
@@ -379,6 +385,7 @@ func runGateway(c *cli) error {
 			eng.Held, eng.Destructive = &chat.HeldStore{Path: filepath.Join(c.home, "held_web.json")}, c.rt.AsksOnlyToDestroy()
 			webHub.Held = eng.Held.Has
 		}
+		eng.RouterSettings, eng.Learn = router.Get, learn
 		eng.NewAgent = newAgent(s, webNote, eng.Selection)
 		eng.Commands, eng.OnUserMessage, eng.StopBackground = attach(s, logf)
 		zone, _ := calendarZone(c.cfg, c.getenv)
@@ -391,7 +398,7 @@ func runGateway(c *cli) error {
 			Cfg:        c.cfg,
 			ApplyRules: applyRules(c.rt),
 			Mailbox:    c.rt.Mail(), Calendars: c.rt.Calendars(), X: c.rt.X(), Getenv: c.getenv,
-			Notes: c.rt.Notes(), Notices: notices, Env: c.rt.Env(), Browsers: c.rt.Browsers, Phone: c.rt.Phone(), Health: c.health,
+			Notes: c.rt.Notes(), Notices: notices, Env: c.rt.Env(), Browsers: c.rt.Browsers, Phone: c.rt.Phone(), Health: c.health, Learn: learn, Router: router,
 			ReceiptsPath: filepath.Join(c.home, "computer_receipts.json"),
 			AGUIKey:      webSet.AGUIKey,
 			Runs:         runs,

@@ -348,11 +348,39 @@ function buildBlock(b, isLast) {
     if (card) { body.append(card); return body; }
   }
   body.append(markdown(b.m.text || ''));
+  if (!streaming && b.m.profile) body.append(replyMeta(b.m, isLast));
   return body;
+}
+
+// Under each reply: which model wrote it and why it was chosen, thumbs, and (on the latest) a way to ask again on a stronger one.
+function replyMeta(m, isLast) {
+  const name = m.model ? (m.profile && m.profile !== m.model ? m.model + ' · ' + m.profile : m.model) : m.profile;
+  const row = h('div', { class: 'reply-meta' },
+    h('span', { class: 'who', title: m.why || '', text: 'Answered by ' + name }),
+    m.why ? h('span', { class: 'why', text: m.why }) : null);
+  const thumb = (v, label, sym) => h('button', {
+    class: 'thumb' + (m.vote === v ? ' on' : ''), type: 'button', 'aria-label': label, 'aria-pressed': m.vote === v ? 'true' : 'false', text: sym,
+    onclick: async () => {
+      try { await api('/api/feedback', { method: 'POST', body: { id: m.id, vote: m.vote === v ? '' : v } }); }
+      catch (e) { if (!(e instanceof AuthError)) toast(e.message); }
+    },
+  });
+  row.append(h('span', { class: 'thumbs' }, thumb('up', 'Good answer', '👍'), thumb('down', 'Poor answer', '👎')));
+  const many = !S.settings || !S.settings.profiles || S.settings.profiles.length > 1;
+  if (isLast && many) {
+    row.append(h('button', {
+      class: 'thumb retry', type: 'button', text: '↻ Try a stronger model', onclick: async (e) => {
+        e.currentTarget.disabled = true;
+        try { const d = await api('/api/retry', { method: 'POST', body: { id: m.id } }); toast('Trying again on ' + d.profile + '…'); }
+        catch (err) { if (!(err instanceof AuthError)) toast(err.message); e.currentTarget.disabled = false; }
+      },
+    }));
+  }
+  return row;
 }
 function signature(b, isLast) {
   if (b.kind === 'tools') return b.items.map((t) => t.state + t.ms).join();
-  if (b.kind === 'assistant') return b.m.text + (isLast && working() ? '|' : '');
+  if (b.kind === 'assistant') return b.m.text + (isLast && working() ? '|' : '') + '|' + (b.m.model || '') + (b.m.profile || '') + (b.m.vote || '') + (isLast ? 'L' : '');
   return b.m.text + '|' + b.m.state;
 }
 
@@ -1487,6 +1515,7 @@ function paneModels(s) {
       : 'Add a second profile and Talaria can use a cheap model for quick jobs and a strong one for hard ones, and hand lookups to helpers on a cheaper model.' })));
   const rc = routineCard(s); if (rc) out.push(rc);
   const fc = fallbackCard(s); if (fc) out.push(fc);
+  const rtc = routingCard(s); if (rtc) out.push(rtc);
   for (const p of ps) out.push(profileNameCard(p));
   if (!ps.length) out.push(h('div', { class: 'card' }, h('h2', null, 'Profiles'), h('div', { class: 'empty', text: (S.model ? S.model + ' comes from the server settings. ' : '') + 'Add a profile to keep more than one model and switch between them.' })));
   out.push(h('button', { class: 'btn big', type: 'button', text: 'Add an AI profile', onclick: newProfileForm }));

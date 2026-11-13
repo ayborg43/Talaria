@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,9 +11,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"talaria/internal/agent"
 	"talaria/internal/provider"
+	"talaria/internal/routing"
 )
 
 // Backend is a model a chat can talk to.
@@ -43,6 +47,9 @@ type Backends struct {
 	// current config. Call it after profiles are added, changed or removed.
 	// It may be nil, when there is nothing cached.
 	Forget func()
+	// Resting, if set, says a profile failed a moment ago and should not be chosen by the router (a pinned choice and the
+	// fallback chain are unaffected).
+	Resting func(name string) bool
 	// List returns every profile a chat may pick, sorted; includes Default.
 	// When nil, Names is the list, frozen from startup.
 	List func() []string
@@ -307,78 +314,348 @@ func effortFor(text string) string {
 	return "low"
 }
 
-// route picks the profile and reasoning effort for one message. An explicit
-// choice always wins: routing then only tunes the effort. It returns "", ""
-// when the default path should be used unchanged: under two usable backends,
-// or nothing the message asks for.
-func (e *Engine) route(text, pinned string) (name, effort string) {
+// RouterSettings are the choices behind smart routing, read at each message so a change in Settings applies at once.
+type RouterSettings struct {
+	// Smart asks a small model to say what each message is, when the keyword rules are not decisive.
+	Smart bool
+	// Profile is the model that labels messages; "" means one marked cheap, else the default.
+	Profile string
+	// Learn lets how replies were received (thumbs, retries, corrections, carrying on) steer the choice.
+	Learn bool
+}
+
+// RouterBox holds the router's settings for the engine to read and Settings to change while Talaria runs.
+type RouterBox struct {
+	v atomic.Pointer[RouterSettings]
+}
+
+// Get is the current settings; the zero value (everything off) before any are set.
+func (b *RouterBox) Get() RouterSettings {
+	if p := b.v.Load(); p != nil {
+		return *p
+	}
+	return RouterSettings{}
+}
+
+// Set replaces the settings.
+func (b *RouterBox) Set(s RouterSettings) { b.v.Store(&s) }
+
+// RouteNoter is an optional extra for a Transport that wants to know how a model was chosen for a reply, so the page
+// can name the model that answered and say why. Told before each task, after the model is chosen.
+type RouteNoter interface {
+	NoteRoute(chat int64, profile, model, kind, why string)
+}
+
+// decision is what the router chose for one message.
+type decision struct {
+	name   string // the profile; "" for the default
+	effort string
+	kind   routing.Kind
+	why    string
+}
+
+// longConversation is how much text a conversation may hold before the router looks for a model that takes long input.
+const longConversation = 60000
+
+// usableBackends is every profile that can be opened and is not resting after a failure. If every one is resting they
+// are all returned: the chain decides then.
+func (e *Engine) usableBackends() (names []string, be map[string]Backend) {
 	b := e.Backends
-	if b == nil || b.Open == nil {
-		return "", ""
-	}
-	type candidate struct {
-		name string
-		be   Backend
-	}
-	var usable []candidate
+	be = map[string]Backend{}
+	var resting []string
 	for _, n := range b.profiles() {
-		be, err := b.Open(n)
+		o, err := b.Open(n)
 		if err != nil {
 			continue
 		}
-		usable = append(usable, candidate{n, be})
+		be[n] = o
+		if b.Resting != nil && b.Resting(n) {
+			resting = append(resting, n)
+			continue
+		}
+		names = append(names, n)
 	}
-	if len(usable) < 2 {
-		return "", ""
+	if len(names) == 0 {
+		names = resting
 	}
-	for _, c := range usable {
-		if c.name == pinned && c.be.Reasoning {
-			return "", effortFor(text)
+	return names, be
+}
+
+func (e *Engine) routerSettings() RouterSettings {
+	if e.RouterSettings == nil {
+		return RouterSettings{}
+	}
+	return e.RouterSettings()
+}
+
+// kindOf says what the message is, by the cheapest means that is sure: a code fence, a very long conversation, a small
+// model's label when smart routing is on, and the keyword rules otherwise.
+func (e *Engine) kindOf(c *chat, text string, usable []string, be map[string]Backend) (routing.Kind, string) {
+	rule := routing.KindOf(text)
+	if strings.Contains(text, "```") {
+		return routing.Code, "has code in it"
+	}
+	if c != nil && e.historySize(c) > longConversation {
+		return routing.Long, "a very long conversation"
+	}
+	if s := e.routerSettings(); s.Smart && len(usable) >= 2 {
+		if k, ok := e.classify(text, s.Profile, usable, be); ok {
+			return k, "judged as " + string(k)
 		}
 	}
-	if pinned != "" {
-		return "", ""
+	switch rule {
+	case routing.Code:
+		return rule, "code words in the message"
+	case routing.Hard:
+		return rule, "asks for hard thinking"
+	case routing.Simple:
+		return rule, "a short, plain message"
 	}
-	claims := func(c candidate, want string) bool { return slices.Contains(c.be.Best, want) }
-	pick := func(want func(candidate) bool) string {
-		for _, c := range usable {
-			if want(c) {
-				return c.name
+	return rule, "an ordinary message"
+}
+
+func (e *Engine) historySize(c *chat) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var tr []provider.Message
+	if c.agent != nil {
+		tr = c.agent.Transcript()
+	} else {
+		tr = c.pending
+	}
+	n := 0
+	for _, m := range tr {
+		n += len(m.Content)
+	}
+	return n
+}
+
+const classifierPrompt = "Label the user's message with exactly one word. " +
+	"code: programming, scripts, errors, technical debugging. " +
+	"hard: proofs, careful multi-step reasoning, designing something complicated. " +
+	"simple: a short plain question or small talk. " +
+	"writing: drafting, rewording or summarising text. " +
+	"general: anything else. Answer with the single word and nothing more."
+
+// classify asks a small model what a message is. It waits only a moment: a slow or failed answer just means the keyword
+// rules decide, so smart routing can make a reply no slower than a couple of seconds, and never fail one.
+func (e *Engine) classify(text, profile string, usable []string, be map[string]Backend) (routing.Kind, bool) {
+	key := strings.ToLower(strings.TrimSpace(text))
+	e.classMu.Lock()
+	if k, ok := e.classCache[key]; ok {
+		e.classMu.Unlock()
+		return k, true
+	}
+	e.classMu.Unlock()
+	use := profile
+	if _, ok := be[use]; !ok {
+		use = ""
+		for _, n := range usable {
+			if slices.Contains(be[n].Best, "cheap") {
+				use = n
+				break
+			}
+		}
+		if use == "" {
+			use = e.Backends.Default
+		}
+	}
+	b, ok := be[use]
+	if !ok {
+		return "", false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+	defer cancel()
+	t := []rune(text)
+	if len(t) > 600 {
+		t = t[:600]
+	}
+	msg, err := b.Provider.Chat(ctx, provider.Request{Model: b.Model, Messages: []provider.Message{
+		{Role: provider.RoleSystem, Content: classifierPrompt},
+		{Role: provider.RoleUser, Content: string(t)},
+	}})
+	if err != nil {
+		e.logf("smart routing: the labelling model did not answer (%v): using the keyword rules", err)
+		return "", false
+	}
+	k, ok := routing.Parse(msg.Content)
+	if !ok {
+		return "", false
+	}
+	e.classMu.Lock()
+	if e.classCache == nil || len(e.classCache) > 200 {
+		e.classCache = map[string]routing.Kind{}
+	}
+	e.classCache[key] = k
+	e.classMu.Unlock()
+	return k, true
+}
+
+// decide picks the profile and reasoning effort for one message, and says why. An explicit choice always wins:
+// routing then only tunes the effort. It returns an empty name when the default path should be used unchanged: under
+// two usable backends, or nothing the message asks for.
+func (e *Engine) decide(c *chat, text, pinned string) decision {
+	b := e.Backends
+	if b == nil || b.Open == nil {
+		return decision{}
+	}
+	usable, be := e.usableBackends()
+	if len(usable) < 2 {
+		return decision{}
+	}
+	if pinned != "" {
+		d := decision{why: "your choice"}
+		if o, ok := be[pinned]; ok && o.Reasoning {
+			d.effort = effortFor(text)
+		}
+		return d
+	}
+	kind, how := e.kindOf(c, text, usable, be)
+	claims := func(n string, want string) bool { return slices.Contains(be[n].Best, want) }
+	first := func(want func(string) bool) string {
+		for _, n := range usable {
+			if want(n) {
+				return n
 			}
 		}
 		return ""
 	}
-	code, hard := codeSignal.MatchString(text), hardSignal.MatchString(text)
-	switch {
-	case code:
-		name = pick(func(c candidate) bool { return claims(c, "code") })
+	var name, rule string
+	switch kind {
+	case routing.Code:
+		name = first(func(n string) bool { return claims(n, "code") })
 		if name == "" {
-			name = pick(func(c candidate) bool { return c.be.Reasoning })
+			name = first(func(n string) bool { return be[n].Reasoning })
 		}
-	case hard:
-		name = pick(func(c candidate) bool { return c.be.Reasoning })
-	default:
-		// Short and plain goes cheap; anything with substance stays on the default.
-		if len([]rune(text)) < 80 {
-			name = pick(func(c candidate) bool { return claims(c, "cheap") })
-		}
+		rule = "a code model"
+	case routing.Hard:
+		name = first(func(n string) bool { return be[n].Reasoning })
+		rule = "a model that reasons"
+	case routing.Simple:
+		name = first(func(n string) bool { return claims(n, "cheap") })
+		rule = "the cheap model"
+	case routing.Writing:
+		name = first(func(n string) bool { return claims(n, "writing") })
+		rule = "a writing model"
+	case routing.Long:
+		name = first(func(n string) bool { return claims(n, "long") })
+		rule = "a long-context model"
 	}
-	effort = ""
-	for _, c := range usable {
-		if (name != "" && c.name == name) || (name == "" && c.name == b.Default) {
-			if c.be.Reasoning {
-				effort = effortFor(text)
+	why := how
+	if name != "" {
+		why = how + ": " + rule
+	} else {
+		why = how + ": the default model"
+	}
+	usual := name
+	if usual == "" {
+		usual = b.Default
+	}
+	// What has been learned about how replies were received can overrule the rule, when the record is clear.
+	if s := e.routerSettings(); s.Learn && e.Learn != nil {
+		cands := []string{b.Default}
+		for _, n := range usable {
+			if n != b.Default && (claims(n, string(kind)) || kind == routing.General || kind == routing.Simple) {
+				cands = append(cands, n)
+			}
+		}
+		cands = slices.DeleteFunc(cands, func(n string) bool { _, ok := be[n]; return !ok })
+		if pick, because := e.Learn.Prefer(kind, cands, usual); because != "" {
+			name, why = pick, because
+		} else if kind == routing.Simple || kind == routing.General {
+			// a little exploring on low-stakes messages, so a good model is not passed over for never having been tried
+			if try := e.Learn.Explore(kind, cands, usual, 0.06); try != "" {
+				name, why = try, "trying "+try+" to learn how it does on "+string(kind)+" messages"
 			}
 		}
 	}
-	if name == b.Default {
-		name = ""
+	d := decision{name: name, kind: kind, why: why}
+	use := name
+	if use == "" {
+		use = b.Default
 	}
-	return name, effort
+	if o, ok := be[use]; ok && o.Reasoning {
+		d.effort = effortFor(text)
+	}
+	if d.name == b.Default {
+		d.name = ""
+	}
+	return d
+}
+
+// route is decide without the explanation, for callers that only need the choice.
+func (e *Engine) route(text, pinned string) (name, effort string) {
+	d := e.decide(nil, text, pinned)
+	return d.name, d.effort
+}
+
+// Escalate says which profile to try when a reply from "from" was not good enough: a model that reasons, else one
+// that claims code, else the default if that is not what answered, else any other that is working.
+func (e *Engine) Escalate(from string) string {
+	b := e.Backends
+	if b == nil || b.Open == nil {
+		return ""
+	}
+	usable, be := e.usableBackends()
+	pick := func(want func(string) bool) string {
+		for _, n := range usable {
+			if n != from && want(n) {
+				return n
+			}
+		}
+		return ""
+	}
+	for _, want := range []func(string) bool{
+		func(n string) bool { return be[n].Reasoning },
+		func(n string) bool { return slices.Contains(be[n].Best, "code") },
+		func(n string) bool { return n == b.Default },
+		func(string) bool { return true },
+	} {
+		if n := pick(want); n != "" {
+			return n
+		}
+	}
+	return ""
+}
+
+// Retry runs the person's last message again, on the named profile (or the one Escalate chooses): the answer it
+// replaces is dropped from what the agent remembers, so the new one is not shaped by it. The page must already have
+// removed the old answer from what it shows.
+func (e *Engine) Retry(chatID, userID int64, text, profile string, kind routing.Kind) error {
+	if e.Backends == nil {
+		return fmt.Errorf("there is only one model to answer with")
+	}
+	e.prepareRetry(e.chatFor(chatID), profile, kind)
+	e.Incoming(chatID, userID, text)
+	return nil
+}
+
+// prepareRetry forgets the last exchange and pins profile for the next task.
+func (e *Engine) prepareRetry(c *chat, profile string, kind routing.Kind) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var tr []provider.Message
+	if c.agent != nil {
+		tr = c.agent.Transcript()
+	} else {
+		tr = c.pending
+	}
+	for i := len(tr) - 1; i >= 0; i-- {
+		if tr[i].Role == provider.RoleUser {
+			tr = append([]provider.Message(nil), tr[:i]...)
+			if c.agent != nil {
+				c.agent.Restore(tr)
+			} else {
+				c.pending = tr
+			}
+			break
+		}
+	}
+	c.once, c.onceKind = profile, kind
 }
 
 // applyBackend points the chat's agent at the model for this task: the chat's
-// explicit choice, or the router's pick when it follows the default. It runs
+// explicit choice, a one-off choice made by a retry, or the router's pick when it follows the default. It runs
 // before each task, so a choice made mid-conversation takes effect on the
 // next message and the history carries over. A saved profile that no longer
 // works is replaced by the default, with a note.
@@ -392,14 +669,30 @@ func (g *Engine) applyBackend(c *chat, a *agent.Agent, text string) {
 	if c.persona != nil && c.persona.Profile != "" {
 		pinned, ofAgent = c.persona.Profile, true // a named agent's own model wins over the chat's choice while it is the one talking
 	}
+	once, onceKind := c.once, c.onceKind
+	c.once, c.onceKind = "", ""
 	c.mu.Unlock()
-	name, effort := g.route(text, pinned)
+	var d decision
+	if once != "" {
+		d = g.decide(c, text, once)
+		d.name, d.why = once, "tried again on a stronger model"
+		d.kind = onceKind // what the reply being replaced was taken for
+		if d.kind == "" {
+			d.kind = routing.KindOf(text)
+		}
+	} else {
+		d = g.decide(c, text, pinned)
+	}
+	name, effort := d.name, d.effort
 	use := pinned
 	if use == "" {
 		use = b.Default
 	}
 	if name != "" {
 		use = name
+	}
+	if once != "" {
+		use = once
 	}
 	open := b.Open
 	if effort != "" && b.OpenEffort != nil {
@@ -409,7 +702,7 @@ func (g *Engine) applyBackend(c *chat, a *agent.Agent, text string) {
 	be, err := open(use)
 	if err != nil && use != b.Default {
 		g.send(c.id, fmt.Sprintf("The %s profile cannot be used now (%v), so I'm using %s.", use, err, b.Default))
-		if !ofAgent { // the chat's own choice is forgotten; a named agent's is left for its owner to fix
+		if !ofAgent && once == "" { // the chat's own choice is forgotten; a named agent's is left for its owner to fix
 			c.mu.Lock()
 			c.profile = ""
 			c.mu.Unlock()
@@ -417,6 +710,8 @@ func (g *Engine) applyBackend(c *chat, a *agent.Agent, text string) {
 				g.Prefs.SetProfile(c.id, "")
 			}
 		}
+		use = b.Default
+		d.why = "the model asked for could not be used"
 		be, err = b.Open(b.Default)
 	}
 	if err != nil {
@@ -426,5 +721,12 @@ func (g *Engine) applyBackend(c *chat, a *agent.Agent, text string) {
 	a.Provider, a.Model = be.Provider, be.Model
 	if mn, ok := g.T.(ModelNoter); ok {
 		mn.NoteModel(c.id, be.Model)
+	}
+	if rn, ok := g.T.(RouteNoter); ok {
+		kind := string(d.kind)
+		if kind == "" {
+			kind = string(routing.KindOf(text))
+		}
+		rn.NoteRoute(c.id, use, be.Model, kind, d.why)
 	}
 }

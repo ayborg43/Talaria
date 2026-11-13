@@ -82,6 +82,18 @@ data class ModelsDto(
     val fallback_order: List<String> = emptyList(), val strengths: List<String> = emptyList(),
 )
 
+@Serializable
+data class RouteRow(
+    val kind: String = "", val profile: String = "", val Up: Int = 0, val Down: Int = 0, val Retry: Int = 0,
+    val Correction: Int = 0, val Continue: Int = 0, val score: Double = 0.0,
+)
+
+@Serializable
+data class RoutingDto(
+    val smart: Boolean = false, val profile: String = "", val learn: Boolean = true,
+    val profiles: List<String> = emptyList(), val rows: List<RouteRow> = emptyList(),
+)
+
 private val strengthWords = mapOf("code" to "Code", "cheap" to "Cheap", "fast" to "Fast", "long" to "Long documents", "writing" to "Writing")
 
 /**
@@ -141,6 +153,8 @@ fun ModelsScreen(repo: Repo, onBack: () -> Unit, modifier: Modifier = Modifier) 
                     }
                     Button(onClick = { adding = true }, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) { Text("Add a model") }
                     Gap(16.dp)
+                    if (d.profiles.size >= 2) RoutingCard(repo)
+                    if (d.profiles.size >= 2) Gap(16.dp)
                     if (d.profiles.size >= 2) Fallbacks(d, onSave = { next -> post(buildJsonObject { put("fallback_order", JsonArray(next.map { JsonPrimitive(it) })) }, "Saved. It applies from the next message.") })
                 }
                 Gap(32.dp)
@@ -322,4 +336,67 @@ private fun Fallbacks(d: ModelsDto, onSave: (List<String>) -> Unit) {
             }
         }
     }
+}
+
+/**
+ * How the model for each message is chosen. The keyword rules always apply; smart routing adds a small model that
+ * labels each message, and learning lets how replies were received (thumbs, "try a stronger model", corrections,
+ * carrying on) move a model that has clearly done better into the lead for that kind of message.
+ */
+@Composable
+private fun RoutingCard(repo: Repo) {
+    val polled = rememberPolled(0, "routing" + repo.store.baseUrl) { repo.api.getJson<RoutingDto>("/api/routing") }
+    val scope = rememberCoroutineScope()
+    var confirmReset by remember { mutableStateOf(false) }
+    val r = polled.value ?: return
+    fun save(body: kotlinx.serialization.json.JsonObject) = scope.launch {
+        try { repo.api.postJson("/api/routing", body); polled.refresh() } catch (e: Exception) { repo.toast(e.message ?: "That could not be saved.") }
+    }
+    SectionTitle("How Talaria chooses a model")
+    Panel(Modifier.fillMaxWidth()) {
+        Column {
+            Text(
+                "Each reply says which model wrote it and why. Thumbs and \"Try a stronger model\" under a reply teach it which model suits which kind of message.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp),
+            )
+            HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            ToggleRow("Smart routing", "A small model labels each message when the keywords are not sure. It can add up to a couple of seconds before the first reply; the rules take over if it is slow.", r.smart) { save(buildJsonObject { put("smart", it) }) }
+            if (r.smart) {
+                Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)) {
+                    Text("Model that labels messages", style = MaterialTheme.typography.labelLarge)
+                    Gap(6.dp)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = r.profile.isEmpty(), onClick = { save(buildJsonObject { put("profile", "") }) }, label = { Text("Automatic") })
+                        r.profiles.forEach { n -> FilterChip(selected = r.profile == n, onClick = { save(buildJsonObject { put("profile", n) }) }, label = { Text(n) }) }
+                    }
+                }
+            }
+            HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            ToggleRow("Learn from how replies are received", "Counts thumbs, retries, corrections and carrying on, and lets a model that has clearly done better on a kind of message take over for it.", r.learn) { save(buildJsonObject { put("learn", it) }) }
+            if (r.rows.isEmpty()) {
+                Text("Nothing learned yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp))
+            } else {
+                HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Column(Modifier.padding(16.dp)) {
+                    Text("What it has learned so far", style = MaterialTheme.typography.labelLarge)
+                    r.rows.forEach { x ->
+                        Gap(8.dp)
+                        Text("${x.kind} → ${x.profile}", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            listOfNotNull(x.Up.takeIf { it > 0 }?.let { "$it good" }, x.Down.takeIf { it > 0 }?.let { "$it poor" }, x.Retry.takeIf { it > 0 }?.let { "$it sent back" }, x.Correction.takeIf { it > 0 }?.let { "$it corrected" }, x.Continue.takeIf { it > 0 }?.let { "$it carried on" }).joinToString(" · ") + " · score ${"%.2f".format(x.score)}",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Gap(8.dp)
+                    TextButton(onClick = { confirmReset = true }) { Text("Forget what it learned", color = MaterialTheme.extra.bad) }
+                }
+            }
+        }
+    }
+    if (confirmReset) AlertDialog(
+        onDismissRequest = { confirmReset = false }, title = { Text("Forget what it learned?") },
+        text = { Text("The router goes back to its rules. Your settings stay.") },
+        confirmButton = { TextButton(onClick = { confirmReset = false; save(buildJsonObject { put("reset", true) }) }) { Text("Forget", color = MaterialTheme.extra.bad) } },
+        dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("Keep it") } },
+    )
 }

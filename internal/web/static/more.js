@@ -1710,6 +1710,46 @@ function routineCard(s) {
     h('div', { class: 'field-note', text: 'Reminders, the morning brief and recipes run by themselves, and rarely need your strongest model. ' + using + ' A job that names its own model keeps it, and background tasks you start use the chat’s model.' }), sel);
 }
 
+// ---------- how a model is chosen for each message ----------
+// The keyword rules always apply. Smart routing adds a small model that labels each message; learning counts how replies
+// were received (thumbs, a retry, a correction, carrying on) and lets a clearly better model take over for that kind.
+function routingCard(s) {
+  if ((s.profiles || []).length < 2) return null;
+  const card = h('div', { class: 'card' }, h('h2', null, 'How Talaria chooses a model'),
+    h('div', { class: 'field-note', text: 'Each reply says which model wrote it and why. Thumbs and Try a stronger model teach it which model suits which kind of message.' }));
+  const body = h('div');
+  card.append(body);
+  const load = async () => {
+    let r;
+    try { r = await api('/api/routing'); } catch (e) { failed(e); return; }
+    const save = async (patch) => { try { await api('/api/routing', { method: 'POST', body: patch }); } catch (e) { failed(e); } load(); };
+    const check = (label, note, on, key) => {
+      const box = h('input', { type: 'checkbox', checked: on ? '' : null });
+      box.checked = on;
+      box.addEventListener('change', () => save({ [key]: box.checked }));
+      return h('div', { class: 'field' }, h('label', { class: 'check' }, box, ' ' + label), h('div', { class: 'field-note', text: note }));
+    };
+    const sel = h('select', { class: 'rule-select', 'aria-label': 'Model that labels messages' },
+      h('option', { value: '', text: 'Automatic (a cheap one)' }), r.profiles.map((n) => h('option', { value: n, text: n })));
+    sel.value = r.profile || '';
+    sel.addEventListener('change', () => save({ profile: sel.value }));
+    const rows = h('div', { class: 'rows' });
+    for (const x of r.rows) {
+      rows.append(h('div', { class: 'row' }, h('span', { class: 'grow' },
+        h('span', { class: 't', text: x.kind + ' → ' + x.profile }),
+        h('span', { class: 's', text: [x.Up && x.Up + ' good', x.Down && x.Down + ' poor', x.Retry && x.Retry + ' sent back', x.Correction && x.Correction + ' corrected', x.Continue && x.Continue + ' carried on'].filter(Boolean).join(' · ') + ' · score ' + x.score.toFixed(2) }))));
+    }
+    const reset = h('button', { class: 'btn', type: 'button', text: 'Forget what it learned', onclick: () => { if (confirm('Forget how replies were received? The router goes back to its rules.')) save({ reset: true }); } });
+    body.replaceChildren(
+      check('Smart routing', 'A small model labels each message when the keywords are not sure. It adds a wait of up to a couple of seconds before the first reply, and the rules take over if it is slow.', r.smart, 'smart'),
+      r.smart ? h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Model that labels messages' }), sel) : null,
+      check('Learn from how replies are received', 'Counts thumbs, retries, corrections and carrying on, and lets a model that has clearly done better on a kind of message take over for it.', r.learn, 'learn'),
+      r.rows.length ? h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'What it has learned so far' }), rows, h('div', { class: 'btn-row' }, reset)) : h('div', { class: 'field-note', text: 'Nothing learned yet.' }));
+  };
+  load();
+  return card;
+}
+
 // ---------- when a model is not working ----------
 // An ordered list of the profiles tried when a model is down, out of credit, rate limited, or has a key the service
 // refused. It applies to every model: a task given to any profile moves on to the next one down this list, and a model

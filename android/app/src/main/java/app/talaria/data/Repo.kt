@@ -298,6 +298,15 @@ class Repo(context: Context) {
         } finally { _uploading.value = false }
     }
 
+    /** A thumbs up or down on a reply ("" takes it back). The router learns from it. */
+    suspend fun vote(id: Long, vote: String) { api.postJson("/api/feedback", buildJsonObject { put("id", id); put("vote", vote) }) }
+
+    /** Asks again on a stronger model, and says which one. The answer it replaces goes. */
+    suspend fun retry(id: Long): String {
+        val out = api.postJson("/api/retry", buildJsonObject { put("id", id) })
+        return (AppJson.parseToJsonElement(out) as? kotlinx.serialization.json.JsonObject)?.get("profile")?.let { (it as? JsonPrimitive)?.content }.orEmpty()
+    }
+
     suspend fun send(text: String) { api.postJson("/api/send", buildJsonObject { put("text", text) }) }
 
     /** Answers an approval: choice is allow, always or deny. */

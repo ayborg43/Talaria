@@ -37,16 +37,41 @@ type State struct {
 	LastOK  time.Time `json:"lastOk,omitempty"`
 }
 
+// Served is the model of a chain that is answering, or answered last.
+type Served struct{ Name, Model string }
+
 // Health is what the chains learn about the models, shared so Settings and the agent can read it and so a model
 // that has just failed is not tried again by the next call.
 type Health struct {
-	mu    sync.Mutex
-	state map[string]*State
-	now   func() time.Time
+	mu     sync.Mutex
+	state  map[string]*State
+	served map[string]Served // by the chain's first profile
+	now    func() time.Time
 }
 
 // NewHealth makes an empty record.
-func NewHealth() *Health { return &Health{state: map[string]*State{}, now: time.Now} }
+func NewHealth() *Health {
+	return &Health{state: map[string]*State{}, served: map[string]Served{}, now: time.Now}
+}
+
+// attempt notes which model of the chain that starts at primary is being asked now. The page names the model that
+// answered from this, so a reply that moved on to a fallback says so.
+func (h *Health) attempt(primary string, l Link) {
+	h.mu.Lock()
+	h.served[primary] = Served{Name: l.Name, Model: l.Model}
+	h.mu.Unlock()
+}
+
+// ServedBy is the model of the chain starting at primary that answered last, and whether any has.
+func (h *Health) ServedBy(primary string) (Served, bool) {
+	if h == nil {
+		return Served{}, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	s, ok := h.served[primary]
+	return s, ok
+}
 
 func (h *Health) fail(name, reason string, hard bool) {
 	h.mu.Lock()
@@ -145,6 +170,9 @@ func (c Chain) Chat(ctx context.Context, req Request) (Message, error) {
 		spoke := false
 		if req.OnText != nil {
 			r.OnText = func(d string) { spoke = true; req.OnText(d) }
+		}
+		if c.Health != nil {
+			c.Health.attempt(c.Links[0].Name, l)
 		}
 		msg, err := l.Provider.Chat(ctx, r)
 		if err == nil {

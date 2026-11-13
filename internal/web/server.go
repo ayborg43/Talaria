@@ -37,6 +37,7 @@ import (
 	"talaria/internal/gateway/chat"
 	"talaria/internal/mailbox"
 	"talaria/internal/provider"
+	"talaria/internal/routing"
 	"talaria/internal/x"
 )
 
@@ -190,6 +191,10 @@ type Server struct {
 	AGUIKey string
 	// Browsers lists the browsers the agent has started, for taking control of a tab. Nil offers none.
 	Browsers func() []*browser.Manager
+	// Learn is what has been learned about which model suits which kind of message, from how replies were received. Router
+	// holds the choices that steer it. Nil leaves learning out.
+	Learn  *routing.Store
+	Router *chat.RouterBox
 	// Health is what the fallback chains have learned about each model, for Settings. Nil shows none.
 	Health *provider.Health
 	// Phone is the link to the user's phone, which the agent's phone tools use. Nil leaves the door shut.
@@ -279,6 +284,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/computer/transfer", s.authed(s.computerTransfer))
 	mux.HandleFunc("GET /api/browser", s.authed(s.browserTabs))
 	mux.HandleFunc("GET /api/browser/shot", s.authed(s.browserShot))
+	mux.HandleFunc("POST /api/feedback", s.authed(s.feedback))
+	mux.HandleFunc("POST /api/retry", s.authed(s.retry))
+	mux.HandleFunc("GET /api/routing", s.authed(s.routingGet))
+	mux.HandleFunc("POST /api/routing", s.authed(s.routingPost))
 	mux.HandleFunc("GET /api/phone", s.authed(s.phoneStatus))
 	mux.HandleFunc("GET /api/phone/link", s.authed(s.phoneLink))
 	mux.HandleFunc("GET /api/browser/live", s.authed(s.browserLive))

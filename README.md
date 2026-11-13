@@ -141,6 +141,28 @@ jobs and helpers); check Meta's model list, as the names change. One optional se
   the variable itself. Keys of this shape (`LLM_<number>_<secret>`) are scrubbed from tool output, history and the log even if
   Talaria was never told them.
 
+### How a model is chosen for each message, and how it learns
+
+When you have not picked a model yourself (and there are two or more set up), Talaria chooses one for every message, and **every reply
+says which model wrote it and why** (under it in the web app and on the phone: "Answered by m-lite · lite: a short, plain message: the cheap
+model"). When a model was not working and the work moved to a fallback, it is the fallback that is named.
+
+1. **Rules, always.** A code fence, a very long conversation (60,000 characters or more, to a profile marked `long`), code words, hard-thinking words, or a short
+   plain message (to a profile marked `cheap`). Nothing else is needed for this to work.
+2. **Smart routing, optional** (`routing.smart`, Settings → AI models → How Talaria chooses a model). A small model (`routing.profile`; left out, one marked cheap, else the default)
+   labels the message `code`, `hard`, `simple`, `writing` or `general`, with a 2.5-second limit: a slow or failed answer just means the rules decide, so it can add
+   a short wait but never fail a reply. A message with a code fence is never sent for labelling, nor is one on a model you chose, and the same text is not labelled twice.
+   It costs one small call per message, which is why it is off until you turn it on.
+3. **Learning** (`routing.learn`, on by default). How each reply was received is counted against the model that wrote it and the kind of message it answered:
+   a thumbs up or down, **Try a stronger model** (counted against the model sent back), a next message that opens with "no", "wrong" or "try again", and plain carrying on (a weak good sign).
+   Once a model has enough evidence on a kind of message (about five clear signals) and is clearly better than what the rules would pick, it takes over for that kind;
+   with little data nothing changes. A little exploring (about 6% of short and ordinary messages) lets a model that was never tried be tried. The counts are in `~/.talaria/routing.json`;
+   **Forget what it learned** in Settings empties them.
+4. **Try a stronger model** (under the latest reply) asks again, replacing the answer: the answer it replaces is also dropped from what the agent remembers. The model comes from
+   `Escalate`: one that reasons, else one marked `code`, else the default, else any other that is working. A model that failed a moment ago is never chosen by the router.
+
+A model you choose yourself always wins, and routing then only tunes the thinking effort. Pictures in a message do not yet steer the choice.
+
 ### Itera Compute and NVIDIA
 
 Both are OpenAI-compatible, so they are `openai` profiles with their own address, and both are one-click presets in

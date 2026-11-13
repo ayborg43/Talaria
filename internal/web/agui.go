@@ -74,6 +74,9 @@ func (s *Server) accept(text string, alsoTelegram bool) {
 		name = strings.ToLower(strings.TrimPrefix(strings.Fields(text)[0], "/"))
 	}
 	if name == "" || !s.Engine.HasCommand(name) { // a command is not part of the conversation
+		if name == "" {
+			s.noteReception(text) // how the last reply was received: the next message shows it
+		}
 		s.Hub.AddUser(text)
 	}
 	if name == "new" { // the open conversation is kept, and a blank one starts

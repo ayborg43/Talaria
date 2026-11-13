@@ -123,7 +123,7 @@ private val starters = listOf(
 /** One line of the conversation as it is drawn: a message, or the day it began. */
 private sealed interface Row {
     data class Day(val label: String, val key: String) : Row
-    data class Msg(val m: Message, val startsReply: Boolean, val endsReply: Boolean) : Row
+    data class Msg(val m: Message, val startsReply: Boolean, val endsReply: Boolean, val latest: Boolean = false) : Row
 }
 
 private fun dayLabel(at: String): Pair<LocalDate, String>? {
@@ -145,7 +145,7 @@ private fun rowsOf(messages: List<Message>): List<Row> {
         dayLabel(m.at)?.let { (d, label) -> if (d != lastDay) { out += Row.Day(label, "day-$d"); lastDay = d } }
         val prev = messages.getOrNull(i - 1)?.role
         val next = messages.getOrNull(i + 1)?.role
-        out += Row.Msg(m, startsReply = m.role == "assistant" && prev != "assistant", endsReply = m.role == "assistant" && next != "assistant")
+        out += Row.Msg(m, startsReply = m.role == "assistant" && prev != "assistant", endsReply = m.role == "assistant" && next != "assistant", latest = i == messages.lastIndex)
     }
     return out
 }
@@ -288,7 +288,7 @@ fun ChatScreen(
                             Box(Modifier.widthIn(max = 720.dp).fillMaxWidth()) {
                                 when (r) {
                                     is Row.Day -> Text(r.label, Modifier.fillMaxWidth().padding(vertical = 10.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
-                                    is Row.Msg -> MessageItem(r.m, repo, r.endsReply, onOpenBrowser, onError = { sendError = it })
+                                    is Row.Msg -> MessageItem(r.m, repo, r.endsReply, r.latest, onOpenBrowser, onError = { sendError = it })
                                 }
                             }
                         }
@@ -394,7 +394,7 @@ private fun TypingRow() {
 private fun Modifier.offsetY(dp: Float): Modifier = this.graphicsLayer { translationY = dp.dp.toPx() }
 
 @Composable
-private fun MessageItem(m: Message, repo: Repo, endsReply: Boolean, onOpenBrowser: () -> Unit, onError: (String) -> Unit) {
+private fun MessageItem(m: Message, repo: Repo, endsReply: Boolean, latest: Boolean, onOpenBrowser: () -> Unit, onError: (String) -> Unit) {
     when (m.role) {
         "user" -> if (UPLOADED.matches(m.text)) Attachment(m.text, repo, onError) else Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
             Surface(Modifier.widthIn(max = 560.dp), color = MaterialTheme.extra.bubble, shape = RoundedCornerShape(24.dp, 24.dp, 8.dp, 24.dp)) {
@@ -403,7 +403,7 @@ private fun MessageItem(m: Message, repo: Repo, endsReply: Boolean, onOpenBrowse
         }
         "assistant" -> Column(Modifier.fillMaxWidth().padding(end = 8.dp)) {
             SelectionContainer { Markdown(m.text) }
-            if (endsReply) CopyRow(m.text)
+            if (endsReply) ReplyRow(m, repo, latest, onError)
         }
         "tool" -> if (m.url.isNotBlank()) Handoff(m, onOpenBrowser) else {
             val art = remember(m.artifact) { app.talaria.ui.Artifact.of(m.artifact) }
@@ -438,6 +438,41 @@ private fun Attachment(text: String, repo: Repo, onError: (String) -> Unit) {
                     Text("Sent · tap to open", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+        }
+    }
+}
+
+/** Under a reply: copy, thumbs, which model wrote it and why, and (on the latest) a way to ask again on a stronger one. */
+@Composable
+private fun ReplyRow(m: Message, repo: Repo, latest: Boolean, onError: (String) -> Unit) {
+    val scope = rememberCoroutineScope()
+    val haptics = rememberHaptics()
+    val x = MaterialTheme.extra
+    var asking by remember(m.id) { mutableStateOf(false) }
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CopyRow(m.text)
+            if (m.profile.isNotBlank()) {
+                for ((v, icon, label) in listOf(Triple("up", Ti.ThumbUp, "Good answer"), Triple("down", Ti.ThumbDown, "Poor answer"))) {
+                    val on = m.vote == v
+                    IconButton(onClick = { haptics.tick(); scope.launch { runCatching { repo.vote(m.id, if (on) "" else v) }.onFailure { onError(it.message ?: "That could not be saved.") } } }, Modifier.size(40.dp).semantics { contentDescription = label + if (on) ", chosen" else "" }) {
+                        Icon(icon, null, Modifier.size(18.dp), tint = if (on) x.brassText else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (latest) {
+                    app.talaria.ui.components.TextButton(enabled = !asking, onClick = {
+                        asking = true
+                        scope.launch {
+                            runCatching { repo.retry(m.id) }.onSuccess { repo.toast("Trying again on $it…") }.onFailure { onError(it.message ?: "That could not be tried again."); asking = false }
+                        }
+                    }) { Icon(Ti.Refresh, null, Modifier.size(16.dp)); Text("  Try a stronger model") }
+                }
+            }
+        }
+        if (m.profile.isNotBlank()) {
+            val name = if (m.model.isNotBlank() && m.model != m.profile) "${m.model} · ${m.profile}" else m.profile
+            Text("Answered by $name", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (m.why.isNotBlank()) Text(m.why, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f))
         }
     }
 }

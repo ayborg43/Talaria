@@ -21,6 +21,13 @@ data class Message(
     val token: String = "",
     val always: Boolean = false,
     val url: String = "",
+    // An assistant reply says which model wrote it, what the router took the message for, and why that model was chosen.
+    val profile: String = "",
+    val model: String = "",
+    val kind: String = "",
+    val why: String = "",
+    /** What you said of it: "up", "down", or "". */
+    val vote: String = "",
 )
 
 @Serializable
