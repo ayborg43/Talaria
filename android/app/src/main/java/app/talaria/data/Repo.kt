@@ -197,6 +197,7 @@ class Repo(context: Context) {
                 _conn.value = Conn.Online
                 backoff = 1000
                 announceWaiting(st.messages)
+                scope.launch { runCatching { flushOutbox() } } // what was written while offline goes now
                 scope.launch { runCatching { refreshChats() } }
                 // Pausing is not announced on the event stream, so it is looked at now and then.
                 coroutineScope {
@@ -307,7 +308,60 @@ class Repo(context: Context) {
         return (AppJson.parseToJsonElement(out) as? kotlinx.serialization.json.JsonObject)?.get("profile")?.let { (it as? JsonPrimitive)?.content }.orEmpty()
     }
 
-    suspend fun send(text: String) { api.postJson("/api/send", buildJsonObject { put("text", text) }) }
+    // ---- messages written while the server cannot be reached ----
+
+    /** Written, not yet delivered: shown in the chat as waiting. Each carries an id, so one that is sent again after the connection dropped is taken once. */
+    data class Outgoing(val cid: String, val base: String, val text: String, val at: Long)
+
+    private val _outbox = MutableStateFlow(loadOutbox())
+    val outbox: StateFlow<List<Outgoing>> = _outbox.asStateFlow()
+    private val outboxLock = kotlinx.coroutines.sync.Mutex()
+
+    private fun loadOutbox(): List<Outgoing> = runCatching {
+        val a = org.json.JSONArray(store.outbox)
+        (0 until a.length()).map { a.getJSONObject(it).let { o -> Outgoing(o.getString("cid"), o.getString("base"), o.getString("text"), o.getLong("at")) } }
+    }.getOrDefault(emptyList())
+
+    private fun saveOutbox(list: List<Outgoing>) {
+        _outbox.value = list
+        store.outbox = org.json.JSONArray().also { a -> list.forEach { a.put(org.json.JSONObject().put("cid", it.cid).put("base", it.base).put("text", it.text).put("at", it.at)) } }.toString()
+    }
+
+    /** The connection failed, as opposed to the server saying no: worth keeping the message for later. */
+    private fun cameBackNothing(e: Exception) = e is IOException && e !is ApiException && e !is AuthLost
+
+    /** Sends a message. If the server cannot be reached it is kept and sent when the connection is back, and this returns as if it had gone. */
+    suspend fun send(text: String) {
+        val o = Outgoing(java.util.UUID.randomUUID().toString(), store.baseUrl, text, System.currentTimeMillis())
+        try { post(o) }
+        catch (e: Exception) {
+            if (!cameBackNothing(e)) throw e
+            saveOutbox(_outbox.value + o)
+        }
+    }
+
+    private suspend fun post(o: Outgoing) { api.postJson("/api/send", buildJsonObject { put("text", o.text); put("cid", o.cid) }) }
+
+    /** Takes back a message that is still waiting. */
+    fun discardWaiting(cid: String) { saveOutbox(_outbox.value.filter { it.cid != cid }) }
+
+    /** Sends what was written while offline, oldest first, stopping at the first that cannot go. */
+    suspend fun flushOutbox() {
+        if (!outboxLock.tryLock()) return
+        try {
+            while (true) {
+                val next = _outbox.value.firstOrNull { it.base == store.baseUrl } ?: return
+                try { post(next); saveOutbox(_outbox.value.filter { it.cid != next.cid }) }
+                catch (e: Exception) {
+                    if (cameBackNothing(e)) return
+                    // the server refused it (too long, say) or the session ended: it will not get better by waiting
+                    saveOutbox(_outbox.value.filter { it.cid != next.cid })
+                    if (e !is AuthLost) toast("A message could not be sent: " + (e.message ?: "the server refused it"))
+                    if (e is AuthLost) return
+                }
+            }
+        } finally { outboxLock.unlock() }
+    }
 
     /** Answers an approval: choice is allow, always or deny. */
     suspend fun decide(token: String, choice: String) {

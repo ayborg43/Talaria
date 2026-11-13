@@ -120,6 +120,14 @@ type Routing struct {
 	Learn *bool `json:"learn,omitempty"`
 }
 
+// DocSearch is the full-text search the agent has over the person's own files and notes. What Talaria keeps (uploads,
+// documents it made) and its notes are always searchable; Folders adds places on this machine, read only.
+type DocSearch struct {
+	Folders []string `json:"folders,omitempty"`
+	// Off turns the search off altogether.
+	Off bool `json:"off,omitempty"`
+}
+
 // Learning reports whether routing learns from how replies were received.
 func (r Routing) Learning() bool { return r.Learn == nil || *r.Learn }
 
@@ -440,7 +448,9 @@ type Config struct {
 	RoutineProfile string             `json:"routine_profile,omitempty"`
 	Profiles       map[string]Profile `json:"profiles,omitempty"`
 	// Routing says how a model is chosen for each message: see Routing.
-	Routing   Routing   `json:"routing,omitzero"`
+	Routing Routing `json:"routing,omitzero"`
+	// DocSearch is what the agent may search of the person's own files: see DocSearch.
+	DocSearch DocSearch `json:"docsearch,omitzero"`
 	Telegram  Telegram  `json:"telegram,omitzero"`
 	Discord   Discord   `json:"discord,omitzero"`
 	X         X         `json:"x,omitzero"`

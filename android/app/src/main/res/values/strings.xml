@@ -5,6 +5,8 @@
     <string name="shortcut_talk_long">Talk with Talaria</string>
     <string name="shortcut_new">New chat</string>
     <string name="shortcut_new_long">Start a new chat</string>
+    <string name="shortcut_photo">Ask about a photo</string>
+    <string name="shortcut_photo_long">Take a photo and ask about it</string>
     <string name="shortcut_approvals">Approvals</string>
     <string name="shortcut_approvals_long">See what needs your answer</string>
     <string name="tile_label">Talk</string>

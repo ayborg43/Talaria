@@ -161,7 +161,32 @@ model"). When a model was not working and the work moved to a fallback, it is th
 4. **Try a stronger model** (under the latest reply) asks again, replacing the answer: the answer it replaces is also dropped from what the agent remembers. The model comes from
    `Escalate`: one that reasons, else one marked `code`, else the default, else any other that is working. A model that failed a moment ago is never chosen by the router.
 
-A model you choose yourself always wins, and routing then only tunes the thinking effort. Pictures in a message do not yet steer the choice.
+A model you choose yourself always wins, and routing then only tunes the thinking effort. **Pictures steer the choice**: a message that names an image ("Uploaded lunch.png", "this screenshot"), or that follows one sent a moment ago, goes to a model that can see pictures (the default is kept when it can; a profile with `"vision": false` is passed over). The kind is `vision` in what it learns.
+
+### Your own test questions
+
+Settings → AI models → **Your test questions** (also on the phone) keeps up to 40 questions you really ask, each with what a good answer must **include**, optionally what it must **not say**, and
+optionally a one-line **rubric** that a second model judges. **Run** puts them to one profile's own model (never its fallback chain, so a failing model is not scored as its backup),
+one at a time in the background, and gives "8 of 10 on your test questions (2.1s on average)" with what each miss was. The last runs are kept per profile (`~/.talaria/evals.json`), the score shows against the
+profile in Settings, and `model_list` tells the agent ("Tested: 8 of 10 ..."), so it can use it when it picks a model for a task. After adding a profile the phone offers to run them on it. A case with nothing to check
+is shown but never counted.
+
+### Search your own files and notes
+
+The agent has `docs_search` and `docs_read` over what you keep: the files Talaria stores (uploads, documents it made; text, Markdown, web pages and PDFs), the notes it holds about you, and folders you name
+(`docsearch.folders`, or Settings → Connections → Search my files and notes, or on the phone). It is a plain full-text index in `~/.talaria/docsearch.db` (SQLite FTS5): disk, not memory, no embeddings and no extra model.
+It is rebuilt at start and every ten minutes, reading only files that changed; files over 2 MB, binaries, symbolic links, anything named like a secret (`.env`, `*.pem`, `*password*`, `.ssh`, `.git`, `node_modules`...) and
+the whole disk are never indexed. It only reads, and what it returns counts as outside content. `docsearch.off` turns it off.
+
+### When something happens on your phone
+
+The Android app can tell the agent when its **battery drops to a level**, the **charger is plugged in or out**, it **joins a Wi-Fi network** or **connects to a Bluetooth device**, and the agent then does what you asked, as a
+background job in the web chat (the same results and notifications as a scheduled job). Phone, not geofence: there is no Google location service here, so "when I get home" is "when I join my home Wi-Fi".
+
+- The agent sets one up with `phone_trigger_add` (and lists or removes them): it **asks you first**, shows exactly what it will do ("When the phone joins the Wi-Fi network "Home": tell me what is on my calendar"), counts as leaving something behind
+  that acts later (so it asks even after reading outside content), and the job runs with nobody to approve anything, so it can read and tell but not send, post or delete. At most 10; one trigger fires once per 30 minutes.
+- The phone must switch on **Events from this phone** (Settings → Your phone). The list goes down the phone link, the phone watches only while something is asked for, and reports only that it happened plus the network or device name, which is quoted to the agent and never followed.
+- Events are delivered while the phone is linked; one that happens while it is offline is not queued. You can see and remove triggers on the phone (and `GET`/`POST /api/triggers`).
 
 ### Itera Compute and NVIDIA
 

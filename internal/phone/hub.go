@@ -21,10 +21,11 @@ const (
 	OpContacts      = "contacts"      // look someone up by name
 	OpCalendar      = "calendar"      // the phone's own calendars, for the next few days
 	OpNotifications = "notifications" // what is showing in the notification shade
+	OpTriggers      = "triggers"      // the phone may tell the agent when something happens on it (battery, charger, Wi-Fi, Bluetooth)
 )
 
 // Ops lists every operation, in the order the phone's settings show them.
-var Ops = []string{OpStatus, OpLocation, OpContacts, OpCalendar, OpNotifications}
+var Ops = []string{OpStatus, OpLocation, OpContacts, OpCalendar, OpNotifications, OpTriggers}
 
 // ErrNotConnected is what a tool gets when no phone is linked.
 var ErrNotConnected = errors.New("the phone is not connected. Talaria on the phone keeps a link while its alerts are on; opening the app brings it back")
@@ -62,9 +63,47 @@ type Hub struct {
 	// CallTimeout is how long the phone has to answer. Zero means 25 seconds (a fresh location fix can take a while).
 	CallTimeout time.Duration
 
+	// Triggers, if set, lists what the phone should watch for; it is sent when the phone links and when it changes.
+	// OnEvent is told when the phone reports that one of them happened.
+	Triggers func() []Spec
+	OnEvent  func(id string, data json.RawMessage)
+
 	mu     sync.Mutex
 	cur    *Link
 	joined chan struct{} // closed, and replaced, each time a phone links
+}
+
+// Spec is one thing for the phone to watch for.
+type Spec struct {
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	Match string `json:"match,omitempty"`
+	Level int    `json:"level,omitempty"`
+}
+
+// PushTriggers sends the phone the current list, if it has allowed events. Call it after a trigger is added or removed.
+func (h *Hub) PushTriggers() {
+	h.mu.Lock()
+	l := h.cur
+	h.mu.Unlock()
+	if l != nil {
+		l.sendTriggers()
+	}
+}
+
+func (l *Link) sendTriggers() {
+	l.mu.Lock()
+	ok := slices.Contains(l.info.Caps, OpTriggers)
+	l.mu.Unlock()
+	if !ok || l.h.Triggers == nil {
+		return
+	}
+	list := l.h.Triggers()
+	if list == nil {
+		list = []Spec{}
+	}
+	msg, _ := json.Marshal(map[string]any{"t": "triggers", "list": list})
+	l.conn.Send(msg)
 }
 
 // NewHub makes a hub with no phone.
@@ -127,6 +166,7 @@ type incoming struct {
 	T     string          `json:"t"`
 	ID    uint64          `json:"id"`
 	Name  string          `json:"name"`
+	Trig  string          `json:"trigger"`
 	Caps  []string        `json:"caps"`
 	OK    bool            `json:"ok"`
 	Data  json.RawMessage `json:"data"`
@@ -140,25 +180,35 @@ func (l *Link) Receive(raw []byte) {
 		return
 	}
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	l.info.LastSeen = time.Now()
+	push := false
 	switch m.T {
+	case "event":
+		l.mu.Unlock()
+		if m.Trig != "" && l.h.OnEvent != nil {
+			go l.h.OnEvent(m.Trig, m.Data)
+		}
+		return
 	case "hello":
 		if len(m.Name) > 80 {
 			m.Name = m.Name[:80]
 		}
 		l.info.Name = m.Name
 		l.info.Caps = known(m.Caps)
+		push = true
 		select {
 		case <-l.ready:
 		default:
 			close(l.ready)
 		}
 	case "caps":
+		had := slices.Contains(l.info.Caps, OpTriggers)
 		l.info.Caps = known(m.Caps)
+		push = !had && slices.Contains(l.info.Caps, OpTriggers)
 	case "res":
 		ch, ok := l.wait[m.ID]
 		if !ok {
+			l.mu.Unlock()
 			return
 		}
 		delete(l.wait, m.ID)
@@ -167,6 +217,10 @@ func (l *Link) Receive(raw []byte) {
 		} else {
 			ch <- reply{err: m.Error}
 		}
+	}
+	l.mu.Unlock()
+	if push {
+		l.sendTriggers() // what to watch for goes down once the phone has said what it allows
 	}
 }
 

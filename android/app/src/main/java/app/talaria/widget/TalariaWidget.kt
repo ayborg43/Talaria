@@ -58,6 +58,7 @@ object Widget {
         v.setTextColor(R.id.widget_status, ctx.getColor(fg))
         v.setOnClickPendingIntent(R.id.widget_root, tap(ctx, 10, null))
         v.setOnClickPendingIntent(R.id.widget_ask, tap(ctx, 11, QuickAction.Ask))
+        v.setOnClickPendingIntent(R.id.widget_photo, tap(ctx, 14, QuickAction.Photo))
         v.setOnClickPendingIntent(R.id.widget_new, tap(ctx, 12, QuickAction.NewChat))
         v.setOnClickPendingIntent(R.id.widget_talk, tap(ctx, 13, QuickAction.Talk))
         v.setOnClickPendingIntent(R.id.widget_status, tap(ctx, 14, if (s.pending > 0) QuickAction.Approvals else null))

@@ -22,6 +22,7 @@ type ModelInfo struct {
 	Routine   bool     // what scheduled reminders and briefs use
 	Fallbacks []string // tried in this order when it is not working
 	Problem   string   // why it cannot be used or is failing now; empty when it works
+	Tested    string   // how it did on the person's own test questions, if they were run
 }
 
 // SetModels lets the agent list the models it can give a task to. The gateway sets it once the profiles are known.
@@ -67,6 +68,9 @@ func registerModelTool(r *tool.Registry, list func() []ModelInfo) {
 				}
 				if m.Problem != "" {
 					fmt.Fprintf(&b, ". NOT WORKING NOW: %s", m.Problem)
+				}
+				if m.Tested != "" {
+					fmt.Fprintf(&b, ". Tested: %s", m.Tested)
 				}
 				if len(m.Fallbacks) > 0 {
 					fmt.Fprintf(&b, ". If it fails: %s", strings.Join(m.Fallbacks, ", then "))

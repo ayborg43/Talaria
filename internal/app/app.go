@@ -17,6 +17,7 @@ import (
 	"talaria/internal/calendar"
 	"talaria/internal/choice"
 	"talaria/internal/cron"
+	"talaria/internal/docsearch"
 	"talaria/internal/execenv"
 	"talaria/internal/files"
 	"talaria/internal/goal"
@@ -31,6 +32,7 @@ import (
 	"talaria/internal/skill"
 	"talaria/internal/subagent"
 	"talaria/internal/tool"
+	"talaria/internal/trigger"
 	"talaria/internal/watch"
 	"talaria/internal/x"
 )
@@ -135,7 +137,9 @@ func HomeDir(getenv func(string) string) (string, error) {
 type Runtime struct {
 	Cron *cron.Store // scheduled jobs
 
-	models func() []ModelInfo // the models a task can be given; set by the gateway
+	models   func() []ModelInfo // the models a task can be given; set by the gateway
+	triggers *trigger.Store     // what the phone may tell the agent about; set by the gateway
+	docs     *docsearch.Index   // search over the person's files and notes; set by the gateway
 
 	cfg      Config
 	provider provider.Provider
@@ -372,6 +376,15 @@ func (rt *Runtime) fileSender(gateway string) files.FileSender {
 	defer rt.fileMu.Unlock()
 	return rt.fileSend[gateway]
 }
+
+// SetTriggers lets the agent set up "when this happens on my phone, do that".
+func (rt *Runtime) SetTriggers(s *trigger.Store) { rt.triggers = s }
+
+// SetDocs gives agents a search over the person's own files and notes.
+func (rt *Runtime) SetDocs(ix *docsearch.Index) { rt.docs = ix }
+
+// Files is the store of files Talaria keeps for the person, nil when there is none.
+func (rt *Runtime) Files() *files.Store { return rt.cfg.Files }
 
 // SetHelpers lets the main agent give subagents other models than its own, for tasks one suits better.
 func (rt *Runtime) SetHelpers(list func() []subagent.Helper) {

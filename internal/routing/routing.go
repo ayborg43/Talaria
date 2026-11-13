@@ -26,11 +26,12 @@ const (
 	Simple  Kind = "simple"  // short and plain
 	Writing Kind = "writing" // drafting and rewording
 	Long    Kind = "long"    // a very long conversation or document
+	Vision  Kind = "vision"  // a message about a picture, which needs a model that can see
 	General Kind = "general" // anything else
 )
 
 // Kinds lists them in the order they are shown.
-var Kinds = []Kind{Code, Hard, Simple, Writing, Long, General}
+var Kinds = []Kind{Vision, Code, Hard, Simple, Writing, Long, General}
 
 // Valid says whether k is one of them.
 func Valid(k Kind) bool { return slices.Contains(Kinds, k) }
@@ -67,6 +68,11 @@ func KindOf(text string) Kind {
 	}
 	return General
 }
+
+var pictureRef = regexp.MustCompile(`(?i)(uploaded [^\n]*\.(png|jpe?g|gif|webp|heic|bmp)\b|/api/files/[0-9a-f]+[^\s]*\.(png|jpe?g|gif|webp)\b|\b(this|the|attached|that) (photo|picture|image|screenshot)\b)`)
+
+// MentionsPicture says whether a piece of text is about a picture: an image file that was sent, or "this screenshot".
+func MentionsPicture(text string) bool { return pictureRef.MatchString(text) }
 
 // IsCorrection says whether a message opens by saying the last reply was wrong.
 func IsCorrection(text string) bool { return correction.MatchString(text) }

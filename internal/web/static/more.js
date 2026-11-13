@@ -1710,6 +1710,80 @@ function routineCard(s) {
     h('div', { class: 'field-note', text: 'Reminders, the morning brief and recipes run by themselves, and rarely need your strongest model. ' + using + ' A job that names its own model keeps it, and background tasks you start use the chat’s model.' }), sel);
 }
 
+// ---------- your own test questions ----------
+// A few questions you really ask, and what a good answer must contain. Run on a model, they give a number (8 of 10) and a
+// list of what it missed, so a new model can be tried before it is trusted with real work.
+function testQuestionsCard(s) {
+  const card = h('div', { class: 'card' }, h('h2', null, 'Your test questions'),
+    h('div', { class: 'field-note', text: 'Write a few questions you actually ask, and what a good answer must contain. Run them on any model to see how it does before you trust it with real work. A run costs a few small requests.' }));
+  const body = h('div');
+  card.append(body);
+  let timer = null;
+  const load = async () => {
+    let r;
+    try { r = await api('/api/evals'); } catch (e) { failed(e); return; }
+    clearTimeout(timer);
+    if (r.running) timer = setTimeout(load, 2500);
+    const post = async (b) => { try { await api('/api/evals', { method: 'POST', body: b }); } catch (e) { failed(e); } load(); };
+    const list = h('div', { class: 'rows' });
+    for (const c of r.cases) {
+      const checks = [c.expect && c.expect.length ? 'must include ' + c.expect.join(', ') : '', c.avoid && c.avoid.length ? 'must not say ' + c.avoid.join(', ') : '', c.rubric ? 'judged: ' + c.rubric : ''].filter(Boolean).join(' · ');
+      list.append(h('div', { class: 'row' }, h('span', { class: 'grow' }, h('span', { class: 't', text: c.prompt }), h('span', { class: 's', text: checks || 'nothing to check: shown, not scored' })),
+        h('button', { class: 'btn small danger', type: 'button', text: 'Delete', onclick: () => post({ delete: c.id }) })));
+    }
+    const q = h('textarea', { rows: '2', maxlength: '2000', placeholder: 'A question you ask', 'aria-label': 'A question you ask' });
+    const exp = h('input', { type: 'text', placeholder: 'The answer must include (commas between several)', 'aria-label': 'The answer must include' });
+    const avoid = h('input', { type: 'text', placeholder: 'It must not say (optional)', 'aria-label': 'It must not say' });
+    const split = (v) => v.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+    const add = h('button', { class: 'btn primary', type: 'button', text: 'Add question', onclick: () => { if (q.value.trim()) post({ add: { prompt: q.value, expect: split(exp.value), avoid: split(avoid.value) } }); } });
+    const runs = h('div', { class: 'rows' });
+    if (r.cases.length) {
+      for (const p of r.profiles) {
+        const last = r.runs.find((x) => x.profile === p);
+        runs.append(h('div', { class: 'row' }, h('span', { class: 'grow' }, h('span', { class: 't', text: p }),
+          h('span', { class: 's', text: last ? (last.counted ? last.passed + ' of ' + last.counted + ' · ' + (last.avgMs / 1000).toFixed(1) + 's on average' : 'ran, nothing to score') : 'not tested yet' })),
+          last ? h('button', { class: 'btn small', type: 'button', text: 'Details', onclick: () => alert(last.results.map((x) => (x.unchecked ? '– ' : x.pass ? '✓ ' : '✗ ') + x.prompt + (x.missed && x.missed.length ? '\n    ' + x.missed.join('\n    ') : '')).join('\n\n')) }) : null,
+          h('button', { class: 'btn small', type: 'button', text: 'Run', disabled: r.running ? '' : null, onclick: () => post({ run: p }) })));
+      }
+    }
+    body.replaceChildren(
+      r.cases.length ? list : h('div', { class: 'field-note', text: 'No questions yet.' }),
+      h('div', { class: 'field' }, q, exp, avoid, add),
+      r.cases.length ? h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'How each model did' }), runs) : null,
+      r.running ? h('div', { class: 'field-note', role: 'status', text: 'Testing ' + r.running + '… ' + r.done + ' of ' + r.total }) : null,
+      r.failed ? h('div', { class: 'note', text: r.failed }) : null);
+  };
+  load();
+  return card;
+}
+
+// ---------- search your own files and notes ----------
+function docsCard() {
+  const card = h('div', { class: 'card' }, h('h2', null, 'Search my files and notes'),
+    h('div', { class: 'field-note', text: 'Talaria can search the files it keeps, its notes about you, and folders on this machine that you name, when you ask about them. It keeps a plain text index on disk (no memory cost) and only reads. Places that hold secrets are never indexed.' }));
+  const body = h('div');
+  card.append(body);
+  const load = async () => {
+    let r;
+    try { r = await api('/api/docs'); } catch (e) { failed(e); return; }
+    if (!r.enabled) { body.replaceChildren(h('div', { class: 'field-note', text: 'Search is switched off on this server.' })); return; }
+    const save = async (b) => { try { await api('/api/docs', { method: 'POST', body: b }); } catch (e) { failed(e); } load(); };
+    const input = h('input', { type: 'text', placeholder: '/home/you/Notes', 'aria-label': 'A folder on this machine', autocomplete: 'off' });
+    const rows = h('div', { class: 'rows' });
+    for (const f of r.folders) rows.append(h('div', { class: 'row' }, h('span', { class: 'grow', text: f }), h('button', { class: 'btn small danger', type: 'button', text: 'Remove', onclick: () => save({ folders: r.folders.filter((x) => x !== f) }) })));
+    const st = r.status || {};
+    body.replaceChildren(
+      h('div', { class: 'field-note', text: (st.files || 0) + ' files kept · ' + (st.folders || 0) + ' in your folders · notes ' + (st.notes ? 'yes' : 'none yet') + (st.skipped ? ' · ' + st.skipped + ' left out' : '') }),
+      st.error ? h('div', { class: 'note', text: st.error }) : null,
+      r.folders.length ? rows : h('div', { class: 'field-note', text: 'No folders added.' }),
+      h('div', { class: 'field' }, input,
+        h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Add folder', onclick: () => { if (input.value.trim()) save({ folders: [...r.folders, input.value.trim()] }); } }),
+          h('button', { class: 'btn', type: 'button', text: 'Look again now', onclick: () => save({ reindex: true }) }))));
+  };
+  load();
+  return card;
+}
+
 // ---------- how a model is chosen for each message ----------
 // The keyword rules always apply. Smart routing adds a small model that labels each message; learning counts how replies
 // were received (thumbs, a retry, a correction, carrying on) and lets a clearly better model take over for that kind.

@@ -9,4 +9,7 @@
     <shortcut android:shortcutId="approvals" android:enabled="true" android:icon="@drawable/ic_shortcut_approvals" android:shortcutShortLabel="@string/shortcut_approvals" android:shortcutLongLabel="@string/shortcut_approvals_long">
         <intent android:action="app.talaria.action.APPROVALS" android:targetPackage="app.talaria" android:targetClass="app.talaria.MainActivity" />
     </shortcut>
+    <shortcut android:shortcutId="photo" android:enabled="true" android:icon="@drawable/ic_shortcut_photo" android:shortcutShortLabel="@string/shortcut_photo" android:shortcutLongLabel="@string/shortcut_photo_long">
+        <intent android:action="app.talaria.action.PHOTO" android:targetPackage="app.talaria" android:targetClass="app.talaria.MainActivity" />
+    </shortcut>
 </shortcuts>

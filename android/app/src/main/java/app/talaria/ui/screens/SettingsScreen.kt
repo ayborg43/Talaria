@@ -91,6 +91,7 @@ fun SettingsScreen(activity: AppCompatActivity, repo: Repo, voice: VoiceControll
         "rules" -> RulesScreen(repo, onBack = { sub = null }, modifier = modifier)
         "voice" -> VoiceSetupScreen(repo, onBack = { sub = null }, modifier = modifier)
         "memory" -> MemoryScreen(repo, onBack = { sub = null }, modifier = modifier)
+        "files" -> FilesSearchScreen(repo, onBack = { sub = null }, modifier = modifier)
         "models" -> ModelsScreen(repo, onBack = { sub = null }, modifier = modifier)
         "phone" -> PhoneAccessScreen(activity, repo, onBack = { sub = null }, modifier = modifier)
         else -> SettingsHome(activity, repo, modifier, onOpen = { sub = it }, onAskNotifications = onAskNotifications)
@@ -171,6 +172,8 @@ private fun SettingsHome(activity: AppCompatActivity, repo: Repo, modifier: Modi
                 SectionTitle("The agent")
                 Panel(Modifier.fillMaxWidth()) {
                     Column {
+                        LinkRow("Search my files and notes", "Let Talaria look through your documents, uploads and notes when you ask about them.", onClick = { onOpen("files") })
+                        HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                         LinkRow("AI models", "Add keys for the services you use, say what each model is for, and choose what to try when one stops working.", onClick = { onOpen("models") })
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                         BriefRow(repo)

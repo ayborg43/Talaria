@@ -178,3 +178,65 @@ func TestARetryForgetsTheAnswerItReplacesAndPinsOneProfileForOneTask(t *testing.
 		t.Error("a retry with one model should say so")
 	}
 }
+
+func pictureEngine(mainSees bool) *Engine {
+	open := func(name string) (Backend, error) {
+		switch name {
+		case "main":
+			return Backend{Model: "m-main", Vision: mainSees}, nil
+		case "eye":
+			return Backend{Model: "m-eye", Vision: true}, nil
+		case "lite":
+			return Backend{Model: "m-lite", Best: []string{"cheap"}}, nil // cheap, and blind
+		}
+		return Backend{}, errors.New("no profile named " + name)
+	}
+	return &Engine{Backends: &Backends{Default: "main", Names: []string{"eye", "lite", "main"}, Open: open}}
+}
+
+func TestAMessageAboutAPictureReachesAModelThatCanSee(t *testing.T) {
+	e := pictureEngine(false) // the default is blind
+	c := &chat{id: 1}
+	d := e.decide(c, "what is this? Uploaded receipt.jpg — /api/files/abc123", "")
+	if d.name != "eye" || d.kind != routing.Vision || !strings.Contains(d.why, "pictures") {
+		t.Fatalf("%+v", d)
+	}
+	// short and plain would have gone to the cheap model, which cannot see: the picture wins
+	if d := e.decide(c, "describe this photo", ""); d.name != "eye" {
+		t.Errorf("a short message about a photo: %+v", d)
+	}
+	// the message after an upload follows the picture too, with no words about it
+	c.agent = &agent.Agent{System: "s"}
+	c.agent.Restore([]provider.Message{{Role: provider.RoleUser, Content: "Uploaded lunch.png — /api/files/ff00"}, {Role: provider.RoleAssistant, Content: "I see it"}})
+	if d := e.decide(c, "how many calories", ""); d.name != "eye" {
+		t.Errorf("the follow-up: %+v", d)
+	}
+	// with nothing about a picture, the usual rules apply
+	plain := &chat{id: 2}
+	if d := e.decide(plain, "hi", ""); d.name != "lite" {
+		t.Errorf("an ordinary message: %+v", d)
+	}
+}
+
+func TestADefaultThatCanSeeIsKeptForPictures(t *testing.T) {
+	e := pictureEngine(true)
+	d := e.decide(&chat{id: 1}, "what is in this screenshot", "")
+	if d.name != "" || d.kind != routing.Vision || !strings.Contains(d.why, "default model sees") {
+		t.Errorf("%+v", d)
+	}
+	// a model the person chose still wins
+	if d := e.decide(&chat{id: 1}, "what is in this screenshot", "lite"); d.why != "your choice" {
+		t.Errorf("a pinned model: %+v", d)
+	}
+}
+
+func TestMentionsPicture(t *testing.T) {
+	for s, want := range map[string]bool{
+		"Uploaded cat.JPG — /api/files/1a2b": true, "look at this screenshot": true, "the attached image": true, "/api/files/ab12/photo.png": true,
+		"Uploaded notes.pdf — /api/files/1a2b": false, "draw me a picture of a cat": false, "pictures of the week": false,
+	} {
+		if got := routing.MentionsPicture(s); got != want {
+			t.Errorf("%q: %v", s, got)
+		}
+	}
+}

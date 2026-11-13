@@ -79,6 +79,14 @@
             android:textSize="15sp" />
 
         <ImageView
+            android:id="@+id/widget_photo"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:contentDescription="Take a photo and ask about it"
+            android:padding="8dp"
+            android:src="@drawable/ic_widget_camera" />
+
+        <ImageView
             android:id="@+id/widget_new"
             android:layout_width="36dp"
             android:layout_height="36dp"

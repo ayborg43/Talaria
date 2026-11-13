@@ -40,7 +40,9 @@ object Op {
     const val CONTACTS = "contacts"
     const val CALENDAR = "calendar"
     const val NOTIFICATIONS = "notifications"
-    val all = listOf(STATUS, LOCATION, CONTACTS, CALENDAR, NOTIFICATIONS)
+    /** Not a read: the phone tells the agent when something happens on it (battery, charger, Wi-Fi, Bluetooth). */
+    const val TRIGGERS = "triggers"
+    val all = listOf(STATUS, LOCATION, CONTACTS, CALENDAR, NOTIFICATIONS, TRIGGERS)
 }
 
 /** Why a request could not be answered, in words the agent can pass on. */
@@ -76,7 +78,7 @@ object PhoneOps {
             Op.CONTACTS -> contacts(ctx, str(args, "query"))
             Op.CALENDAR -> calendar(ctx, (args["days"] as? JsonPrimitive)?.content?.toIntOrNull()?.coerceIn(1, 14) ?: 2)
             Op.NOTIFICATIONS -> notifications(ctx, str(args, "query"))
-            else -> throw Refused("This phone does not know that request.")
+            else -> throw Refused("This phone does not answer that: it reports events, it is not asked for them.")
         }
     }
 

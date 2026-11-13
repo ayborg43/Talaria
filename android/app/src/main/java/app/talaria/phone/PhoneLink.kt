@@ -58,6 +58,15 @@ class PhoneLink(private val ctx: Context, private val repo: Repo) {
     val log: StateFlow<List<PhoneEvent>> = _log.asStateFlow()
     @Volatile private var socket: WebSocket? = null
 
+    /** The events the agent asked to be told about. They are watched for only while events are switched on and the link is up. */
+    private val triggers: PhoneTriggers = PhoneTriggers(ctx) { id, kind, data ->
+        val ws = socket
+        if (ws != null && Op.TRIGGERS in _ops.value) {
+            send(ws, buildJsonObject { put("t", "event"); put("trigger", id); put("data", data) })
+            record(PhoneEvent(System.currentTimeMillis(), "trigger", true, PhoneTriggers.words(kind, data)))
+        }
+    }
+
     fun start() {
         scope.launch {
             combine(repo.conn, repo.base, _ops) { c, base, o -> Triple(c is Conn.Online, base, o.isNotEmpty()) }
@@ -69,6 +78,7 @@ class PhoneLink(private val ctx: Context, private val repo: Repo) {
     fun setOps(next: Set<String>) {
         repo.store.phoneOps = next
         _ops.value = next
+        if (Op.TRIGGERS !in next) triggers.stop()
         refresh()
     }
 
@@ -98,6 +108,8 @@ class PhoneLink(private val ctx: Context, private val repo: Repo) {
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { closed.complete(Unit) }
             })
             try { closed.await() } finally { ws.cancel(); if (socket === ws) socket = null }
+            // with no link there is no one to tell: stop listening until the server sends the list again
+            triggers.stop()
             _state.value = LinkState.Connecting
             delay(backoff)
             backoff = (backoff * 2).coerceAtMost(30_000L)
@@ -106,6 +118,17 @@ class PhoneLink(private val ctx: Context, private val repo: Repo) {
 
     private fun onRequest(ws: WebSocket, text: String) {
         val m = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
+        if (m["t"]?.jsonPrimitive?.content == "triggers") { // what to watch for, from the server: the whole list each time
+            val list = (m["list"] as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { e ->
+                val o = e as? JsonObject ?: return@mapNotNull null
+                TriggerSpec(
+                    o["id"]?.jsonPrimitive?.content ?: return@mapNotNull null, o["kind"]?.jsonPrimitive?.content ?: return@mapNotNull null,
+                    o["match"]?.jsonPrimitive?.content.orEmpty(), o["level"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
+                )
+            }
+            triggers.set(if (Op.TRIGGERS in _ops.value) list else emptyList())
+            return
+        }
         if (m["t"]?.jsonPrimitive?.content != "req") return
         val id = m["id"]?.jsonPrimitive?.content?.toLongOrNull() ?: return
         val op = m["op"]?.jsonPrimitive?.content.orEmpty()

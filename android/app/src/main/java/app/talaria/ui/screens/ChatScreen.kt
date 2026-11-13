@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -160,6 +161,7 @@ fun ChatScreen(
     onOpenChats: () -> Unit,
     onOpenBrowser: () -> Unit,
     onAttach: () -> Unit,
+    onPhoto: () -> Unit = {},
     externalError: String?,
     onExternalErrorShown: () -> Unit,
     focusSignal: Int = 0,
@@ -182,6 +184,7 @@ fun ChatScreen(
     var sendError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(externalError) { if (externalError != null) { sendError = externalError; onExternalErrorShown() } }
     val list = rememberLazyListState()
+    val waiting by repo.outbox.collectAsState()
     val rows = remember(messages) { rowsOf(messages) }
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -208,9 +211,10 @@ fun ChatScreen(
     LaunchedEffect(list) {
         snapshotFlow { list.isScrollInProgress }.collect { moving -> if (!moving && !programmatic) follow = !list.canScrollForward }
     }
-    LaunchedEffect(rows.size, last?.state, last?.text?.length, typing, running, searching) {
-        val target = rows.size - 1 + if (running || typing) 1 else 0
-        if (searching || target < 0 || !(follow || last?.role == "user")) return@LaunchedEffect
+    val waitingHere = waiting.count { it.base == repo.store.baseUrl }
+    LaunchedEffect(rows.size, last?.state, last?.text?.length, typing, running, searching, waitingHere) {
+        val target = rows.size - 1 + waitingHere + if (running || typing) 1 else 0
+        if (searching || target < 0 || !(follow || last?.role == "user" || waitingHere > 0)) return@LaunchedEffect
         snapshotFlow { list.layoutInfo.totalItemsCount }.first { it > target }
         programmatic = true
         try { list.animateScrollToItem(target); follow = true } finally { programmatic = false }
@@ -275,7 +279,7 @@ fun ChatScreen(
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (messages.isEmpty()) {
+            if (messages.isEmpty() && waiting.isEmpty()) {
                 Starters(profile.name, onPick = { send(it) }, modifier = Modifier.fillMaxSize())
             } else {
                 LazyColumn(
@@ -293,6 +297,7 @@ fun ChatScreen(
                             }
                         }
                     }
+                    if (!searching) items(waiting.filter { it.base == repo.store.baseUrl }, key = { "wait-" + it.cid }) { o -> WaitingRow(o.text, onDiscard = { repo.discardWaiting(o.cid) }) }
                     if ((running || typing) && !searching) item(key = "typing") { TypingRow() }
                     if (searching && query.isNotBlank() && shown.isEmpty()) item(key = "none") { Text("No message here has all of those words.", Modifier.fillMaxWidth().padding(24.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center) }
                 }
@@ -338,7 +343,7 @@ fun ChatScreen(
                     IconButton(onClick = voice::clearNotice, Modifier.size(40.dp)) { Icon(Ti.Close, "Dismiss", Modifier.size(16.dp)) }
                 }
             }
-            Composer(draft, onDraft, onSend = { send(draft) }, voice = voice, enabled = conn is Conn.Online, onAttach = onAttach, uploading = uploading, focusSignal = focusSignal)
+            Composer(draft, onDraft, onSend = { send(draft) }, voice = voice, enabled = conn !is Conn.SignedOut, canAttach = conn is Conn.Online, onAttach = onAttach, onPhoto = onPhoto, uploading = uploading, focusSignal = focusSignal)
         }
     }
 }
@@ -387,6 +392,23 @@ private fun TypingRow() {
         for (i in 0..2) {
             val y by t.animateFloat(0f, -5f, infiniteRepeatable(tween(420, delayMillis = i * 120), RepeatMode.Reverse), label = "d$i")
             Box(Modifier.size(7.dp).offsetY(y).clip(CircleShape).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)))
+        }
+    }
+}
+
+/** A message written while the server could not be reached: shown as sent, but marked, until the connection is back. */
+@Composable
+private fun WaitingRow(text: String, onDiscard: () -> Unit) {
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+        Column(horizontalAlignment = Alignment.End) {
+            Surface(Modifier.widthIn(max = 560.dp).alpha(0.65f), color = MaterialTheme.extra.bubble, shape = RoundedCornerShape(24.dp, 24.dp, 8.dp, 24.dp)) {
+                Text(text, Modifier.padding(horizontal = 16.dp, vertical = 11.dp), style = MaterialTheme.typography.bodyLarge)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Ti.WifiOff, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("  Waiting for a connection", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                app.talaria.ui.components.TextButton(onClick = onDiscard) { Text("Cancel") }
+            }
         }
     }
 }
@@ -584,7 +606,7 @@ private fun Approval(m: Message, repo: Repo, onError: (String) -> Unit) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Composer(draft: String, onDraft: (String) -> Unit, onSend: () -> Unit, voice: VoiceController, enabled: Boolean, onAttach: () -> Unit, uploading: Boolean, focusSignal: Int) {
+private fun Composer(draft: String, onDraft: (String) -> Unit, onSend: () -> Unit, voice: VoiceController, enabled: Boolean, canAttach: Boolean, onAttach: () -> Unit, onPhoto: () -> Unit, uploading: Boolean, focusSignal: Int) {
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
     LaunchedEffect(focusSignal) { if (focusSignal > 0) runCatching { focus.requestFocus() } }
     val canSend = draft.isNotBlank() && enabled
@@ -596,9 +618,16 @@ private fun Composer(draft: String, onDraft: (String) -> Unit, onSend: () -> Uni
             border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
         ) {
             Row(Modifier.padding(start = 6.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.Bottom) {
-                IconButton(onClick = onAttach, enabled = enabled && !uploading, modifier = Modifier.size(44.dp)) {
-                    if (uploading) androidx.compose.material3.CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.extra.brassText)
-                    else Icon(Ti.Plus, "Attach a photo or PDF", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                var menu by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { menu = true }, enabled = canAttach && !uploading, modifier = Modifier.size(44.dp)) {
+                        if (uploading) androidx.compose.material3.CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.extra.brassText)
+                        else Icon(Ti.Plus, "Attach a photo or PDF, or take a photo", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    androidx.compose.material3.DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        androidx.compose.material3.DropdownMenuItem(text = { Text("Take a photo") }, onClick = { menu = false; onPhoto() })
+                        androidx.compose.material3.DropdownMenuItem(text = { Text("Choose a photo or PDF") }, onClick = { menu = false; onAttach() })
+                    }
                 }
                 TextField(
                     value = draft, onValueChange = onDraft, modifier = Modifier.weight(1f).focusRequester(focus),

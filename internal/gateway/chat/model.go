@@ -39,6 +39,9 @@ type Backends struct {
 	// Open returns the backend for a profile. An error says why it cannot be
 	// used right now (a missing API key, say); the gateway shows it to the user.
 	Open func(name string) (Backend, error)
+	// OpenRaw is Open without the fallback chain and without the cache: the profile's own model and nothing else, which is
+	// what a test of that model must ask. It may be nil.
+	OpenRaw func(name string) (Backend, error)
 	// OpenEffort is Open with a reasoning effort ("low" or "high") for models
 	// that think; other models ignore it. It may be nil, and then effort is
 	// whatever the profile says. Backends built without it route without effort.
@@ -392,6 +395,9 @@ func (e *Engine) routerSettings() RouterSettings {
 // model's label when smart routing is on, and the keyword rules otherwise.
 func (e *Engine) kindOf(c *chat, text string, usable []string, be map[string]Backend) (routing.Kind, string) {
 	rule := routing.KindOf(text)
+	if c != nil && e.aboutPicture(c, text) {
+		return routing.Vision, "about a picture"
+	}
 	if strings.Contains(text, "```") {
 		return routing.Code, "has code in it"
 	}
@@ -412,6 +418,28 @@ func (e *Engine) kindOf(c *chat, text string, usable []string, be map[string]Bac
 		return rule, "a short, plain message"
 	}
 	return rule, "an ordinary message"
+}
+
+// aboutPicture says whether this message is about an image: it names one, or an image was sent a moment ago and this
+// message follows it (the model sees the picture through a tool, so the next message is the one that must reach a model that can).
+func (e *Engine) aboutPicture(c *chat, text string) bool {
+	if routing.MentionsPicture(text) {
+		return true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var tr []provider.Message
+	if c.agent != nil {
+		tr = c.agent.Transcript()
+	} else {
+		tr = c.pending
+	}
+	for i, n := len(tr)-1, 0; i >= 0 && n < 6; i, n = i-1, n+1 { // the last few turns
+		if tr[i].Role == provider.RoleUser && routing.MentionsPicture(tr[i].Content) || len(tr[i].Images) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Engine) historySize(c *chat) int {
@@ -522,6 +550,14 @@ func (e *Engine) decide(c *chat, text, pinned string) decision {
 	}
 	var name, rule string
 	switch kind {
+	case routing.Vision:
+		// What matters is that the model can see. The default is kept when it can; only a default that cannot is passed over.
+		if o, ok := be[b.Default]; ok && o.Vision {
+			name = ""
+		} else {
+			name = first(func(n string) bool { return be[n].Vision })
+		}
+		rule = "a model that sees pictures"
 	case routing.Code:
 		name = first(func(n string) bool { return claims(n, "code") })
 		if name == "" {
@@ -542,7 +578,9 @@ func (e *Engine) decide(c *chat, text, pinned string) decision {
 		rule = "a long-context model"
 	}
 	why := how
-	if name != "" {
+	if kind == routing.Vision && name == "" {
+		why = how + ": the default model sees pictures"
+	} else if name != "" {
 		why = how + ": " + rule
 	} else {
 		why = how + ": the default model"
@@ -551,11 +589,15 @@ func (e *Engine) decide(c *chat, text, pinned string) decision {
 	if usual == "" {
 		usual = b.Default
 	}
+	if kind == routing.Vision && name == "" && be[b.Default].Vision == false {
+		// no model can see: nothing to do but say so, the default carries on
+		why = how + ": no model here is marked as seeing pictures"
+	}
 	// What has been learned about how replies were received can overrule the rule, when the record is clear.
 	if s := e.routerSettings(); s.Learn && e.Learn != nil {
 		cands := []string{b.Default}
 		for _, n := range usable {
-			if n != b.Default && (claims(n, string(kind)) || kind == routing.General || kind == routing.Simple) {
+			if n != b.Default && (claims(n, string(kind)) || kind == routing.General || kind == routing.Simple || (kind == routing.Vision && be[n].Vision)) {
 				cands = append(cands, n)
 			}
 		}

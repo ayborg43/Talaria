@@ -87,6 +87,13 @@ class SessionStore(context: Context) : Credentials {
         get() = prefs.getBoolean("speechLocalOnly", true)
         set(v) { prefs.edit().putBoolean("speechLocalOnly", v).apply() }
 
+    // ---- messages that could not be sent yet ----
+
+    /** Messages written while the server could not be reached, as JSON, oldest first. */
+    var outbox: String
+        get() = prefs.getString("outbox", "[]") ?: "[]"
+        set(v) { prefs.edit().putString("outbox", v).apply() }
+
     // ---- alerts ----
 
     /** Approvals already shown as a notification, so a reconnect or a second check never shows one twice. */

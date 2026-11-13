@@ -786,7 +786,7 @@ func gatewayBackends(cfg *config.Config, def config.Resolved, defProvider provid
 	traits := func(name string, r config.Resolved) (vision, reasoning bool, best []string) {
 		return !r.NoVision, provider.Reasons(r.Type), cfg.Profiles[name].BestFor
 	}
-	build := func(name, effort string) (chat.Backend, error) {
+	build := func(name, effort string, chain bool) (chat.Backend, error) {
 		r, err := cfg.Resolve(config.Overrides{Profile: name}, getenv)
 		if err != nil {
 			return chat.Backend{}, err
@@ -802,7 +802,9 @@ func gatewayBackends(cfg *config.Config, def config.Resolved, defProvider provid
 		if err != nil {
 			return chat.Backend{}, err
 		}
-		p = withFallbacks(cfg, getenv, health, log, name, r.Model, p) // a task on any profile moves on when its model is not working
+		if chain {
+			p = withFallbacks(cfg, getenv, health, log, name, r.Model, p) // a task on any profile moves on when its model is not working
+		}
 		vision, reasoning, best := traits(name, r)
 		return chat.Backend{Provider: p, Model: r.Model, Desc: describe(r), Vision: vision, Reasoning: reasoning, Best: best}, nil
 	}
@@ -823,7 +825,7 @@ func gatewayBackends(cfg *config.Config, def config.Resolved, defProvider provid
 			if b, ok := cache[name]; ok {
 				return b, nil
 			}
-			b, err := build(name, "")
+			b, err := build(name, "", true)
 			if err != nil {
 				return chat.Backend{}, err
 			}
@@ -833,8 +835,9 @@ func gatewayBackends(cfg *config.Config, def config.Resolved, defProvider provid
 		OpenEffort: func(name, effort string) (chat.Backend, error) {
 			mu.Lock()
 			defer mu.Unlock()
-			return build(name, effort)
+			return build(name, effort, true)
 		},
+		OpenRaw: func(name string) (chat.Backend, error) { return build(name, "", false) },
 		Forget: func() {
 			mu.Lock()
 			defer mu.Unlock()

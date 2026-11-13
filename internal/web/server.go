@@ -34,10 +34,13 @@ import (
 	"talaria/internal/memory"
 	"talaria/internal/vault"
 
+	"talaria/internal/docsearch"
+	"talaria/internal/evals"
 	"talaria/internal/gateway/chat"
 	"talaria/internal/mailbox"
 	"talaria/internal/provider"
 	"talaria/internal/routing"
+	"talaria/internal/trigger"
 	"talaria/internal/x"
 )
 
@@ -191,6 +194,20 @@ type Server struct {
 	AGUIKey string
 	// Browsers lists the browsers the agent has started, for taking control of a tab. Nil offers none.
 	Browsers func() []*browser.Manager
+	// Evals is the person's own test questions and how each model did on them. Nil leaves them out.
+	Evals   *evals.Store
+	evalRun evalState
+
+	cidMu sync.Mutex
+	cids  []string // the ids of the last messages sent from a phone, so a resend is not a second message
+
+	// Triggers is what the phone has been asked to report and what to do about it. Nil leaves them out.
+	Triggers *trigger.Store
+
+	// Docs is the search over the person's own files and notes, and DocFolders the folders it covers. Nil leaves them out.
+	Docs       *docsearch.Index
+	DocFolders *docsearch.Folders
+
 	// Learn is what has been learned about which model suits which kind of message, from how replies were received. Router
 	// holds the choices that steer it. Nil leaves learning out.
 	Learn  *routing.Store
@@ -284,6 +301,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/computer/transfer", s.authed(s.computerTransfer))
 	mux.HandleFunc("GET /api/browser", s.authed(s.browserTabs))
 	mux.HandleFunc("GET /api/browser/shot", s.authed(s.browserShot))
+	mux.HandleFunc("GET /api/triggers", s.authed(s.triggersGet))
+	mux.HandleFunc("POST /api/triggers", s.authed(s.triggersPost))
+	mux.HandleFunc("GET /api/docs", s.authed(s.docsGet))
+	mux.HandleFunc("POST /api/docs", s.authed(s.docsPost))
+	mux.HandleFunc("GET /api/evals", s.authed(s.evalsGet))
+	mux.HandleFunc("POST /api/evals", s.authed(s.evalsPost))
 	mux.HandleFunc("POST /api/feedback", s.authed(s.feedback))
 	mux.HandleFunc("POST /api/retry", s.authed(s.retry))
 	mux.HandleFunc("GET /api/routing", s.authed(s.routingGet))
@@ -642,7 +665,9 @@ type settingsProfile struct {
 	Fallbacks []string `json:"fallbacks,omitempty"` // this profile's own list of what to try when it is not working
 	// Failing says why the model is not being used right now (a failed call moved the work on to the next one); it
 	// clears by itself after a rest, or when the profile is edited. FailingHard marks one that will not clear on its own.
-	Failing     string `json:"failing,omitempty"`
+	Failing string `json:"failing,omitempty"`
+	// Tested is how the model did on the person's own test questions the last time they were run, in a line.
+	Tested      string `json:"tested,omitempty"`
 	FailingHard bool   `json:"failing_hard,omitempty"`
 }
 
@@ -803,6 +828,9 @@ func (s *Server) settingsGet(w http.ResponseWriter, r *http.Request) {
 		sp := settingsProfile{Name: name, Type: p.Type, BaseURL: p.BaseURL, Model: p.Model, APIKeyEnv: p.APIKeyEnv, Best: p.BestFor, Notes: p.Notes, Fallbacks: p.Fallbacks}
 		if st := s.Health.Get(name); !st.Working && time.Now().Before(st.Until) {
 			sp.Failing, sp.FailingHard = st.Reason, st.Hard
+		}
+		if run, ok := s.Evals.Latest(name); ok && run.Counted > 0 {
+			sp.Tested = run.Line()
 		}
 		if p.APIKey != "" {
 			sp.HasKey = true
@@ -1496,6 +1524,9 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Text     string
 		Telegram bool
+		// Cid is an id the phone makes for each message it sends, so one that is sent again after the connection dropped
+		// is taken once: the answer may have been lost on the way back, not the message.
+		Cid string
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -1510,8 +1541,29 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Hub.Seen()
+	if in.Cid != "" && s.sentBefore(in.Cid) {
+		w.WriteHeader(http.StatusNoContent) // already taken: say so, as if it had just been
+		return
+	}
 	s.accept(text, in.Telegram)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// sentBefore remembers the ids of the last messages taken, and says whether this one is among them.
+func (s *Server) sentBefore(cid string) bool {
+	if len(cid) > 64 {
+		cid = cid[:64]
+	}
+	s.cidMu.Lock()
+	defer s.cidMu.Unlock()
+	if slices.Contains(s.cids, cid) {
+		return true
+	}
+	s.cids = append(s.cids, cid)
+	if len(s.cids) > 200 {
+		s.cids = s.cids[len(s.cids)-200:]
+	}
+	return false
 }
 
 // telegramAsk is added, out of sight, to a message sent with "also send to Telegram" on.

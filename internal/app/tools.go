@@ -13,6 +13,7 @@ import (
 	"talaria/internal/calendar"
 	"talaria/internal/choice"
 	"talaria/internal/cron"
+	"talaria/internal/docsearch"
 	"talaria/internal/execenv"
 	"talaria/internal/files"
 	"talaria/internal/finance"
@@ -25,6 +26,7 @@ import (
 	"talaria/internal/provider"
 	"talaria/internal/skill"
 	"talaria/internal/tool"
+	"talaria/internal/trigger"
 	"talaria/internal/webfetch"
 	"talaria/internal/x"
 )
@@ -149,11 +151,17 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 	if rt.cfg.X != nil {
 		x.RegisterTools(tools, rt.cfg.X)
 	}
+	if rt.docs != nil {
+		docsearch.RegisterTools(tools, rt.docs)
+	}
 	if rt.models != nil {
 		registerModelTool(tools, rt.models)
 	}
 	if rt.cfg.Phone != nil {
 		phone.RegisterTools(tools, rt.cfg.Phone)
+		if rt.triggers != nil {
+			trigger.RegisterTools(tools, rt.triggers, rt.cfg.Phone)
+		}
 	}
 	if send := rt.notifier(); send != nil {
 		notify.RegisterTool(tools, send, &rt.notifyLimit)

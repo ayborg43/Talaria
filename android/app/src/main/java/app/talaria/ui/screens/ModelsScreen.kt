@@ -108,6 +108,7 @@ fun ModelsScreen(repo: Repo, onBack: () -> Unit, modifier: Modifier = Modifier) 
     var error by remember { mutableStateOf<String?>(null) }
     var adding by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<ModelProfile?>(null) }
+    var offerTest by remember { mutableStateOf<String?>(null) }
     var choosing by remember { mutableStateOf<Pair<ModelProfile, ModelChoicesDto>?>(null) }
     val d = polled.value
 
@@ -129,7 +130,7 @@ fun ModelsScreen(repo: Repo, onBack: () -> Unit, modifier: Modifier = Modifier) 
             colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
         )
         if (adding && d != null) {
-            AddModel(d, onCancel = { adding = false }, onAdd = { body -> adding = false; post(body, "Added. Use Test to check it answers.") })
+            AddModel(d, onCancel = { adding = false }, onAdd = { body -> adding = false; offerTest = (body["name"] as? JsonPrimitive)?.content; post(body, "Added. Use Test to check it answers.") })
             return@Column
         }
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
@@ -152,6 +153,8 @@ fun ModelsScreen(repo: Repo, onBack: () -> Unit, modifier: Modifier = Modifier) 
                         Gap(10.dp)
                     }
                     Button(onClick = { adding = true }, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) { Text("Add a model") }
+                    Gap(16.dp)
+                    TestQuestionsCard(repo, offerFor = offerTest, onOfferHandled = { offerTest = null })
                     Gap(16.dp)
                     if (d.profiles.size >= 2) RoutingCard(repo)
                     if (d.profiles.size >= 2) Gap(16.dp)

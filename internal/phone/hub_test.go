@@ -18,6 +18,7 @@ type fakePhone struct {
 	got    []string
 	answer func(op string, args json.RawMessage) (any, string)
 	closed bool
+	sent   []string // everything sent to the phone, as text
 }
 
 func (f *fakePhone) Close() { f.mu.Lock(); f.closed = true; f.mu.Unlock() }
@@ -29,7 +30,10 @@ func (f *fakePhone) Send(b []byte) error {
 	}
 	json.Unmarshal(b, &m)
 	f.mu.Lock()
-	f.got = append(f.got, m.Op+" "+string(m.Args))
+	f.sent = append(f.sent, string(b))
+	if m.Op != "" {
+		f.got = append(f.got, m.Op+" "+string(m.Args))
+	}
 	f.mu.Unlock()
 	go func() {
 		if f.answer == nil {
@@ -190,3 +194,55 @@ func TestTheToolsPassArgumentsAndCutLongAnswers(t *testing.T) {
 		t.Error("phone_info accepted a contacts request")
 	}
 }
+
+func TestWhatToWatchForIsSentWhenThePhoneAllowsEventsAndEventsComeBack(t *testing.T) {
+	h := fast()
+	h.Triggers = func() []Spec { return []Spec{{ID: "t1", Kind: "battery_low", Level: 15}} }
+	got := make(chan string, 2)
+	h.OnEvent = func(id string, data json.RawMessage) { got <- id + " " + string(data) }
+	f := &fakePhone{}
+	f.link = h.Attach(f)
+	// not allowed yet: nothing is sent
+	f.link.Receive([]byte(`{"t":"hello","name":"P","caps":["status"]}`))
+	f.mu.Lock()
+	sent := len(f.got)
+	f.mu.Unlock()
+	if sent != 0 {
+		t.Fatalf("a list went to a phone that has not allowed events: %d", sent)
+	}
+	// allowing events pushes the list
+	f.link.Receive([]byte(`{"t":"caps","caps":["status","triggers"]}`))
+	if f.lastTriggers() == "" {
+		t.Fatal("the list was not sent once events were allowed")
+	}
+	// a change is pushed on demand
+	h.Triggers = func() []Spec { return nil }
+	f.reset()
+	h.PushTriggers()
+	if got := f.lastTriggers(); !strings.Contains(got, `"list":[]`) {
+		t.Errorf("an emptied list: %q", got)
+	}
+	// an event from the phone reaches the handler
+	f.link.Receive([]byte(`{"t":"event","trigger":"t1","data":{"level":14}}`))
+	select {
+	case e := <-got:
+		if e != `t1 {"level":14}` {
+			t.Errorf("event: %q", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the event was lost")
+	}
+}
+
+func (f *fakePhone) lastTriggers() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.sent) - 1; i >= 0; i-- {
+		if strings.Contains(f.sent[i], `"t":"triggers"`) {
+			return f.sent[i]
+		}
+	}
+	return ""
+}
+
+func (f *fakePhone) reset() { f.mu.Lock(); f.sent = nil; f.mu.Unlock() }

@@ -46,6 +46,9 @@ import app.talaria.ui.components.SectionTitle
 import app.talaria.ui.components.TextButton
 import app.talaria.ui.components.Tone
 import app.talaria.ui.theme.Ti
+import app.talaria.ui.theme.extra
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.put
 import java.text.DateFormat
 import java.util.Date
 
@@ -56,6 +59,7 @@ private val kinds = listOf(
     Kind(Op.LOCATION, "Where it is", "A rough position (about a hundred metres), with how old it is. Never tracked: it is only looked up when you ask for something that needs it."),
     Kind(Op.CONTACTS, "Contacts", "Looks up one person by name when you ask, for a number or an email. It never reads the whole list."),
     Kind(Op.CALENDAR, "Calendar on this phone", "What is coming up in the next days, from the calendars on this phone."),
+    Kind(Op.TRIGGERS, "Events from this phone", "Lets Talaria set up things like \"when I plug in my charger, tell me about tomorrow\" or \"when my battery is low, remind me\". It is told only that the event happened (and the Wi-Fi or Bluetooth name). You approve each one it sets up, and can remove them below."),
     Kind(Op.NOTIFICATIONS, "Notifications", "What is showing in your notifications, when you ask. These can hold private things such as codes; only turn this on if you want that."),
 )
 
@@ -87,6 +91,12 @@ fun PhoneAccessScreen(activity: AppCompatActivity, repo: Repo, onBack: () -> Uni
         link.refresh()
     }
     fun turnOn(op: String) {
+        if (op == Op.TRIGGERS) {
+            // Wi-Fi and Bluetooth names need these; battery and charger events need nothing. It goes on whatever is answered.
+            asking = op
+            permission.launch(buildList { add(android.Manifest.permission.ACCESS_FINE_LOCATION); if (android.os.Build.VERSION.SDK_INT >= 31) add(android.Manifest.permission.BLUETOOTH_CONNECT) }.toTypedArray())
+            return
+        }
         if (PhoneOps.permitted(activity, op)) { link.setOps(ops + op); return }
         if (op == Op.NOTIFICATIONS) {
             // Notification access is a page of its own in Android's settings; the switch goes on when the person comes back with it granted.
@@ -147,6 +157,8 @@ fun PhoneAccessScreen(activity: AppCompatActivity, repo: Repo, onBack: () -> Uni
                     }
                 }
 
+                if (Op.TRIGGERS in ops) TriggersList(repo, resumed)
+
                 SectionTitle("Recently asked")
                 Panel(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
@@ -169,4 +181,40 @@ fun PhoneAccessScreen(activity: AppCompatActivity, repo: Repo, onBack: () -> Uni
             }
         }
     }
+}
+
+@kotlinx.serialization.Serializable
+private data class TriggerRow(val id: String = "", val kind: String = "", val describe: String = "", val prompt: String = "", val once: Boolean = false, val fired: String = "")
+
+@kotlinx.serialization.Serializable
+private data class TriggersDto(val triggers: List<TriggerRow> = emptyList(), val allowed: Boolean = false, val linked: Boolean = false)
+
+/** What the agent has been asked to do when something happens on this phone, with a way to stop each. */
+@Composable
+private fun TriggersList(repo: Repo, refresh: Int) {
+    val polled = app.talaria.ui.rememberPolled(0, "triggers$refresh" + repo.store.baseUrl) { repo.api.getJson<TriggersDto>("/api/triggers") }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val d = polled.value ?: return
+    SectionTitle("When something happens on this phone")
+    Panel(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            if (d.triggers.isEmpty()) {
+                Text("Nothing is set up. Ask Talaria, for example: \"When my battery gets low, remind me to charge it\" or \"When I join my home Wi-Fi, tell me what is on my calendar\".", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            d.triggers.forEach { t ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(t.describe, style = MaterialTheme.typography.bodyMedium)
+                        Text(t.prompt + if (t.once) " (once)" else "", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (t.fired.isNotBlank()) Text("Last happened ${t.fired}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    app.talaria.ui.components.TextButton(onClick = { scope.launch { runCatching { repo.api.postJson("/api/triggers", kotlinx.serialization.json.buildJsonObject { put("delete", t.id) }); polled.refresh() } } }) { Text("Remove") }
+                }
+            }
+            if (d.triggers.isNotEmpty() && d.linked && !d.allowed) {
+                Text("Events are switched off on this phone, so these will not run.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.extra.bad, modifier = Modifier.padding(top = 6.dp))
+            }
+        }
+    }
+    Gap(16.dp)
 }

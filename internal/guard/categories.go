@@ -37,7 +37,7 @@ var Categories = []Category{
 	{ID: "commands", Title: "Run commands", Detail: "Anything typed in a shell on the agent's computer.", Tools: []string{"shell"}, Risky: true},
 	{ID: "files", Title: "Write and delete files", Detail: "Saving or changing files, filling in PDF forms, deleting kept files.", Tools: []string{"write_file", "pdf_form_fill", "files_delete"}, Risky: true},
 	{ID: "browser", Title: "Click and type in web pages", Detail: "Pressing buttons and typing in the agent's browser. Using a saved login always asks, whatever you set here.", Tools: []string{"browser_click", "browser_type", "browser_press", "browser_select"}, Risky: true},
-	{ID: "schedule", Title: "Schedule and start work", Detail: "Reminders, goals, watches, background tasks and saved skills, which keep acting when you are away.", Tools: []string{"cron_add", "cron_remove", "task_start", "goal_create", "goal_update", "watch_create", "watch_update", "skill_save", "skill_delete"}},
+	{ID: "schedule", Title: "Schedule and start work", Detail: "Reminders, goals, watches, background tasks and saved skills, which keep acting when you are away.", Tools: []string{"cron_add", "cron_remove", "phone_trigger_add", "task_start", "goal_create", "goal_update", "watch_create", "watch_update", "skill_save", "skill_delete"}},
 	{ID: "phone", Title: "Read your phone", Detail: "Its location and battery, your contacts, calendar and notifications. The phone has its own switch for each; nothing is shared until you turn it on there.", Tools: []string{"phone_info", "phone_read"}},
 	{ID: "apps", Title: "Use connected apps", Detail: "Anything done through a connected service (an MCP server).", Tools: []string{"mcp_*"}},
 }

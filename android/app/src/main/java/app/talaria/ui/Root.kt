@@ -85,7 +85,7 @@ fun Root(
     locked: Boolean, onUnlocked: () -> Unit, shared: Shared?, onSharedUsed: () -> Unit,
     onNeedMic: () -> Unit, onAskNotifications: () -> Unit,
     onSaveFile: (String, String, ByteArray) -> Unit,
-    quick: app.talaria.QuickAction?, onQuickHandled: () -> Unit,
+    quick: app.talaria.QuickAction?, onQuickHandled: () -> Unit, photoSent: Int = 0, onTakePhoto: () -> Unit = {},
     onAttach: () -> Unit, onUploadShared: (android.net.Uri) -> Unit, uploadError: String?, onUploadErrorShown: () -> Unit,
 ) {
     val conn by repo.conn.collectAsState()
@@ -105,6 +105,8 @@ fun Root(
     var chats by remember { mutableStateOf(false) }
     var browser by remember { mutableStateOf(false) }
     var askFocus by remember { mutableStateOf(0) }
+    // A photo was just taken and is on its way: the message box is ready to ask about it.
+    LaunchedEffect(photoSent) { if (photoSent > 0) { if (draft.isBlank()) draft = "What is in this photo?"; askFocus++ } }
     var approvalJump by remember { mutableStateOf(0) }
     var viewing by remember { mutableStateOf<app.talaria.data.FileMeta?>(null) }
     var allFiles by remember { mutableStateOf(false) }
@@ -124,6 +126,7 @@ fun Root(
             app.talaria.QuickAction.Talk -> if (voice.phase.value == app.talaria.voice.Phase.Off) voice.startConversation()
             app.talaria.QuickAction.Ask -> askFocus++
             app.talaria.QuickAction.Approvals -> approvalJump++
+            app.talaria.QuickAction.Photo -> onTakePhoto()
         }
         onQuickHandled()
     }
@@ -146,7 +149,7 @@ fun Root(
         when (Tab.entries[current]) {
             Tab.Chat -> Column(mod) {
                 Box(Modifier.weight(1f)) {
-                    ChatScreen(repo, voice, draft, { draft = it }, onOpenChats = { chats = true }, onOpenBrowser = { browser = true }, onAttach = onAttach, externalError = uploadError, onExternalErrorShown = onUploadErrorShown, focusSignal = askFocus, approvalSignal = approvalJump)
+                    ChatScreen(repo, voice, draft, { draft = it }, onOpenChats = { chats = true }, onOpenBrowser = { browser = true }, onAttach = onAttach, onPhoto = onTakePhoto, externalError = uploadError, onExternalErrorShown = onUploadErrorShown, focusSignal = askFocus, approvalSignal = approvalJump)
                 }
             }
             Tab.Today -> TodayScreen(repo, mod, onAsk = { draft = it; tab = 0 }, onChat = { tab = 0 }, onAllFiles = { allFiles = true })

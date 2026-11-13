@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,10 +10,14 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"talaria/internal/docsearch"
+	"talaria/internal/evals"
 	"talaria/internal/persona"
+	"talaria/internal/phone"
 	"talaria/internal/routine"
 	"talaria/internal/routing"
 	"talaria/internal/runlog"
+	"talaria/internal/trigger"
 	"time"
 
 	"talaria/internal/activity"
@@ -172,7 +177,46 @@ func runGateway(c *cli) error {
 	}
 	backends := gatewayBackends(c.cfg, c.res, c.p, c.getenv, c.health, c.log)
 	c.rt.SetHelpers(helperModels(backends, func(name string) string { return modelNote(c.cfg, c.health, name) }))
-	c.rt.SetModels(modelList(c.cfg, backends, c.health))
+	// "When this happens on my phone, do that": the phone reports events, and each one starts a background job in the web chat.
+	triggers := &trigger.Store{Path: filepath.Join(c.home, "triggers.json")}
+	if hub := c.rt.Phone(); hub != nil {
+		hub.Triggers = func() []phone.Spec { return trigger.Specs(triggers) }
+		hub.OnEvent = func(id string, data json.RawMessage) {
+			var d map[string]any
+			json.Unmarshal(data, &d)
+			t, ok := triggers.Fire(id, time.Now())
+			if !ok {
+				return
+			}
+			if _, err := c.rt.Cron.AddNow(cron.Job{Name: tidy("Phone: "+t.Describe(), 60, "Phone event"), Prompt: trigger.Prompt(t, d), Gateway: "web", ChatID: web.ChatID}); err != nil {
+				c.log.Warn("a phone event could not start its job: " + err.Error())
+				return
+			}
+			if t.Once {
+				hub.PushTriggers()
+			}
+		}
+		c.rt.SetTriggers(triggers)
+	}
+	docFolders := &docsearch.Folders{}
+	docFolders.Set(c.cfg.DocSearch.Folders)
+	var docIndex *docsearch.Index
+	if !c.cfg.DocSearch.Off {
+		src := docsearch.Sources{Folders: docFolders.Get, Notes: func() string { return c.rt.Notes().Prompt() }}
+		if fs := c.rt.Files(); fs != nil {
+			src.Library = fs
+		}
+		if ix, err := docsearch.Open(filepath.Join(c.home, "docsearch.db"), src, func(f string, a ...any) { c.log.Warn(fmt.Sprintf(f, a...)) }); err != nil {
+			c.log.Warn("search over your files is off: " + err.Error())
+		} else {
+			docIndex = ix
+			ix.Run(c.ctx)
+			c.rt.SetDocs(ix)
+			defer ix.Close()
+		}
+	}
+	evalStore := &evals.Store{Path: filepath.Join(c.home, "evals.json")}
+	c.rt.SetModels(modelList(c.cfg, backends, c.health, evalStore))
 	// A model that failed a moment ago is not what the router picks for the next message.
 	backends.Resting = func(name string) bool { st := c.health.Get(name); return !st.Working && time.Now().Before(st.Until) }
 	learn := &routing.Store{Path: filepath.Join(c.home, "routing.json")}
@@ -398,7 +442,7 @@ func runGateway(c *cli) error {
 			Cfg:        c.cfg,
 			ApplyRules: applyRules(c.rt),
 			Mailbox:    c.rt.Mail(), Calendars: c.rt.Calendars(), X: c.rt.X(), Getenv: c.getenv,
-			Notes: c.rt.Notes(), Notices: notices, Env: c.rt.Env(), Browsers: c.rt.Browsers, Phone: c.rt.Phone(), Health: c.health, Learn: learn, Router: router,
+			Notes: c.rt.Notes(), Notices: notices, Env: c.rt.Env(), Browsers: c.rt.Browsers, Phone: c.rt.Phone(), Health: c.health, Learn: learn, Router: router, Evals: evalStore, Triggers: triggers, Docs: docIndex, DocFolders: docFolders,
 			ReceiptsPath: filepath.Join(c.home, "computer_receipts.json"),
 			AGUIKey:      webSet.AGUIKey,
 			Runs:         runs,
@@ -586,7 +630,7 @@ func modelNote(cfg *config.Config, health *provider.Health, name string) string 
 }
 
 // modelList is what the agent sees in model_list: every profile, what it is for, and whether it works now.
-func modelList(cfg *config.Config, b *chat.Backends, health *provider.Health) func() []app.ModelInfo {
+func modelList(cfg *config.Config, b *chat.Backends, health *provider.Health, ev *evals.Store) func() []app.ModelInfo {
 	return func() []app.ModelInfo {
 		names := b.Names
 		if b.List != nil {
@@ -598,6 +642,9 @@ func modelList(cfg *config.Config, b *chat.Backends, health *provider.Health) fu
 			p := cfg.Profiles[name]
 			m := app.ModelInfo{Name: name, Type: p.Type, Model: p.Model, Notes: strings.TrimSpace(p.Notes), Best: p.BestFor,
 				Default: name == b.Default, Routine: name == routine, Fallbacks: cfg.FallbackChain(name)}
+			if run, ok := ev.Latest(name); ok && run.Counted > 0 {
+				m.Tested = run.Line()
+			}
 			if be, err := b.Open(name); err != nil {
 				m.Problem = err.Error()
 			} else {

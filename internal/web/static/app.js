@@ -1516,6 +1516,7 @@ function paneModels(s) {
   const rc = routineCard(s); if (rc) out.push(rc);
   const fc = fallbackCard(s); if (fc) out.push(fc);
   const rtc = routingCard(s); if (rtc) out.push(rtc);
+  out.push(testQuestionsCard(s));
   for (const p of ps) out.push(profileNameCard(p));
   if (!ps.length) out.push(h('div', { class: 'card' }, h('h2', null, 'Profiles'), h('div', { class: 'empty', text: (S.model ? S.model + ' comes from the server settings. ' : '') + 'Add a profile to keep more than one model and switch between them.' })));
   out.push(h('button', { class: 'btn big', type: 'button', text: 'Add an AI profile', onclick: newProfileForm }));
@@ -1590,7 +1591,7 @@ function paneConnections(s) {
   if ((s.chats || []).some((c) => c.service === 'telegram' && c.connected)) {
     out.push(h('div', { class: 'banner' }, icon('info'), h('span', { text: 'Telegram is connected. Ask for the result to be sent there ("research this and send me the summary on Telegram"), or use the Telegram button next to the message box.' })));
   }
-  out.push(emailCard(), calendarsCard(), chatsCard(), vaultCard());
+  out.push(emailCard(), calendarsCard(), chatsCard(), vaultCard(), docsCard());
   return out;
 }
 

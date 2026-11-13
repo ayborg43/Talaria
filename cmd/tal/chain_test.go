@@ -118,7 +118,7 @@ func TestModelListTellsTheAgentWhatEachModelIsForAndWhatIsFailing(t *testing.T) 
 	chain.Chat(t.Context(), provider.Request{Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}}})
 
 	rt := &app.Runtime{}
-	rt.SetModels(modelList(cfg, b, health))
+	rt.SetModels(modelList(cfg, b, health, nil))
 	reg := tool.NewRegistry()
 	app.RegisterModelToolForTest(reg, rt)
 	list, _ := reg.Get("model_list")
