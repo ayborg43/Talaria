@@ -27,6 +27,7 @@ import (
 	"talaria/internal/mcp"
 	"talaria/internal/memory"
 	"talaria/internal/notify"
+	"talaria/internal/persona"
 	"talaria/internal/phone"
 	"talaria/internal/provider"
 	"talaria/internal/skill"
@@ -137,9 +138,11 @@ func HomeDir(getenv func(string) string) (string, error) {
 type Runtime struct {
 	Cron *cron.Store // scheduled jobs
 
-	models   func() []ModelInfo // the models a task can be given; set by the gateway
-	triggers *trigger.Store     // what the phone may tell the agent about; set by the gateway
-	docs     *docsearch.Index   // search over the person's files and notes; set by the gateway
+	models        func() []ModelInfo // the models a task can be given; set by the gateway
+	triggers      *trigger.Store     // what the phone may tell the agent about; set by the gateway
+	agents        *persona.Store     // the user's saved agents, for agent_create; set by the gateway
+	agentProfiles func() []string
+	docs          *docsearch.Index // search over the person's files and notes; set by the gateway
 
 	cfg      Config
 	provider provider.Provider
@@ -375,6 +378,11 @@ func (rt *Runtime) fileSender(gateway string) files.FileSender {
 	rt.fileMu.Lock()
 	defer rt.fileMu.Unlock()
 	return rt.fileSend[gateway]
+}
+
+// SetAgents lets the agent suggest a saved agent (agent_create), which the user must approve; profiles lists the models to choose from.
+func (rt *Runtime) SetAgents(s *persona.Store, profiles func() []string) {
+	rt.agents, rt.agentProfiles = s, profiles
 }
 
 // SetTriggers lets the agent set up "when this happens on my phone, do that".

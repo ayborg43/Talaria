@@ -180,6 +180,7 @@ func runGateway(c *cli) error {
 	// The agents the person saved under Agents can be handed tasks by name; the main agent cannot add or remove them.
 	agents := &persona.Store{Path: filepath.Join(c.home, "agents.json")}
 	c.rt.SetNamed(namedAgents(agents))
+	c.rt.SetAgents(agents, c.cfg.ProfileNames) // the agent may suggest one; the user approves each
 	// "When this happens on my phone, do that": the phone reports events, and each one starts a background job in the web chat.
 	triggers := &trigger.Store{Path: filepath.Join(c.home, "triggers.json")}
 	if hub := c.rt.Phone(); hub != nil {

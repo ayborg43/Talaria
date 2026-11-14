@@ -16,11 +16,16 @@ const (
 	RiskDeletes Risk = 1 << iota
 	// RiskPosts: the call says something in public, as the user: a post, a reply, a comment on a social site.
 	RiskPosts
+	// RiskSaves: the call sets up a standing helper that stays after the conversation: a saved agent. The user decides
+	// who joins their team, so it asks even when only deleting and posting ask.
+	RiskSaves
 )
 
 // Note says what a risk is, for the person being asked.
 func (r Risk) Note() string {
 	switch {
+	case r&RiskSaves != 0:
+		return "This saves a new agent that stays after this conversation."
 	case r&RiskDeletes != 0 && r&RiskPosts != 0:
 		return "This deletes something and posts in public."
 	case r&RiskDeletes != 0:

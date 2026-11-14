@@ -15,7 +15,7 @@ import (
 // outlast the conversation or run with nobody watching: a file written (a
 // startup script, a setting) acts later, and a saved skill, scheduled job, task,
 // goal or watch steers the agent when no one is there to approve what it does.
-var DefaultNoRemember = []string{"shell", "write_file", "skill_save", "cron_add", "task_start", "goal_create", "watch_create", "watch_update", "goal_update", "x_post"}
+var DefaultNoRemember = []string{"shell", "write_file", "skill_save", "cron_add", "task_start", "goal_create", "watch_create", "watch_update", "goal_update", "agent_create", "x_post"}
 
 // DefaultSessionRemember lists the tools one approval covers for the rest of
 // the conversation, unless the config says otherwise. These are the tools an
@@ -37,7 +37,7 @@ type rule struct {
 // keeps this list in step with the registrations.
 var knownTools = map[string]bool{
 	"phone_info": true, "phone_read": true, "model_list": true, "docs_search": true, "phone_trigger_add": true, "phone_trigger_list": true, "phone_trigger_remove": true, "docs_read": true,
-	"browser_back": true, "browser_click": true, "browser_close": true,
+	"agent_create": true, "browser_back": true, "browser_click": true, "browser_close": true,
 	"choice_present": true, "choice_select": true,
 	"browser_fill": true, "browser_handoff": true, "browser_open": true, "browser_press": true,
 	"browser_screenshot": true, "browser_scroll": true, "browser_select": true,

@@ -3,6 +3,7 @@ package subagent
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -149,5 +150,11 @@ func TestADelegateOfALookOnlyConversationIsLookOnlyToo(t *testing.T) {
 	}
 	if !strings.Contains(result, "read-only") {
 		t.Fatalf("a look-only chat got round it by delegating: %q", result)
+	}
+}
+
+func TestASubagentCannotCreateAgents(t *testing.T) {
+	if !slices.Contains(excluded, "agent_create") {
+		t.Fatal("a helper could suggest agents, and the team could grow from inside a task")
 	}
 }

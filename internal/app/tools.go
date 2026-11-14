@@ -22,6 +22,7 @@ import (
 	"talaria/internal/mailbox"
 	"talaria/internal/memory"
 	"talaria/internal/notify"
+	"talaria/internal/persona"
 	"talaria/internal/phone"
 	"talaria/internal/provider"
 	"talaria/internal/skill"
@@ -156,6 +157,9 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 	}
 	if rt.models != nil {
 		registerModelTool(tools, rt.models)
+	}
+	if rt.agents != nil {
+		persona.RegisterTools(tools, rt.agents, rt.agentProfiles)
 	}
 	if rt.cfg.Phone != nil {
 		phone.RegisterTools(tools, rt.cfg.Phone)
