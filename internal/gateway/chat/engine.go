@@ -548,7 +548,7 @@ func (e *Engine) runOneWith(c *chat, text string, job *resumeJob) {
 	}
 
 	defer func() {
-		a.OnText, a.OnToolStart, a.OnToolCall, a.OnToolArtifact = nil, nil, nil, nil
+		a.OnText, a.OnRestart, a.OnToolStart, a.OnToolCall, a.OnToolArtifact = nil, nil, nil, nil, nil
 		cancel()
 		c.mu.Lock()
 		c.cancel, c.live = nil, nil
@@ -568,6 +568,7 @@ func (e *Engine) runOneWith(c *chat, text string, job *resumeJob) {
 	if e.Stream {
 		live = newLiveReply(e.root, e.T, c.id, e.editInterval(), e.logf)
 		a.OnText = live.onText
+		a.OnRestart = live.endSegment                              // a model that gave out partway: what it said is finished, the next one starts a new message
 		a.OnToolStart = func(string, string) { live.endSegment() } // text before a tool call is complete, so finish it before the tool runs
 		c.mu.Lock()
 		c.live = live

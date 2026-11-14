@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"sync"
@@ -73,16 +74,41 @@ func TestARefusedKeyOrMissingModelMovesOnToo(t *testing.T) {
 	}
 }
 
-func TestARequestProblemIsNotPassedAround(t *testing.T) {
+func TestARequestProblemMovesOnToo_ButIsNotHeldAgainstTheModel(t *testing.T) {
+	// too long for the first model, fine for the second: the person gets an answer, and the first is not rested
 	a, b := &stub{err: status(400, "messages: too many tokens")}, &stub{reply: "b"}
-	c := Chain{Links: []Link{link("a", a), link("b", b)}, Health: NewHealth()}
-	if _, err := c.Chat(context.Background(), Request{}); err == nil || b.calls != 0 {
-		t.Fatalf("a bad request went to the next model: %v, %d", err, b.calls)
+	h := NewHealth()
+	c := Chain{Links: []Link{link("a", a), link("b", b)}, Health: h}
+	msg, err := c.Chat(context.Background(), Request{})
+	if err != nil || msg.Content != "b" {
+		t.Fatalf("a bad request ended in an error: %v %q", err, msg.Content)
 	}
-	plain := &stub{err: errors.New("the arguments were wrong")}
-	c = Chain{Links: []Link{link("a", plain), link("b", b)}}
-	if _, err := c.Chat(context.Background(), Request{}); err == nil || b.calls != 0 {
-		t.Fatal("an ordinary error moved on")
+	if !h.Get("a").Working {
+		t.Error("a request problem was held against the model")
+	}
+	// an odd failure with no explanation moves on as well
+	plain := &stub{err: errors.New("the reply could not be read")}
+	c = Chain{Links: []Link{link("a", plain), link("b", &stub{reply: "ok"})}}
+	if msg, err := c.Chat(context.Background(), Request{}); err != nil || msg.Content != "ok" {
+		t.Fatalf("an ordinary error ended the request: %v", err)
+	}
+	// when every model meets it, the person hears what each said; a lone model's error is returned as it is
+	bad := errors.New("the arguments were wrong")
+	if _, err := (Chain{Links: []Link{link("a", &stub{err: bad})}}).Chat(context.Background(), Request{}); err != bad {
+		t.Errorf("a lone model's error changed: %v", err)
+	}
+	_, err = Chain{Links: []Link{link("a", &stub{err: bad}), link("b", &stub{err: bad})}}.Chat(context.Background(), Request{})
+	if err == nil || !strings.Contains(err.Error(), "a: ") || !strings.Contains(err.Error(), "b: ") {
+		t.Errorf("both models should be named: %v", err)
+	}
+}
+
+func TestATimedOutModelMovesOn(t *testing.T) {
+	timeout := fmt.Errorf("provider timed out (no data for 1m0s): %w", context.DeadlineExceeded)
+	a, b := &stub{err: timeout}, &stub{reply: "b"}
+	c := Chain{Links: []Link{link("a", a), link("b", b)}, Health: NewHealth()}
+	if msg, err := c.Chat(context.Background(), Request{}); err != nil || msg.Content != "b" {
+		t.Fatalf("%v %q", err, msg.Content)
 	}
 }
 
@@ -145,13 +171,22 @@ func TestWhenEveryModelIsRestingTheyAreTriedAnyway(t *testing.T) {
 	}
 }
 
-func TestNoSecondAnswerIsTackedOntoPartOfTheFirst(t *testing.T) {
+func TestNoSecondAnswerIsTackedOntoPartOfTheFirstUnlessTheFrontEndCanRestart(t *testing.T) {
 	a, b := &stub{err: status(503, "dropped"), speak: "Half an ans"}, &stub{reply: "whole"}
 	var shown strings.Builder
 	c := Chain{Links: []Link{link("a", a), link("b", b)}, Health: NewHealth()}
 	_, err := c.Chat(context.Background(), Request{OnText: func(d string) { shown.WriteString(d) }})
 	if err == nil || b.calls != 0 || shown.String() != "Half an ans" {
 		t.Errorf("err=%v b=%d shown=%q", err, b.calls, shown.String())
+	}
+
+	// with a way to close the unfinished text, the next model answers
+	a, b = &stub{err: status(503, "dropped"), speak: "Half an ans"}, &stub{reply: "whole"}
+	restarts := 0
+	c = Chain{Links: []Link{link("a", a), link("b", b)}, Health: NewHealth()}
+	msg, err := c.Chat(context.Background(), Request{OnText: func(string) {}, OnRestart: func() { restarts++ }})
+	if err != nil || msg.Content != "whole" || restarts != 1 {
+		t.Errorf("err=%v msg=%q restarts=%d", err, msg.Content, restarts)
 	}
 }
 

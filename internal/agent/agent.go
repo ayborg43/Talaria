@@ -157,6 +157,8 @@ type Agent struct {
 	// OnText, if set, makes the model stream: it receives reply text as it is
 	// generated, including text said before tool calls.
 	OnText func(delta string)
+	// OnRestart is told when the model that was streaming gave out and another one starts the answer again.
+	OnRestart func()
 
 	messages []provider.Message
 	tainted  int32 // set once an untrusted tool has run; atomic, as parallel tools update it
@@ -263,10 +265,11 @@ func (a *Agent) Run(ctx context.Context, input string) (string, error) {
 		}
 		began := time.Now()
 		reply, err := a.Provider.Chat(ctx, provider.Request{
-			Model:    a.Model,
-			Messages: a.requestMessages(),
-			Tools:    a.Tools.Specs(),
-			OnText:   a.OnText,
+			Model:     a.Model,
+			Messages:  a.requestMessages(),
+			Tools:     a.Tools.Specs(),
+			OnText:    a.OnText,
+			OnRestart: a.OnRestart,
 		})
 		result := "ok"
 		if err != nil {

@@ -61,7 +61,14 @@ setups and switch between them, create a config file:
   "Not working" means: rate limited, overloaded or down (429, 5xx), unreachable, out of credit (402), a key that was refused
   (401, 403), or a model the service does not have (404, or a 400 that says so). Changed from earlier versions, where a refused key
   never fell back: with several services each profile has its own key, so one bad key should not stop the others.
-  A request the model rejected as malformed or too long is **not** passed on, as the next model would meet the same thing.
+  **With no fallbacks named at all, every other profile is the fallback** (the default profile first, then the rest by name), so a failing
+  model does not end a request with an error while another model could answer; set `"no_auto_fallback": true` to turn that off
+  (for example to keep a paid model from catching a free one's failures). Name your own list to choose the order. A profile that cannot be
+  used (no key) is skipped quietly.
+  A request the model rejected (malformed, too long for it) still goes to the next model, which may take it, but the first is not rested
+  for it. A model that hangs counts as not working. If one gives out partway through an answer, the unfinished text stays and the next
+  model's answer follows it as a new message (the command line, which cannot do that, still shows the error). "Test" in Settings asks only
+  the profile's own model, so a working fallback does not hide a broken one.
   - A model that just failed is left alone for 90 seconds (10 minutes for a refused key, a missing model or no credit) rather than tried first on
     every request; if every model in the chain is resting they are tried in order anyway.
   - Once part of an answer has been shown, a second model's answer is never tacked on after it: the call fails instead.

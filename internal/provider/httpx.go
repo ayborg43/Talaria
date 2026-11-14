@@ -210,7 +210,7 @@ func roundTrip(ctx context.Context, c *http.Client, url string, headers map[stri
 		return m, err
 	}()
 	if err != nil && ctx.Err() == nil && wctx.Err() != nil {
-		err = fmt.Errorf("provider timed out (no data for %s, or the reply ran longer than %s)", limit, streamTotal)
+		err = fmt.Errorf("provider timed out (no data for %s, or the reply ran longer than %s): %w", limit, streamTotal, context.DeadlineExceeded)
 	}
 	return msg, err
 }

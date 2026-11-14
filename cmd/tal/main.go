@@ -739,7 +739,12 @@ const cronNoteMarkdown = `You are running as a scheduled job with nobody watchin
 // is left alone for a while. A fallback that cannot be set up (no key, a typo) is left out with a warning.
 func withFallbacks(cfg *config.Config, getenv func(string) string, health *provider.Health, log *slog.Logger, name, model string, primary provider.Provider) provider.Provider {
 	links := []provider.Link{{Name: name, Model: model, Provider: primary}}
-	for _, fb := range cfg.FallbackChain(name) {
+	named := cfg.FallbackChain(name)
+	chain := named
+	if len(named) == 0 {
+		chain = cfg.AutoFallbacks(name) // nothing named: any other profile that works is better than an error
+	}
+	for _, fb := range chain {
 		r, err := cfg.Resolve(config.Overrides{Profile: fb}, getenv)
 		if err == nil {
 			err = r.CheckKey()
@@ -749,7 +754,7 @@ func withFallbacks(cfg *config.Config, getenv func(string) string, health *provi
 			p, err = provider.New(r.Spec())
 		}
 		if err != nil {
-			if log != nil {
+			if log != nil && len(named) > 0 { // one the person chose is worth a warning; the rest are only tried if they can be
 				log.Warn("fallback profile " + fb + " ignored: " + err.Error())
 			}
 			continue

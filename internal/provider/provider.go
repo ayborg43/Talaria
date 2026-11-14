@@ -63,6 +63,10 @@ type Request struct {
 	// OnText, if set, asks the provider to stream: it is called with each piece
 	// of reply text as it arrives. Chat still returns the complete message.
 	OnText func(delta string)
+	// OnRestart, if set, lets a chain move on to another model after this one failed partway through an answer: it is
+	// called just before the next model starts, so the front end can close the unfinished text and begin a new one.
+	// Without it a failure after some text was shown is returned as it is.
+	OnRestart func()
 }
 
 // Provider turns a conversation into the model's next assistant message.

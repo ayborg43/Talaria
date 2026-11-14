@@ -440,6 +440,9 @@ type Config struct {
 	// to every profile that sets no fallbacks of its own, and each profile's own list replaces them.
 	FallbackProfile  string   `json:"fallback_profile,omitempty"`
 	FallbackProfiles []string `json:"fallback_profiles,omitempty"`
+	// NoAutoFallback turns off what happens when no fallbacks are named for a profile: every other profile is tried,
+	// the default one first, so a model that is not working never ends the request with an error while another could answer.
+	NoAutoFallback bool `json:"no_auto_fallback,omitempty"`
 	// Transcription is the speech-to-text service behind the microphone button in the web app.
 	Transcription Transcription `json:"transcription,omitzero"`
 	// RoutineProfile names the profile scheduled prompts (reminders, the morning brief, recipes) run on when they
@@ -911,6 +914,26 @@ func (c *Config) FallbackChain(primary string) []string {
 	for _, n := range names {
 		n = strings.TrimSpace(n)
 		if _, ok := c.Profiles[n]; ok && n != primary && !slices.Contains(out, n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// AutoFallbacks is what is tried after the named profile when nobody named any fallbacks: every other profile, the
+// default one first and then the rest by name. It is empty when this is switched off.
+func (c *Config) AutoFallbacks(primary string) []string {
+	if c.NoAutoFallback {
+		return nil
+	}
+	var out []string
+	if d := c.DefaultProfile; d != primary {
+		if _, ok := c.Profiles[d]; ok {
+			out = append(out, d)
+		}
+	}
+	for _, n := range c.ProfileNames() {
+		if n != primary && !slices.Contains(out, n) {
 			out = append(out, n)
 		}
 	}

@@ -58,7 +58,7 @@ func envFn(kv ...string) func(string) string {
 }
 
 func TestGatewayBackends(t *testing.T) {
-	cfg := &config.Config{Profiles: map[string]config.Profile{
+	cfg := &config.Config{NoAutoFallback: true, Profiles: map[string]config.Profile{
 		"openai": {Type: "openai", APIKeyEnv: "OPENAI_API_KEY", Model: "gpt-x"},
 		"claude": {Type: "anthropic", APIKeyEnv: "ANTHROPIC_API_KEY", Model: "claude-x"},
 		"local":  {Type: "openai", BaseURL: "http://localhost:11434/v1", Model: "llama"},
@@ -107,7 +107,7 @@ func TestGatewayBackends(t *testing.T) {
 // is live, the cache drops on demand, and effort reaches thinking models.
 func TestGatewayBackendsStayLiveAndCarryEffort(t *testing.T) {
 	yes := true
-	cfg := &config.Config{Profiles: map[string]config.Profile{
+	cfg := &config.Config{NoAutoFallback: true, Profiles: map[string]config.Profile{
 		"main": {Type: "openai", APIKeyEnv: "OPENAI_API_KEY", Model: "gpt-x", BestFor: []string{"cheap"}},
 		"deep": {Type: "deepseek", APIKey: "dk", Model: "deepseek-chat", BestFor: []string{"code"}, Vision: &yes},
 	}}

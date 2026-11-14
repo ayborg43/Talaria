@@ -136,3 +136,27 @@ func TestModelListTellsTheAgentWhatEachModelIsForAndWhatIsFailing(t *testing.T) 
 	}
 	var _ = chat.Backends{}
 }
+
+func TestAFailingModelWithNoFallbacksNamedStillGetsAnAnswerFromAnother(t *testing.T) {
+	down, _ := fakeModel(t, 503, "")
+	good, _ := fakeModel(t, 200, "from the other one")
+	cfg := &config.Config{Profiles: map[string]config.Profile{
+		"main":  {Type: "openai", BaseURL: down.URL, APIKey: "k", Model: "m1"},
+		"other": {Type: "openai", BaseURL: good.URL, APIKey: "k", Model: "m2"},
+		"nokey": {Type: "openai", APIKeyEnv: "NOPE_KEY", Model: "m3"}, // cannot be used, and is quietly left out
+	}}
+	health := provider.NewHealth()
+	ask := func(c *config.Config) (string, error) {
+		chain := withFallbacks(c, envFn(), health, nil, "main", "m1", provider.NewOpenAI(down.URL, "k"))
+		msg, err := chain.Chat(t.Context(), provider.Request{Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}}})
+		return msg.Content, err
+	}
+	if got, err := ask(cfg); err != nil || got != "from the other one" {
+		t.Fatalf("%q %v", got, err)
+	}
+	health = provider.NewHealth()
+	cfg.NoAutoFallback = true
+	if _, err := ask(cfg); err == nil {
+		t.Fatal("with auto fallback switched off the error should still show")
+	}
+}

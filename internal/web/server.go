@@ -910,7 +910,11 @@ func (s *Server) settingsPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		name := strings.TrimSpace(in.TestProfile)
-		be, err := s.Engine.Backends.Open(name)
+		open := s.Engine.Backends.Open
+		if s.Engine.Backends.OpenRaw != nil {
+			open = s.Engine.Backends.OpenRaw // the test is of this profile's own model: a fallback answering would hide that it is broken
+		}
+		be, err := open(name)
 		if err != nil {
 			fail(w, http.StatusBadGateway, err.Error())
 			return

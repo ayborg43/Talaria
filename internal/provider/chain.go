@@ -162,6 +162,8 @@ func (c Chain) Chat(ctx context.Context, req Request) (Message, error) {
 		order = c.Links
 	}
 	var tried []string
+	var last error
+	var lastSwitchable bool
 	for i, l := range order {
 		r := req
 		if l.Model != "" {
@@ -184,20 +186,33 @@ func (c Chain) Chat(ctx context.Context, req Request) (Message, error) {
 		if ctx.Err() != nil {
 			return Message{}, err
 		}
-		switchable, hard := Classify(err)
-		// Once part of an answer has been shown, a second model's answer would be tacked on after it.
-		if !switchable || spoke {
+		// Once part of an answer has been shown, a second model's answer would be tacked on after it, unless the
+		// front end can close the unfinished text and start another.
+		if spoke && req.OnRestart == nil {
 			return Message{}, err
 		}
-		if c.Health != nil {
+		// A model that is not working is rested. A failure that may be about the request (too long for this model, a
+		// tool it does not take, an odd reply) is not held against it, but another model still gets to try: the person
+		// asked for an answer, not for an error.
+		switchable, hard := Classify(err)
+		if switchable && c.Health != nil {
 			c.Health.fail(l.Name, Short(err), hard)
 		}
 		tried = append(tried, l.Name+": "+Short(err))
-		if i+1 < len(order) && c.OnSwitch != nil {
-			c.OnSwitch(l, order[i+1], err)
+		last, lastSwitchable = err, switchable
+		if i+1 < len(order) {
+			if spoke {
+				req.OnRestart()
+			}
+			if c.OnSwitch != nil {
+				c.OnSwitch(l, order[i+1], err)
+			}
 		}
 	}
 	if len(tried) == 1 {
+		if !lastSwitchable {
+			return Message{}, last
+		}
 		return Message{}, errors.New(tried[0])
 	}
 	return Message{}, fmt.Errorf("no model in the chain worked (%s)", strings.Join(tried, "; "))
