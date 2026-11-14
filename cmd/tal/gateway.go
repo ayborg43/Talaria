@@ -177,6 +177,9 @@ func runGateway(c *cli) error {
 	}
 	backends := gatewayBackends(c.cfg, c.res, c.p, c.getenv, c.health, c.log)
 	c.rt.SetHelpers(helperModels(backends, func(name string) string { return modelNote(c.cfg, c.health, name) }))
+	// The agents the person saved under Agents can be handed tasks by name; the main agent cannot add or remove them.
+	agents := &persona.Store{Path: filepath.Join(c.home, "agents.json")}
+	c.rt.SetNamed(namedAgents(agents))
 	// "When this happens on my phone, do that": the phone reports events, and each one starts a background job in the web chat.
 	triggers := &trigger.Store{Path: filepath.Join(c.home, "triggers.json")}
 	if hub := c.rt.Phone(); hub != nil {
@@ -447,7 +450,7 @@ func runGateway(c *cli) error {
 			AGUIKey:      webSet.AGUIKey,
 			Runs:         runs,
 			Rec:          &routine.Recorder{},
-			Agents:       &persona.Store{Path: filepath.Join(c.home, "agents.json")},
+			Agents:       agents,
 			Routines:     routines,
 		}
 		if webSet.AGUIKey != "" {
@@ -586,6 +589,21 @@ func sharedWarning(allowed int, say func(string)) {
 const sharedNote = "warning: more than one person is allowed in. Their conversations and history are kept apart, but everything else is shared: " +
 	"the agent's notes and skills, the saved logins and connected accounts (anyone allowed in can have the agent use them), the files and the " +
 	"workspace, and the model account's spending. Only allow people you would give all of that to."
+
+// namedAgents offers the saved agents to delegation, read afresh each time so one added or removed in the app counts at once.
+func namedAgents(store *persona.Store) func() []subagent.Named {
+	return func() []subagent.Named {
+		var out []subagent.Named
+		for _, a := range store.List() {
+			about := strings.Join(strings.Fields(a.Instructions), " ")
+			if r := []rune(about); len(r) > 100 {
+				about = string(r[:100]) + "…"
+			}
+			out = append(out, subagent.Named{Name: a.Name, About: about, Instructions: a.Instructions, Profile: a.Profile, ReadOnly: a.ReadOnly})
+		}
+		return out
+	}
+}
 
 // helperModels offers every profile that can be used right now to subagents, so the main agent can hand a plain
 // lookup to a cheap model and a hard problem to a strong one. A profile that cannot be opened (no key) is left out.

@@ -386,6 +386,13 @@ func (rt *Runtime) SetDocs(ix *docsearch.Index) { rt.docs = ix }
 // Files is the store of files Talaria keeps for the person, nil when there is none.
 func (rt *Runtime) Files() *files.Store { return rt.cfg.Files }
 
+// SetNamed lets the main agent hand a task to one of the user's saved agents by name.
+func (rt *Runtime) SetNamed(list func() []subagent.Named) {
+	if rt.pool != nil {
+		rt.pool.Named = list
+	}
+}
+
 // SetHelpers lets the main agent give subagents other models than its own, for tasks one suits better.
 func (rt *Runtime) SetHelpers(list func() []subagent.Helper) {
 	if rt.pool != nil {

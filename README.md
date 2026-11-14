@@ -967,6 +967,11 @@ What a subagent is, and is not:
   `profiles` in the config), `delegate` offers them to the agent as a `model` choice, with what each is good at (`best_for`), so a
   cheap, fast profile can do the lookups while a strong one does the thinking. The Agents screen shows each helper's number and
   the model it is using; leave the choice out and it uses the main agent's.
+- **Your saved agents.** When you have made named agents (see Named agents), `delegate` offers them to the main agent by name, with
+  the first line of what each is for. A task handed to one runs with that agent's instructions, on its model profile if it has one
+  (or the main agent's, if that profile is gone), and a **Looks only** agent stays look-only there too. The main agent can use them
+  and nothing more: **only you make or remove them**, so the team never grows behind your back. A conversation that is look-only
+  gives look-only helpers as well.
 - **Same approvals.** A call that needs your yes asks exactly as it would from the main agent, labelled with the subagent's name,
   and in Telegram it arrives as the usual Allow / Deny buttons. The question is saved like any other, so the helper carries on
   and the saved call runs when you answer. In scheduled jobs the same rule as always applies: nothing
@@ -1297,6 +1302,7 @@ kept like a channel, and the header says who you are talking to.
   safety rules and approvals are unchanged, and nothing here lets an agent do what would otherwise ask first.
 - **Looks only** is enforced, not requested: any tool that needs approval is refused for that agent, even if one of your rules would allow it,
   so what is left is reading and searching. The model is told so and says what it would have done.
+- The main agent can also hand a task to one of your agents by name (`delegate` with `agent`), which runs it with those instructions and that model. It cannot create, change or remove agents.
 - Its model profile applies while you talk with it, and jobs started from that conversation start on it too. Going back to an
   ordinary conversation puts the usual instructions and model back. Edit or remove an agent at any time; the conversations stay, as ordinary ones.
 - Agents share one memory, one set of goals and watches, and one set of rules with the rest of Talaria. They are kept in `~/.talaria/agents.json`.

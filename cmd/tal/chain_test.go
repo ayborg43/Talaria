@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"talaria/internal/app"
 	"talaria/internal/config"
 	"talaria/internal/gateway/chat"
+	"talaria/internal/persona"
 	"talaria/internal/provider"
 	"talaria/internal/tool"
 )
@@ -158,5 +160,20 @@ func TestAFailingModelWithNoFallbacksNamedStillGetsAnAnswerFromAnother(t *testin
 	cfg.NoAutoFallback = true
 	if _, err := ask(cfg); err == nil {
 		t.Fatal("with auto fallback switched off the error should still show")
+	}
+}
+
+func TestSavedAgentsAreOfferedToDelegationFreshEachTime(t *testing.T) {
+	store := &persona.Store{Path: filepath.Join(t.TempDir(), "agents.json")}
+	list := namedAgents(store)
+	if len(list()) != 0 {
+		t.Fatal("agents from nowhere")
+	}
+	if _, err := store.Save(persona.Agent{Name: "Researcher", Instructions: "Look things up.\nCite every source, and keep it short and plain for the reader.", Profile: "cheap", ReadOnly: true}); err != nil {
+		t.Fatal(err)
+	}
+	got := list()
+	if len(got) != 1 || got[0].Name != "Researcher" || got[0].Profile != "cheap" || !got[0].ReadOnly || strings.Contains(got[0].About, "\n") {
+		t.Fatalf("%+v", got)
 	}
 }

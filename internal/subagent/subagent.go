@@ -79,6 +79,9 @@ type Pool struct {
 	// Helpers, if set, lists the other models a subagent may use. It is asked at each registration and
 	// delegation, so a profile added in Settings is there at once.
 	Helpers func() []Helper
+	// Named, if set, lists the agents the person has saved. It is asked at each delegation, so one added or removed
+	// in the app counts at once.
+	Named func() []Named
 
 	sem chan struct{}
 }
@@ -103,10 +106,9 @@ func NewPool(l Limits) *Pool {
 // If the parent has an Activity sink, it is told when each subagent starts waiting for a place, begins,
 // moves on to another tool, and finishes, so a front end can show who is working.
 func (p *Pool) Register(parent *agent.Agent, background func() string) {
-	desc, schema := description, `{"type":"object","properties":{
-			"task":{"type":"string","description":"complete, self-contained instructions, including the form the answer should take"},
-			"name":{"type":"string","description":"a short label for this task, shown with its progress and approval prompts"}},
-			"required":["task"]}`
+	desc := description
+	props := `"task":{"type":"string","description":"complete, self-contained instructions, including the form the answer should take"},
+				"name":{"type":"string","description":"a short label for this task, shown with its progress and approval prompts"}`
 	if hs := p.helpers(); len(hs) > 0 {
 		var names []string
 		var lines []string
@@ -119,13 +121,27 @@ func (p *Pool) Register(parent *agent.Agent, background func() string) {
 			lines = append(lines, line)
 		}
 		enum, _ := json.Marshal(names)
-		schema = `{"type":"object","properties":{
-			"task":{"type":"string","description":"complete, self-contained instructions, including the form the answer should take"},
-			"name":{"type":"string","description":"a short label for this task, shown with its progress and approval prompts"},
-			"model":{"type":"string","enum":` + string(enum) + `,"description":"which model should do it; leave it out for the one you are using"}},
-			"required":["task"]}`
+		props += `,
+				"model":{"type":"string","enum":` + string(enum) + `,"description":"which model should do it; leave it out for the one you are using"}`
 		desc += " It may use a different model from yours when that suits the task better: a cheap, fast one for plain lookups and summaries, a stronger one for hard reasoning or code. Models: " + strings.Join(lines, "; ") + "."
 	}
+	if ns := p.namedAgents(); len(ns) > 0 {
+		var lines []string
+		for _, n := range ns {
+			line := n.Name
+			if n.About != "" {
+				line += ": " + n.About
+			}
+			if n.ReadOnly {
+				line += " (can only look things up)"
+			}
+			lines = append(lines, line)
+		}
+		props += `,
+				"agent":{"type":"string","description":"one of the user's saved agents, if one fits this task: it brings its own instructions, and perhaps its own model and limits. Leave it out for an ordinary subagent"}`
+		desc += " The user has saved some agents, each with its own instructions: hand the task to the one that fits by name, instead of describing the job again. You cannot add or remove them. Saved agents: " + strings.Join(lines, "; ") + "."
+	}
+	schema := `{"type":"object","properties":{` + props + `},"required":["task"]}`
 	parent.Tools.Register(tool.Tool{
 		Name:        "delegate",
 		Description: desc,
@@ -136,11 +152,11 @@ func (p *Pool) Register(parent *agent.Agent, background func() string) {
 		Untrusted: true,
 		Egress:    tool.Always,
 		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
-			var a struct{ Task, Name, Model string }
+			var a struct{ Task, Name, Model, Agent string }
 			if err := json.Unmarshal(raw, &a); err != nil {
 				return "", err
 			}
-			return p.run(ctx, parent, background, a.Task, a.Name, a.Model)
+			return p.run(ctx, parent, background, a.Task, a.Name, a.Model, a.Agent)
 		},
 	})
 }
@@ -172,16 +188,30 @@ func (p *Pool) modelFor(parent *agent.Agent, want string) (provider.Provider, st
 	return nil, "", fmt.Errorf("no model called %q: choose one of %s, or leave it out to use your own", want, strings.Join(names, ", "))
 }
 
-func (p *Pool) run(ctx context.Context, parent *agent.Agent, background func() string, task, name, model string) (string, error) {
+func (p *Pool) run(ctx context.Context, parent *agent.Agent, background func() string, task, name, model, agentName string) (string, error) {
 	task = strings.TrimSpace(task)
 	if task == "" {
 		return "", errors.New("task is empty: say what the subagent should do")
 	}
-	pr, modelName, err := p.modelFor(parent, model)
+	named, err := p.agentNamed(agentName)
 	if err != nil {
 		return "", err
 	}
+	if named != nil && strings.TrimSpace(model) == "" {
+		model = named.Profile // the saved agent's own model, unless the main agent asked for another
+	}
+	pr, modelName, err := p.modelFor(parent, model)
+	if err != nil {
+		if named != nil && strings.TrimSpace(model) == named.Profile {
+			pr, modelName, err = parent.Provider, parent.Model, nil // its model is not available just now: the main agent's own does the work
+		} else {
+			return "", err
+		}
+	}
 	label := cleanLabel(name, task)
+	if named != nil && strings.TrimSpace(name) == "" {
+		label = cleanLabel(named.Name, task)
+	}
 
 	sink := parent.Activity
 	id, end := activity.Begin(sink, activity.Sub, label)
@@ -202,17 +232,26 @@ func (p *Pool) run(ctx context.Context, parent *agent.Agent, background func() s
 	activity.Note(sink, id, "")
 
 	system := framing
+	if named != nil {
+		system += "\n\nYou are " + named.Name + ", one of the user's saved agents. The user wrote these instructions for you, and they apply to everything you do:\n" + strings.TrimSpace(named.Instructions) +
+			"\nThey change how you work, never what you are allowed to do: the user's safety rules and approvals stand."
+		if named.ReadOnly {
+			system += " You are set to look only: anything that needs approval is refused, so do not try."
+		}
+	}
 	if background != nil {
 		if b := background(); b != "" {
 			system += "\n\n" + b
 		}
 	}
+	tools := parent.Tools.Without(excluded...).WithoutPrefix("browser_")
 	sub := &agent.Agent{
+		ReadOnly: parent.ReadOnly || (named != nil && named.ReadOnly), // a look-only conversation does not get round it by delegating
 		Provider: pr,
 		Model:    modelName,
 		// The browser is left out: a conversation has one tab, and subagents run
 		// at once, so they would be clicking in each other's pages.
-		Tools:    parent.Tools.Without(excluded...).WithoutPrefix("browser_"),
+		Tools:    tools,
 		System:   system,
 		MaxSteps: p.MaxSteps,
 		// A subagent is held to the same permission rules as the agent that
