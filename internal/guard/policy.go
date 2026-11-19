@@ -15,7 +15,7 @@ import (
 // outlast the conversation or run with nobody watching: a file written (a
 // startup script, a setting) acts later, and a saved skill, scheduled job, task,
 // goal or watch steers the agent when no one is there to approve what it does.
-var DefaultNoRemember = []string{"shell", "write_file", "skill_save", "cron_add", "task_start", "goal_create", "watch_create", "watch_update", "goal_update", "agent_create", "x_post"}
+var DefaultNoRemember = []string{"shell", "write_file", "skill_save", "cron_add", "task_start", "kanban_add", "kanban_move", "goal_create", "watch_create", "watch_update", "goal_update", "agent_create", "x_post"}
 
 // DefaultSessionRemember lists the tools one approval covers for the rest of
 // the conversation, unless the config says otherwise. These are the tools an
@@ -52,6 +52,7 @@ var knownTools = map[string]bool{
 	"finance_import": true,
 	"goal_create":    true, "goal_get": true, "goal_list": true, "goal_update": true,
 	"idea_accept": true, "idea_add": true, "idea_dismiss": true, "idea_edit": true, "idea_list": true,
+	"kanban_add": true, "kanban_list": true, "kanban_move": true, "kanban_remove": true,
 	"list_dir": true, "memory": true, "read_file": true, "session_search": true,
 	"shell":        true,
 	"skill_delete": true, "skill_list": true, "skill_save": true, "skill_view": true,

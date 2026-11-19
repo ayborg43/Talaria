@@ -1113,11 +1113,11 @@ function needsInputCard() {
 function tasksCounts() {
   const needs = pendingAsks().length + pendingHandoffs().length + doneTasks.filter((t) => t.failed && !t.reviewed).length;
   const ready = doneTasks.filter((t) => !t.failed && !t.reviewed).length;
-  return { active: needs + S.agents.length + ready, next: standing.length + (S.suggestions || []).length };
+  return { active: needs + S.agents.length + ready, next: standing.length + (S.suggestions || []).length, board: BOARD.cards.filter((c) => c.column !== 'done').length };
 }
 function tasksSeg() {
   const c = tasksCounts();
-  const seg = h('div', { class: 'seg tasks', role: 'tablist' }, [['active', 'Active', c.active], ['next', 'Up next', c.next], ['history', 'History', 0]].map(([id, label, n]) =>
+  const seg = h('div', { class: 'seg tasks', role: 'tablist' }, [['active', 'Active', c.active], ['board', 'Board', c.board], ['next', 'Up next', c.next], ['history', 'History', 0]].map(([id, label, n]) =>
     h('button', { type: 'button', role: 'tab', 'aria-selected': (S.tasksView || 'active') === id ? 'true' : 'false', onclick: () => { S.tasksView = id; renderAgentsPage(); } }, label, n ? h('small', { text: String(n) }) : null)));
   return seg;
 }
@@ -2022,3 +2022,147 @@ function paneVoice() {
     h('div', { id: 'voice-result', class: 'recipe-note', hidden: '' }))];
   return out;
 }
+
+// ---------- board: work lined up for the agent, in columns ----------
+// A card is a piece of work with a title, a few lines of detail and, if you like, the agent that should do it. Moving it
+// to Ready starts it as a background task (when it has an agent); it sits in Running while the task works and lands in
+// Review with what the task reported. Nothing starts by itself: only you, or the agent with your OK, move a card to Ready.
+// draft is what is typed in the add box, kept across redraws: the screen refreshes itself while work is going on.
+const BOARD = { on: false, cards: [], agents: [], columns: ['backlog', 'ready', 'running', 'review', 'done'], main: 'main', draft: { title: '', agent: '' } };
+const BOARD_NAMES = { backlog: 'Backlog', ready: 'Ready', running: 'Running', review: 'Review', done: 'Done' };
+const BOARD_NOTE = {
+  backlog: 'Ideas and to-dos. Nothing here does anything yet.',
+  ready: 'Starts as a background task when it has an agent and there is room (three at a time).',
+  running: 'Being worked on now.',
+  review: 'Finished. Read what it reported, then mark it done or run it again.',
+  done: 'Looked at and closed.',
+};
+function boardTake(d) {
+  BOARD.on = !!d.available; BOARD.cards = d.cards || []; BOARD.agents = d.agents || [];
+  if (d.columns) BOARD.columns = d.columns;
+  if (d.main) BOARD.main = d.main;
+}
+async function loadBoard() {
+  try { boardTake(await api('/api/board')); } catch (e) { if (e instanceof AuthError) return; }
+  if (S.tab === 'agents' && S.tasksView === 'board') drawLanes();
+}
+async function boardAct(body, done) {
+  try { const d = await api('/api/board', { method: 'POST', body }); boardTake(d); if (done) toast(done); if (S.tab === 'agents' && S.tasksView === 'board') drawLanes(); return d; }
+  catch (e) { failed(e); return null; }
+}
+function boardAgentLabel(a) { return !a ? 'No agent yet' : a === BOARD.main ? 'Talaria' : a; }
+function boardAgentSelect(value) {
+  const sel = h('select', { class: 'rule-select', 'aria-label': 'Who does it' },
+    h('option', { value: '', text: 'Pick later' }), h('option', { value: BOARD.main, text: 'Talaria (no saved agent)' }),
+    BOARD.agents.map((n) => h('option', { value: n, text: n })));
+  sel.value = BOARD.agents.includes(value) || value === BOARD.main ? value : '';
+  return sel;
+}
+function boardLine(text, n) { const s = String(text || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+
+function boardCard(c) {
+  const chips = [h('span', { class: 'kchip' + (c.agent ? '' : ' quiet'), text: boardAgentLabel(c.agent) })];
+  if (c.allow_risky) chips.push(h('span', { class: 'kchip warn', title: 'Its task may use tools that normally ask you first', text: 'may act freely' }));
+  if (c.status) chips.push(h('span', { class: 'kchip ' + (c.status === 'failed' ? 'bad' : 'quiet'), text: { failed: 'failed', cancelled: 'stopped', lost: 'lost' }[c.status] || c.status }));
+  const btn = (label, onclick, cls) => h('button', { class: 'btn small' + (cls ? ' ' + cls : ''), type: 'button', text: label, onclick });
+  const acts = [];
+  const start = () => (c.agent ? boardAct({ action: 'move', id: c.id, column: 'ready' }, 'Started: it runs as a background task.') : openCardForm(c, 'Pick who should do this, then start it.'));
+  if (c.column === 'backlog') acts.push(btn('Start', start, 'primary'));
+  if (c.column === 'ready') acts.push(btn('Back', () => boardAct({ action: 'move', id: c.id, column: 'backlog' })));
+  if (c.column === 'running') {
+    acts.push(btn('Stop', () => boardAct({ action: 'stop', id: c.id }, 'Stopping it.')));
+    if (c.job && RUNS.on) acts.push(btn('Watch', () => openRun(c.job)));
+  }
+  if (c.column === 'review') {
+    acts.push(btn('Done', () => boardAct({ action: 'move', id: c.id, column: 'done' }), 'primary'), btn('Run again', () => boardAct({ action: 'move', id: c.id, column: 'ready' }, 'Started again.')));
+  }
+  if (c.column === 'done') acts.push(btn('Run again', () => boardAct({ action: 'move', id: c.id, column: 'ready' }, 'Started again.')));
+  const note = c.column === 'ready' && !c.agent ? 'Waiting for you to pick who does it.' : c.column === 'running' ? 'Working…' : (c.column === 'review' || c.column === 'done') && c.result ? boardLine(c.result, 160) : '';
+  return h('div', { class: 'kcard ' + c.column + (c.status === 'failed' ? ' failed' : '') },
+    h('button', { type: 'button', class: 'ktitle', title: 'Open', onclick: () => openCardForm(c) }, c.title),
+    h('div', { class: 'kchips' }, chips),
+    note ? h('div', { class: 'knote', text: note }) : null,
+    h('div', { class: 'acts' }, acts));
+}
+function drawLanes() {
+  const box = document.getElementById('board-lanes');
+  if (!box) return;
+  const lanes = BOARD.columns.map((col) => {
+    const cards = BOARD.cards.filter((c) => c.column === col);
+    const body = cards.length ? cards.map(boardCard) : [h('div', { class: 'kempty', text: BOARD_NOTE[col] || '' })];
+    return h('section', { class: 'lane ' + col, 'aria-label': BOARD_NAMES[col] || col }, h('h3', null, BOARD_NAMES[col] || col, h('small', { text: cards.length ? String(cards.length) : '' })), body);
+  });
+  keepScroll(box, () => box.replaceChildren(...lanes));
+}
+function boardPage() {
+  if (!BOARD.on) return [h('div', { class: 'card' }, h('h2', null, 'Board'), h('div', { class: 'empty', text: 'The board is not set up on this server.' }))];
+  const typing = document.activeElement && document.activeElement.getAttribute && document.activeElement.getAttribute('aria-label') === 'New card';
+  const title = h('input', { type: 'text', maxlength: '120', placeholder: 'Add a card: what needs doing?', autocomplete: 'off', 'aria-label': 'New card' });
+  const who = boardAgentSelect(BOARD.draft.agent);
+  title.value = BOARD.draft.title;
+  title.addEventListener('input', () => { BOARD.draft.title = title.value; });
+  who.addEventListener('change', () => { BOARD.draft.agent = who.value; });
+  const add = async () => {
+    if (!title.value.trim()) { toast('Write what the card is for.'); return; }
+    const d = await boardAct({ action: 'add', title: title.value, agent: who.value }, 'Added to the backlog.');
+    if (d) { title.value = ''; BOARD.draft.title = ''; title.focus(); }
+  };
+  title.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+  const form = h('div', { class: 'card board-card' }, h('h2', null, 'Board', h('small', { text: 'work lined up for your agents' })),
+    h('div', { class: 'board-add' }, title, who, h('button', { class: 'btn primary', type: 'button', text: 'Add', onclick: add })),
+    h('div', { class: 'field-note', text: 'A card in Ready with an agent starts by itself, as a background task. Like any task it cannot ask you anything, so what needs your approval is refused unless you allow it on the card.' }));
+  if (typing) setTimeout(() => { title.focus(); title.setSelectionRange(title.value.length, title.value.length); }, 0); // a redraw does not take the keyboard away
+  return [form, h('div', { class: 'board', id: 'board-lanes' })];
+}
+function openCardForm(c, hint) {
+  const body = openPanel(c.title, (BOARD_NAMES[c.column] || c.column) + (c.status ? ' · ' + c.status : ''));
+  const running = c.column === 'running';
+  const title = h('input', { type: 'text', maxlength: '120', autocomplete: 'off' });
+  const text = h('textarea', { maxlength: '4000', rows: '6', placeholder: 'The detail. The task has no memory of any chat, so say everything it needs: names, places, what a good answer looks like.' });
+  const who = boardAgentSelect(c.agent);
+  const risky = h('input', { type: 'checkbox' });
+  title.value = c.title; text.value = c.body || ''; risky.checked = !!c.allow_risky;
+  if (running) for (const el of [title, text, who, risky]) el.disabled = true;
+  const edits = () => ({ id: c.id, title: title.value, body: text.value, agent: who.value, allow_risky: risky.checked });
+  const save = async (after) => {
+    const d = await boardAct({ action: 'edit', ...edits() });
+    if (d && after) after(); else if (d) { toast('Saved.'); closePanel(); }
+  };
+  const acts = [];
+  if (!running) acts.push(h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: () => save() }));
+  if (c.column === 'backlog' || c.column === 'review' || c.column === 'done') {
+    acts.push(h('button', { class: 'btn', type: 'button', text: c.column === 'backlog' ? 'Save and start' : 'Save and run again', onclick: () => {
+      if (!who.value) { toast('Pick who should do this first.'); who.focus(); return; }
+      save(async () => { if (await boardAct({ action: 'move', id: c.id, column: 'ready' }, 'Started: it runs as a background task.')) closePanel(); });
+    } }));
+  }
+  if (c.column === 'ready') acts.push(h('button', { class: 'btn', type: 'button', text: 'Back to backlog', onclick: async () => { if (await boardAct({ action: 'move', id: c.id, column: 'backlog' })) closePanel(); } }));
+  if (running) {
+    acts.push(h('button', { class: 'btn', type: 'button', text: 'Stop it', onclick: async () => { if (await boardAct({ action: 'stop', id: c.id }, 'Stopping it.')) closePanel(); } }));
+    if (c.job && RUNS.on) acts.push(h('button', { class: 'btn', type: 'button', text: 'Watch it work', onclick: () => openRun(c.job) }));
+  } else {
+    const rm = h('button', { class: 'btn', type: 'button', text: 'Remove' });
+    let armed = false;
+    rm.addEventListener('click', async () => {
+      if (!armed) { armed = true; rm.textContent = 'Tap again to remove'; setTimeout(() => { armed = false; rm.textContent = 'Remove'; }, 4000); return; }
+      if (await boardAct({ action: 'remove', id: c.id }, 'Removed.')) closePanel();
+    });
+    acts.push(rm);
+  }
+  if (c.job && RUNS.on && !running && (c.column === 'review' || c.column === 'done')) acts.push(h('button', { class: 'btn', type: 'button', text: 'See what it did', onclick: () => openRun(c.job) }));
+  const out = [h('div', { class: 'card chan-form' },
+    hint ? h('div', { class: 'note', text: hint }) : null,
+    h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Title' }), title),
+    h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Detail' }), text),
+    h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Who does it' }), who),
+    h('label', { class: 'check' }, risky, ' Let its task use tools that normally ask you first (send, change, delete). It cannot ask you while it works.'),
+    running ? h('div', { class: 'field-note', text: 'It is running, so this is read-only. Stop it to change the card.' }) : null,
+    h('div', { class: 'btn-row' }, acts))];
+  if ((c.column === 'review' || c.column === 'done') && c.result) out.push(h('div', { class: 'card' }, h('h2', null, c.status === 'failed' ? 'What went wrong' : 'What it reported'), h('div', { class: 'run-result' }, markdown(c.result))));
+  body.replaceChildren(...out);
+  if (!running) title.focus();
+}
+// A light refresh while a card is working or waiting for room, so it moves across the board by itself.
+setInterval(() => {
+  if (S.tab === 'agents' && S.tasksView === 'board' && !document.hidden && BOARD.cards.some((c) => c.column === 'running' || c.column === 'ready')) loadBoard();
+}, 4000);

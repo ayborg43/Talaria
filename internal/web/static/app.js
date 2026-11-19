@@ -598,7 +598,7 @@ async function loadAgentsPage() {
   if (!body.children.length) body.replaceChildren(h('div', { class: 'skeleton' }));
   try {
     loadSuggestions(); loadRecipes().then(() => { if (S.tab === 'agents' && S.tasksView === 'next') renderAgentsPage(); });
-    const [d, c] = await Promise.all([api('/api/agents'), api('/api/control'), loadRuns(), loadRoutines(), loadPersonas()]);
+    const [d, c] = await Promise.all([api('/api/agents'), api('/api/control'), loadRuns(), loadRoutines(), loadPersonas(), api('/api/board').then(boardTake).catch((e) => { if (e instanceof AuthError) throw e; })]);
     recentAgents = d.recent || []; standing = d.jobs || []; doneTasks = d.tasks || []; ctl = c; S.paused = c.paused;
   } catch (e) { if (e instanceof AuthError) return; toast(e.message); }
   renderAgentsPage();
@@ -643,6 +643,8 @@ function renderAgentsPage() {
   const out = [tasksSeg()];
   if (view === 'active') {
     out.push(needsInputCard(), nowCard(), readyCard(), computerCard());
+  } else if (view === 'board') {
+    out.push(...boardPage());
   } else if (view === 'next') {
     const sug = suggestionsCard(); if (sug) out.push(sug);
     const rec = recipesEntryCard(); if (rec) out.push(rec);
@@ -669,6 +671,7 @@ function renderAgentsPage() {
   }
   const agentsBody = $('#agents-body');
   keepScroll(agentsBody, () => agentsBody.replaceChildren(...out));
+  if (view === 'board') drawLanes();
 }
 let pauseArmed = false, pauseTimer;
 function renderPause() {

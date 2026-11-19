@@ -145,6 +145,19 @@ data class PersonasDto(
     val profiles: List<String> = emptyList(),
 )
 
+/** One card on the board: a piece of work, the agent that does it, and what its last run reported. */
+@Serializable
+data class CardDto(
+    val id: String = "", val title: String = "", val body: String = "", val column: String = "backlog",
+    val agent: String = "", val allow_risky: Boolean = false, val job: String = "", val status: String = "", val result: String = "",
+)
+
+@Serializable
+data class BoardDto(
+    val available: Boolean = false, val columns: List<String> = emptyList(), val cards: List<CardDto> = emptyList(),
+    val agents: List<String> = emptyList(), val main: String = "main", val card: String = "",
+)
+
 @Serializable data class AgendaItem(val title: String = "", val start: String = "", val end: String = "", val allDay: Boolean = false, val where: String = "", val calendar: String = "")
 @Serializable data class MailItem(val id: Long = 0, val from: String = "", val subject: String = "", val at: String = "", val unread: Boolean = false, val needs: Boolean = false, val why: String = "")
 @Serializable data class MailDto(val items: List<MailItem> = emptyList(), val unread: Int = 0)

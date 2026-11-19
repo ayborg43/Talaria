@@ -54,6 +54,13 @@ type Scheduler struct {
 	// Paused, if set and true, holds every job: none is claimed, so each stays due and runs when
 	// the scheduler is no longer paused.
 	Paused func() bool
+	// OnFinish, if set, is told when a job has ended for good, before it is recorded as finished: status is "ok",
+	// "error", "cancelled" or "dropped", and result is what it reported or why it failed. It is not called for a
+	// failure that will be tried again, nor when a shutdown hands the job back to run after the restart.
+	OnFinish func(j Job, status, result string)
+	// OnTick, if set, is called at the start of each look for due jobs, which also happens whenever the scheduler is
+	// woken: a place to start work that was waiting for room.
+	OnTick func()
 
 	Tick        time.Duration // how often to look for due jobs; default 15s
 	Timeout     time.Duration // per-run limit; default 10m
@@ -183,7 +190,16 @@ func (s *Scheduler) waitForRuns() {
 	}
 }
 
+func (s *Scheduler) finished(j Job, status, result string) {
+	if s.OnFinish != nil {
+		s.OnFinish(j, status, result)
+	}
+}
+
 func (s *Scheduler) tick(ctx context.Context) {
+	if s.OnTick != nil {
+		s.OnTick()
+	}
 	if s.sem == nil {
 		n := s.MaxParallel
 		if n <= 0 {
@@ -292,6 +308,7 @@ func say(j Job, ok bool, body string) string {
 
 // finishCancelled reports a job that was cancelled before it started.
 func (s *Scheduler) finishCancelled(ctx context.Context, j Job) {
+	s.finished(j, "cancelled", "")
 	if err := s.Store.Finish(j.ID, s.timeNow(), "cancelled"); err != nil {
 		s.logf("cron: %v", err)
 	}
@@ -313,12 +330,14 @@ func (s *Scheduler) runJob(ctx, rctx context.Context, r *run, j Job) {
 		// itself dropped is removed here as it would have been below.
 		var acted *actedError
 		if errors.Is(err, ErrDrop) {
+			s.finished(j, "dropped", "")
 			if err := s.Store.Remove(j.ID, "", 0); err != nil {
 				s.logf("cron: %v", err)
 			}
 		} else if errors.As(err, &acted) {
 			// It had already acted when the shutdown cut it off: running it again after the restart could do the
 			// same thing twice. It ends here, and is kept with the finished tasks for the user to start again.
+			s.finished(j, "error", "stopped by a restart after it had already acted")
 			if err := s.Store.FinishFinal(j.ID, started, "error: stopped by a restart after it had already acted"); err != nil {
 				s.logf("cron: %v", err)
 			}
@@ -331,6 +350,7 @@ func (s *Scheduler) runJob(ctx, rctx context.Context, r *run, j Job) {
 	cancelled := r.cancelled
 	s.mu.Unlock()
 	if cancelled { // the user stopped it: say so, whatever it was in the middle of
+		s.finished(j, "cancelled", "")
 		if err := s.Store.Finish(j.ID, started, "cancelled"); err != nil {
 			s.logf("cron: %v", err)
 		}
@@ -352,6 +372,7 @@ func (s *Scheduler) runJob(ctx, rctx context.Context, r *run, j Job) {
 		metrics.Inc("talaria_jobs_total", "kind", kind, "result", "delivered")
 	}
 	if errors.Is(err, ErrDrop) {
+		s.finished(j, "dropped", "")
 		s.logf("cron: dropping job %s", j.ID)
 		if err := s.Store.Remove(j.ID, "", 0); err != nil {
 			s.logf("cron: %v", err)
@@ -373,6 +394,18 @@ func (s *Scheduler) runJob(ctx, rctx context.Context, r *run, j Job) {
 		status = "ok (silent)"
 	default:
 		text = say(j, true, strings.TrimSpace(reply))
+	}
+	switch {
+	case err != nil && !final && s.Store.wouldRetry(j):
+		// it will be tried again: the job has not ended
+	case err != nil && errors.Is(err, context.DeadlineExceeded) && runCtx.Err() != nil:
+		s.finished(j, "error", "it ran out of time")
+	case err != nil:
+		s.finished(j, "error", err.Error())
+	case strings.HasPrefix(strings.TrimSpace(reply), Silent):
+		s.finished(j, "ok", "Nothing to report.")
+	default:
+		s.finished(j, "ok", strings.TrimSpace(reply))
 	}
 	finish := s.Store.Finish
 	if final {

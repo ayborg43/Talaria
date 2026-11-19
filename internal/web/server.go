@@ -31,6 +31,7 @@ import (
 	"talaria/internal/config"
 	"talaria/internal/execenv"
 	"talaria/internal/files"
+	"talaria/internal/kanban"
 	"talaria/internal/memory"
 	"talaria/internal/vault"
 
@@ -119,6 +120,9 @@ type Sources struct {
 	Runs *RunHooks
 	// Routines connects saved routines to the scheduler. Nil leaves running and scheduling out.
 	Routines *RoutineHooks
+	// Board connects the board's cards to what starts and stops them. Nil leaves starting to the scheduler's next
+	// look and stopping out; the cards themselves are Server.Cards.
+	Board *BoardHooks
 	// Zone is the time zone the person lives in.
 	Zone *time.Location
 }
@@ -138,6 +142,8 @@ type Server struct {
 	Sources Sources
 	// Runs is the record of what each background run did, for the Activity view. Nil leaves Activity out.
 	Runs *runlog.Log
+	// Cards is the board of work lined up for the agent, as the Tasks screen shows it. Nil leaves the board out.
+	Cards *kanban.Store
 	// Rec and Routines record what the user does by hand in the agent's browser, and keep the routines made from it.
 	// Nil leaves routines out.
 	Rec      *routine.Recorder
@@ -287,6 +293,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/personas", s.authed(s.personasPost))
 	mux.HandleFunc("GET /api/routines", s.authed(s.routinesGet))
 	mux.HandleFunc("POST /api/routines", s.authed(s.routinesPost))
+	mux.HandleFunc("GET /api/board", s.authed(s.boardGet))
+	mux.HandleFunc("POST /api/board", s.authed(s.boardPost))
 	mux.HandleFunc("GET /api/runs", s.authed(s.runsGet))
 	mux.HandleFunc("GET /api/runs/{id}", s.authed(s.runGet))
 	mux.HandleFunc("POST /api/runs/{id}/steer", s.authed(s.runSteer))

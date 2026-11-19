@@ -183,3 +183,35 @@ func StartRoutine(s *Store, ctl Control, gateway string, chatID int64, name, rou
 	}
 	return j, nil
 }
+
+// tooManyTasks is the error for a chat that already has its most tasks going. It reads as it always did, and IsBusy
+// tells it from a real failure, for a caller that can simply try again later.
+type tooManyTasks string
+
+func (e tooManyTasks) Error() string { return string(e) }
+
+// IsBusy reports whether err means the chat has as many tasks going as it may.
+func IsBusy(err error) bool {
+	var t tooManyTasks
+	return errors.As(err, &t)
+}
+
+// StartTask starts a background task from a job the caller has filled in (name, prompt, chat, agent, card and so on),
+// within the same limit on how many run at once as any task the user starts, and wakes the scheduler.
+func StartTask(s *Store, ctl Control, j Job) (Job, error) {
+	if j.Gateway == "" {
+		j.Gateway = DefaultGateway
+	}
+	j.Kind = KindTask
+	if j.TimeoutSec <= 0 {
+		j.TimeoutSec = defaultTaskMinutes * 60
+	}
+	j, err := s.AddTask(j, runningTasks(ctl, j.Gateway, j.ChatID), maxTasksPerChat)
+	if err != nil {
+		return Job{}, err
+	}
+	if ctl != nil {
+		ctl.Wake()
+	}
+	return j, nil
+}

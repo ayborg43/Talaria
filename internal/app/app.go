@@ -23,6 +23,7 @@ import (
 	"talaria/internal/goal"
 	"talaria/internal/guard"
 	"talaria/internal/idea"
+	"talaria/internal/kanban"
 	"talaria/internal/mailbox"
 	"talaria/internal/mcp"
 	"talaria/internal/memory"
@@ -102,6 +103,8 @@ type Config struct {
 	Choices *choice.Store
 	// Ideas keeps suggestions with source evidence. Nil turns the idea tools off.
 	Ideas *idea.Store
+	// Cards keeps the board of work lined up for the agent and the user. Nil turns the kanban tools off.
+	Cards *kanban.Store
 	// Files keeps uploads from the web app and PDFs the agent makes, served
 	// back as downloads. Nil turns the file tools off.
 	Files *files.Store
@@ -142,7 +145,8 @@ type Runtime struct {
 	triggers      *trigger.Store     // what the phone may tell the agent about; set by the gateway
 	agents        *persona.Store     // the user's saved agents, for agent_create; set by the gateway
 	agentProfiles func() []string
-	docs          *docsearch.Index // search over the person's files and notes; set by the gateway
+	docs          *docsearch.Index   // search over the person's files and notes; set by the gateway
+	kanban        *kanban.Dispatcher // starts the board's Ready cards as tasks; set by the gateway
 
 	cfg      Config
 	provider provider.Provider
@@ -393,6 +397,24 @@ func (rt *Runtime) SetDocs(ix *docsearch.Index) { rt.docs = ix }
 
 // Files is the store of files Talaria keeps for the person, nil when there is none.
 func (rt *Runtime) Files() *files.Store { return rt.cfg.Files }
+
+// SetKanban gives the board its dispatcher, which starts a Ready card as a background task.
+func (rt *Runtime) SetKanban(d *kanban.Dispatcher) { rt.kanban = d }
+
+// Cards is the board, nil when there is none.
+func (rt *Runtime) Cards() *kanban.Store { return rt.cfg.Cards }
+
+// SavedAgentNames are the names of the agents the person saved, as the main agent may hand work to.
+func (rt *Runtime) SavedAgentNames() []string {
+	if rt.pool == nil || rt.pool.Named == nil {
+		return nil
+	}
+	var names []string
+	for _, n := range rt.pool.Named() {
+		names = append(names, n.Name)
+	}
+	return names
+}
 
 // SetNamed lets the main agent hand a task to one of the user's saved agents by name.
 func (rt *Runtime) SetNamed(list func() []subagent.Named) {

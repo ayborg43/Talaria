@@ -1292,6 +1292,31 @@ of it, name it, and save. It is then listed under **Tasks, Up next, Routines**, 
   would ask: no shell, files or mail, and nothing that follows something read on a page. A click or keypress that would delete or post is refused
   outright, even if your rules would allow it. If a page wants a password or a code it uses `browser_handoff` and asks you to take over.
 
+### The board
+
+**Tasks, Board** is a kanban board for work you line up for your agents. A card has a title, up to 4,000 characters of detail, an agent to do
+it (one of your saved agents, or **Talaria** itself) and a switch for whether its task may use tools that normally ask you first. The columns
+are **Backlog, Ready, Running, Review and Done**.
+
+- **Nothing starts by itself.** A card does nothing in Backlog. Moving it to Ready, which you do with **Start** (or the agent does, and you are
+  asked first), hands it to the scheduler as an ordinary background task. A card in Ready with no agent just waits for you to pick one.
+- **It is a normal task.** It has its own copy of the tools, no memory of any chat (so the card must say everything), the chat's limit of three at
+  a time (a card that finds no room stays Ready and starts when one finishes, in the order the cards were placed), and the same rule about
+  risk: it cannot ask you anything, so tools that need approval are refused unless the card says **Let it act freely**. It is logged and delivered
+  like any task, so it also shows under Active, Ready for review and History.
+- **A saved agent works as that agent.** Its instructions are added after the usual ones, its model is used (if that model cannot be opened just
+  now, the chat's own does the work), and a **Looks only** agent gets nothing that needs approval, whatever the card allowed. If the agent was
+  removed in the meantime the card goes to Review as failed instead of running as something else.
+- **The card follows the task.** It sits in Running with **Stop** and **Watch** (the run's steps), then lands in Review with what the task
+  reported (secrets scrubbed). A task that failed, was stopped or was lost to a restart lands there too, marked as such. A failure is tried again
+  twice, a few minutes apart, like any task (and not at all if it had already acted), so a card can stay in Running while it waits. **Done**
+  closes it; **Run again** clears the last run and starts another.
+- **The agent's tools** are `kanban_list`, `kanban_add`, `kanban_move` and `kanban_remove`. A new card goes to Backlog and does nothing; adding or
+  moving one to Ready, or giving it the risky switch, or stopping a running one, asks you first. Work that came from a card, and scheduled jobs,
+  can only read the board, so a card's task cannot start more cards; subagents cannot touch it either.
+- Cards belong to the chat they were made in, up to 200 per chat. They are kept in `~/.talaria/sessions.db`. The Android app has the same board
+  under Tasks, Board.
+
 ### Named agents
 
 **Tasks, Up next, Your agents** lets you make up to eight named agents: a name, an icon, what it is for and how it should behave
@@ -1640,6 +1665,7 @@ and how it ended.
 | `internal/sse` | server-sent-events reader shared by the model providers and MCP |
 | `internal/routine` | the recorder that writes down what you do by hand in the agent's browser, and the saved routines made from it |
 | `internal/persona` | named agents: a name, instructions, a model profile and a looks-only switch |
+| `internal/kanban` | the board: cards in columns, the dispatcher that starts a Ready card as a task and follows it to Review, and the `kanban_*` tools |
 | `internal/runlog` | the short record of each background run for the Activity view, and the queue of what you tell a running task |
 | `internal/goal` | goals: plan, progress notes, check-in schedule and the tools to work on them |
 | `internal/vault` | the encrypted store of saved logins, service sign-ins and where each may be used |

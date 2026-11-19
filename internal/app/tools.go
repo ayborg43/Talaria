@@ -19,6 +19,7 @@ import (
 	"talaria/internal/finance"
 	"talaria/internal/goal"
 	"talaria/internal/idea"
+	"talaria/internal/kanban"
 	"talaria/internal/mailbox"
 	"talaria/internal/memory"
 	"talaria/internal/notify"
@@ -98,6 +99,17 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 			// A job starts nothing, but one that is allowed to propose (the morning brief) may leave suggestions:
 			// they only wait for the user's Start.
 			Create: !o.NoCron || o.Suggest,
+		})
+	}
+	if o.ChatID != 0 && rt.cfg.Cards != nil {
+		gw, chat, ctl := o.gatewayOrDefault(), o.ChatID, o.Tasks
+		kanban.RegisterTools(tools, kanban.Binding{
+			Store: rt.cfg.Cards, Gateway: gw, ChatID: chat, Agents: rt.SavedAgentNames,
+			Kick: func() { rt.kanban.Sweep(gw, ctl) },
+			Stop: func(job string) bool { return ctl != nil && ctl.Cancel(gw, chat, job) },
+			// Work that came from a card, or any other job, only reads the board: it cannot start more work. Nor can a
+			// chat without a scheduler (the command line): nothing there would ever start a card.
+			Create: !o.NoCron && ctl != nil,
 		})
 	}
 	rt.mcp.Register(tools)

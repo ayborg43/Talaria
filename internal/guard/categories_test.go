@@ -110,3 +110,40 @@ func TestNoCategoryCanSilenceTheApprovalForASavedLogin(t *testing.T) {
 		}
 	}
 }
+
+// The board starts work, so a rule on "Schedule and start work" has to cover it, or the board would be a way round
+// "never start work". "Always allow" is not offered for starting a card, as it is not for starting a task.
+func TestTheBoardFollowsTheRulesForStartingWork(t *testing.T) {
+	sched, ok := CategoryByID("schedule")
+	if !ok {
+		t.Fatal("no schedule category")
+	}
+	for _, tl := range []string{"kanban_add", "kanban_move", "kanban_remove"} {
+		if !slicesContains(sched.Tools, tl) {
+			t.Errorf("%s is not covered by the rules for starting work", tl)
+		}
+	}
+	rules, err := SetMode(nil, sched, ModeDeny)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tl := range []string{"task_start", "kanban_move", "kanban_add"} {
+		if rules[tl] != ModeDeny {
+			t.Errorf("a never rule on starting work leaves %s open: %q", tl, rules[tl])
+		}
+	}
+	for _, tl := range []string{"task_start", "kanban_move", "kanban_add"} {
+		if !slicesContains(DefaultNoRemember, tl) {
+			t.Errorf("%s offers always allow, which would cover every later card too", tl)
+		}
+	}
+}
+
+func slicesContains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}

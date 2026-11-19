@@ -18,6 +18,7 @@ import (
 	"talaria/internal/execenv"
 	"talaria/internal/gateway/chat"
 	"talaria/internal/goal"
+	"talaria/internal/persona"
 )
 
 // gatewayJobTargets says which profiles and environments a job scheduled from a
@@ -61,6 +62,8 @@ type jobRunner struct {
 	runs *runlog.Log
 	// routines holds the routines the user recorded; a job that names one repeats it.
 	routines *routine.Store
+	// agents holds the user's saved agents; a task that names one (a kanban card's) works as that agent.
+	agents *persona.Store
 }
 
 func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
@@ -71,11 +74,22 @@ func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
 		return r.runWatch(ctx, j)
 	}
 
+	var named *persona.Agent
+	if j.Agent != "" {
+		a, ok := r.savedAgent(j.Agent)
+		if !ok {
+			return "", fmt.Errorf("there is no saved agent called %q any more", j.Agent)
+		}
+		named = &a
+	}
 	var backend *chat.Backend
 	profile, routine := j.Profile, false
 	if profile == "" && j.Kind == "" && r.routine != nil { // a plain scheduled prompt that names no model: routine work
 		profile = r.routine()
 		routine = profile != ""
+	}
+	if profile == "" && named != nil && named.Profile != "" { // the saved agent's own model, like the chat would use it
+		profile, routine = named.Profile, true // if it cannot be opened just now, the chat's own does the work
 	}
 	if profile != "" {
 		b, err := r.backend(profile)
@@ -103,6 +117,9 @@ func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
 	if final != "" { // there is nothing to run: this is the whole result
 		return final, nil
 	}
+	if named != nil { // it changes how the agent works, never what it may do
+		note += "\n\n" + named.System()
+	}
 
 	// Nobody is watching: risky tools run only if the job was created with allow_risky.
 	approve := func(string, string) bool { return r.yolo || j.AllowRisky }
@@ -119,6 +136,9 @@ func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
 		Suggest: j.Kind == "" && j.Name == briefName,
 	})
 	a.RefuseRisky = j.Routine != "" // a routine clicks and types as shown, but never deletes or posts
+	if named != nil && named.ReadOnly {
+		a.ReadOnly = true // a look-only agent gets nothing that needs approval, whatever the card allowed
+	}
 	if r.sink != nil {
 		id := activity.ID(ctx)
 		a.OnToolStart = func(name, _ string) { activity.Note(r.sink, id, name) }
@@ -135,6 +155,19 @@ func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
 		return reply, cron.Acted(err)
 	}
 	return reply, err
+}
+
+// savedAgent finds one of the user's saved agents by name.
+func (r *jobRunner) savedAgent(name string) (persona.Agent, bool) {
+	if r.agents == nil {
+		return persona.Agent{}, false
+	}
+	for _, a := range r.agents.List() {
+		if strings.EqualFold(a.Name, name) {
+			return a, true
+		}
+	}
+	return persona.Agent{}, false
 }
 
 func (r *jobRunner) backend(name string) (chat.Backend, error) {

@@ -50,7 +50,8 @@ func (l Limits) Validate() error {
 // schedules) and decides what is worth keeping, and a subagent cannot start
 // more subagents, so delegation cannot run away.
 var excluded = []string{"delegate", "memory", "skill_save", "skill_delete", "cron_add", "cron_remove",
-	"task_start", "task_cancel", "goal_create", "goal_update", "watch_create", "watch_update", "agent_create"}
+	"task_start", "task_cancel", "goal_create", "goal_update", "watch_create", "watch_update", "agent_create",
+	"kanban_add", "kanban_move", "kanban_remove"}
 
 const framing = `You are a subagent working for Talaria, a personal agent. The main agent has delegated one task to you.
 You work alone: you cannot talk to the user or ask questions, and you cannot see the main conversation, so rely only on the task and your tools.

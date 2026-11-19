@@ -12,6 +12,7 @@ import (
 	"sync"
 	"talaria/internal/docsearch"
 	"talaria/internal/evals"
+	"talaria/internal/kanban"
 	"talaria/internal/persona"
 	"talaria/internal/phone"
 	"talaria/internal/routine"
@@ -181,6 +182,20 @@ func runGateway(c *cli) error {
 	agents := &persona.Store{Path: filepath.Join(c.home, "agents.json")}
 	c.rt.SetNamed(namedAgents(agents))
 	c.rt.SetAgents(agents, c.cfg.ProfileNames) // the agent may suggest one; the user approves each
+	// The board: a Ready card that has an agent starts as a background task, and follows it to Review.
+	var board *kanban.Dispatcher
+	if cards := c.rt.Cards(); cards != nil {
+		board = &kanban.Dispatcher{Cards: cards, Jobs: c.rt.Cron, Logf: func(f string, a ...any) { c.log.Warn(fmt.Sprintf(f, a...)) },
+			Known: func(name string) bool {
+				for _, n := range c.rt.SavedAgentNames() {
+					if strings.EqualFold(n, name) {
+						return true
+					}
+				}
+				return false
+			}}
+		c.rt.SetKanban(board)
+	}
 	// "When this happens on my phone, do that": the phone reports events, and each one starts a background job in the web chat.
 	triggers := &trigger.Store{Path: filepath.Join(c.home, "triggers.json")}
 	if hub := c.rt.Phone(); hub != nil {
@@ -258,13 +273,16 @@ func runGateway(c *cli) error {
 			note, taskText = cronNoteMarkdown, taskNoteMarkdown
 		}
 		runner := &jobRunner{rt: c.rt, backends: backends, envs: s.envs, allowed: s.allowed, note: note, taskNote: taskText, goals: c.rt.Goals(), yolo: c.yolo, sink: s.sink, runs: runs, routines: routines,
-			routine: c.cfg.RoutineProfileName}
+			routine: c.cfg.RoutineProfileName, agents: agents}
 		s.sched = &cron.Scheduler{
 			Store:    c.rt.Cron,
 			Gateway:  s.name,
 			Exec:     runner.run,
 			Paused:   pause.Paused,
 			Activity: s.sink,
+			// A card follows its task, and a card that was waiting for room starts when a task ends or at the next look.
+			OnFinish: board.Finished,
+			OnTick:   func() { board.Sweep(s.name, s.sched) },
 			Deliver: func(ctx context.Context, chatID int64, text string) {
 				if s.allowed[chatID] {
 					s.send(ctx, chatID, text)
@@ -450,6 +468,7 @@ func runGateway(c *cli) error {
 			ReceiptsPath: filepath.Join(c.home, "computer_receipts.json"),
 			AGUIKey:      webSet.AGUIKey,
 			Runs:         runs,
+			Cards:        c.rt.Cards(),
 			Rec:          &routine.Recorder{},
 			Agents:       agents,
 			Routines:     routines,
@@ -477,6 +496,10 @@ func runGateway(c *cli) error {
 		srv.Sources.Recipes = webRecipes(c.rt, c.rt.Cron, zone, func() cron.Control { return s.sched })
 		srv.Sources.Routines = webRoutineHooks(c.rt, routines, c.rt.Cron, zone, func() *cron.Scheduler { return s.sched })
 		srv.Sources.Runs = webRunHooks(c.rt, runs, c.rt.Cron, func() *cron.Scheduler { return s.sched })
+		srv.Sources.Board = &web.BoardHooks{
+			Kick: func() { board.Sweep(s.name, s.sched) },
+			Stop: func(job string) bool { return s.sched != nil && s.sched.Cancel(s.name, web.ChatID, job) },
+		}
 		srv.Sources.RetryTask = func(id string) error {
 			_, err := cron.RetryChatTask(c.rt.Cron, s.sched, s.name, web.ChatID, id)
 			return err

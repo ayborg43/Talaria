@@ -42,6 +42,7 @@ import (
 	"talaria/internal/goal"
 	"talaria/internal/guard"
 	"talaria/internal/idea"
+	"talaria/internal/kanban"
 	"talaria/internal/mcp"
 	"talaria/internal/phone"
 	"talaria/internal/provider"
@@ -254,6 +255,7 @@ func (c *cli) setupModel(gateway bool) (err error) {
 		Browser: browserConfig(c.cfg), Goals: &goal.Store{Path: filepath.Join(c.home, "sessions.db")},
 		Watches: &watch.Store{Path: filepath.Join(c.home, "sessions.db")},
 		Ideas:   &idea.Store{Path: filepath.Join(c.home, "sessions.db")},
+		Cards:   &kanban.Store{Path: filepath.Join(c.home, "sessions.db")},
 		Choices: &choice.Store{Path: filepath.Join(c.home, "sessions.db")},
 		Files: &files.Store{Dir: filepath.Join(c.home, "files"),
 			MaxTotalBytes: files.QuotaBytes(c.cfg.Files.MaxTotalMB),

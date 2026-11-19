@@ -959,3 +959,30 @@ html{caret-color:var(--brass-text);accent-color:var(--brass);scrollbar-color:var
 .reply-meta .thumb:hover{border-color:var(--line)}
 .reply-meta .thumb.on{background:var(--brass-soft);border-color:var(--brass-line)}
 .reply-meta .thumb:disabled{opacity:.5;cursor:default}
+
+/* ---- board ---- */
+.board-add{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.board-add input{flex:1 1 240px;min-width:0;height:46px;border-radius:14px;border:1px solid var(--field-line);background:var(--field);padding:0 14px;font-size:16px;outline:none}
+.board-add input:focus{border-color:var(--brass)}
+#agents-body>.board,#agents-body>.board-card{grid-column:1/-1}
+.board-add select{flex:0 1 190px;min-width:0;height:46px}
+.board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(250px,1fr);gap:12px;overflow-x:auto;padding:2px 0 10px;align-items:start;scroll-snap-type:x proximity}
+.lane{background:var(--sunk);border:1px solid var(--line2);border-radius:16px;padding:10px;min-width:0;scroll-snap-align:start}
+.lane h3{display:flex;align-items:center;justify-content:space-between;margin:2px 4px 10px;font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.lane h3 small{font-weight:600;color:var(--faint);letter-spacing:0}
+.lane.running h3{color:var(--brass-text)}.lane.review h3{color:var(--info)}.lane.done h3{color:var(--faint)}
+.kempty{padding:14px 8px;font-size:13px;line-height:1.4;color:var(--faint);text-align:center}
+.kcard{display:flex;flex-direction:column;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px}
+.kcard.running{border-color:var(--brass-line);background:var(--brass-soft)}
+.kcard.failed{border-color:var(--bad-line)}
+.kcard.done{opacity:.78}
+.ktitle{all:unset;display:block;cursor:pointer;font-weight:600;font-size:14.5px;line-height:1.35;color:var(--ink);overflow-wrap:anywhere}
+.ktitle:focus-visible{outline:2px solid var(--brass-text);outline-offset:2px;border-radius:6px}
+.kchips{display:flex;flex-wrap:wrap;gap:6px}
+.kchip{font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--bubble);color:var(--ink2)}
+.kchip.quiet{color:var(--muted);background:var(--sunk)}.kchip.warn{background:var(--brass-tint);color:var(--brass-text)}.kchip.bad{background:var(--bad-tint);color:var(--bad)}
+.knote{font-size:12.5px;line-height:1.4;color:var(--muted);overflow-wrap:anywhere}
+.kcard .acts{display:flex;flex-wrap:wrap;gap:6px}
+@media (max-width:700px){
+  .board{grid-auto-flow:row;grid-auto-columns:auto;overflow:visible}
+}

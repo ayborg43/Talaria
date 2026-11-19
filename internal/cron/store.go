@@ -59,6 +59,11 @@ type Job struct {
 	Routine string `json:"routine,omitempty"`
 	// Parent is the run (see package runlog) this task follows up, when the user wrote to a finished task to carry it on.
 	Parent string `json:"parent,omitempty"`
+	// Agent is the saved agent (see package persona) that does a task: its instructions are added, its model is used
+	// unless the job names one, and a look-only agent gets no tool that needs approval. "main" or "" is Talaria's own.
+	Agent string `json:"agent,omitempty"`
+	// Card is the kanban card (see package kanban) this task works on; the card follows the task.
+	Card string `json:"card,omitempty"`
 	// RecipeValues is what the user filled in for it (a topic), so the app can show it again when the recipe is changed.
 	RecipeValues map[string]string `json:"recipe_values,omitempty"`
 	// TimeoutSec overrides how long one run may take; 0 means the scheduler's own limit.
@@ -335,7 +340,7 @@ func (s *Store) AddTask(j Job, running map[string]bool, max int) (Job, error) {
 		}
 	}
 	if n >= max {
-		return Job{}, fmt.Errorf("this chat already has %d background tasks going (the most is %d): wait for one to finish or cancel one with task_cancel", n, max)
+		return Job{}, tooManyTasks(fmt.Sprintf("this chat already has %d background tasks going (the most is %d): wait for one to finish or cancel one with task_cancel", n, max))
 	}
 	return s.insertLocked(jobs, j)
 }
