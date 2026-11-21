@@ -1,6 +1,8 @@
 <resources>
     <string name="app_name">Talaria</string>
     <string name="widget_description">Ask Talaria, start a voice conversation, and see what is running or waiting for you.</string>
+    <string name="widget_board_label">Talaria board</string>
+    <string name="widget_board_description">How many cards on your board are Ready, Running and waiting for a look in Review. Tap to open the board.</string>
     <string name="shortcut_talk">Talk</string>
     <string name="shortcut_talk_long">Talk with Talaria</string>
     <string name="shortcut_new">New chat</string>

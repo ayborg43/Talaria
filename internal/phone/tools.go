@@ -13,7 +13,8 @@ import (
 // maxResult bounds what one call hands the model: a long list of notifications is cut, not sent whole.
 const maxResult = 8000
 
-// RegisterTools gives the agent two read-only tools for the user's phone. They are split by how far the answer can be
+// RegisterTools gives the agent two read-only tools for the user's phone, and one (phone_do, in write.go) that does a
+// few small things on it. The reads are split by how far the answer can be
 // trusted: the phone's own state is the phone speaking; a notification, a calendar entry and a contact are text other
 // people wrote, so reading one marks the conversation as having read outside content (see tool.Tool.Untrusted).
 func RegisterTools(r *tool.Registry, h *Hub) {
@@ -90,6 +91,7 @@ func RegisterTools(r *tool.Registry, h *Hub) {
 			return ask(ctx, h, a.What, send)
 		},
 	})
+	registerDo(r, h)
 }
 
 func ask(ctx context.Context, h *Hub, op string, args json.RawMessage) (string, error) {

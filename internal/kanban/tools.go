@@ -81,6 +81,8 @@ func RegisterTools(r *tool.Registry, b Binding) {
 	if names := b.agents(); len(names) > 0 {
 		agentHelp += ". Saved agents: " + strings.Join(names, ", ")
 	}
+	helpJSON, _ := json.Marshal(agentHelp) // it holds quotation marks, so it must be written as a JSON string, not pasted in
+	moveHelpJSON, _ := json.Marshal(agentHelp + "; only when moving to ready")
 	r.Register(tool.Tool{
 		Name: "kanban_add",
 		Description: "Put a card on the user's board: a piece of work to do. It goes to Backlog unless you say \"ready\", and it does nothing there. " +
@@ -91,7 +93,7 @@ func RegisterTools(r *tool.Registry, b Binding) {
 			"title":{"type":"string","description":"a short name, at most 120 characters"},
 			"body":{"type":"string","description":"the detail: complete and self-contained"},
 			"column":{"type":"string","enum":["backlog","ready"]},
-			"agent":{"type":"string","description":"` + agentHelp + `"},
+			"agent":{"type":"string","description":` + string(helpJSON) + `},
 			"allow_risky":{"type":"boolean"}},
 			"required":["title"]}`),
 		NeedsApprovalFor: func(raw json.RawMessage) bool {
@@ -119,7 +121,7 @@ func RegisterTools(r *tool.Registry, b Binding) {
 		Schema: json.RawMessage(`{"type":"object","properties":{
 			"id":{"type":"string"},
 			"column":{"type":"string","enum":["backlog","ready","review","done"]},
-			"agent":{"type":"string","description":"` + agentHelp + `; only when moving to ready"},
+			"agent":{"type":"string","description":` + string(moveHelpJSON) + `},
 			"allow_risky":{"type":"boolean","description":"only when moving to ready"}},
 			"required":["id","column"]}`),
 		NeedsApprovalFor: func(raw json.RawMessage) bool {

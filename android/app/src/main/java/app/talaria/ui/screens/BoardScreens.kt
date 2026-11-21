@@ -98,6 +98,9 @@ internal fun BoardTab(repo: Repo, onWatch: (String) -> Unit, onOpenCard: (CardDt
     fun move(c: CardDto, column: String, done: String? = null) = act(buildJsonObject { put("action", "move"); put("id", c.id); put("column", column) }, done)
 
     val b = board.value
+    // The board widget on the home screen shows the same counts: hand it these instead of making it ask again.
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    androidx.compose.runtime.LaunchedEffect(b) { if (b != null) app.talaria.widget.BoardWidget.pushBoard(ctx, b) }
     PullToRefreshBox(refreshing, onRefresh = { scope.launch { refreshing = true; board.refresh(); kotlinx.coroutines.delay(500); refreshing = false } }, modifier = Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
             item {

@@ -91,9 +91,29 @@ type wireRequest struct {
 	Stream          bool             `json:"stream,omitempty"`
 	Thinking        *wireThinking    `json:"thinking,omitempty"`
 	ReasoningEffort string           `json:"reasoning_effort,omitempty"`
+	// StreamOptions asks a streaming reply to end with its token counts, which is how the cost of a request is known.
+	StreamOptions *wireStreamOptions `json:"stream_options,omitempty"`
+}
+
+type wireStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
+// wireUsage is the token count an OpenAI-compatible service reports.
+type wireUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+}
+
+func (u *wireUsage) get() Usage {
+	if u == nil {
+		return Usage{}
+	}
+	return Usage{In: u.PromptTokens, Out: u.CompletionTokens}
 }
 
 type wireResponse struct {
+	Usage   *wireUsage `json:"usage"`
 	Choices []struct {
 		Message      wireMessage `json:"message"`
 		FinishReason string      `json:"finish_reason"`
@@ -104,6 +124,7 @@ type wireResponse struct {
 }
 
 type streamChunk struct {
+	Usage   *wireUsage `json:"usage"`
 	Choices []struct {
 		Delta struct {
 			Content          string `json:"content"`
@@ -126,6 +147,9 @@ type streamChunk struct {
 
 func (o *OpenAI) Chat(ctx context.Context, req Request) (Message, error) {
 	body := wireRequest{Model: req.Model, Stream: req.OnText != nil}
+	if body.Stream {
+		body.StreamOptions = &wireStreamOptions{IncludeUsage: true}
+	}
 	body.Messages = o.toWire(req.Messages)
 	if o.Thinking != "" {
 		body.Thinking = &wireThinking{Type: o.Thinking}
@@ -141,6 +165,11 @@ func (o *OpenAI) Chat(ctx context.Context, req Request) (Message, error) {
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
+		for _, t := range req.Tools { // name the tool whose schema is broken: the encoder's own message does not
+			if len(t.Parameters) > 0 && !json.Valid(t.Parameters) {
+				return Message{}, fmt.Errorf("the tool %q has a schema that is not valid JSON: %.200s", t.Name, string(t.Parameters))
+			}
+		}
 		return Message{}, err
 	}
 
@@ -220,7 +249,7 @@ func parseOpenAI(raw []byte) (Message, error) {
 	}
 
 	c := wr.Choices[0]
-	out := Message{Role: RoleAssistant, Content: c.Message.Content, Reasoning: c.Message.ReasoningContent}
+	out := Message{Role: RoleAssistant, Content: c.Message.Content, Reasoning: c.Message.ReasoningContent, Usage: wr.Usage.get()}
 	for _, tc := range c.Message.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments})
 	}
@@ -237,6 +266,7 @@ func readOpenAIStream(body io.Reader, onText func(string)) (Message, error) {
 		calls     []*ToolCall
 		finished  bool
 		truncated bool
+		usage     Usage
 	)
 	err := sse.Read(body, func(data string) error {
 		if data == "[DONE]" {
@@ -249,6 +279,9 @@ func readOpenAIStream(body io.Reader, onText func(string)) (Message, error) {
 		}
 		if ch.Error != nil {
 			return fmt.Errorf("provider error: %s", ch.Error.Message)
+		}
+		if u := ch.Usage.get(); u.Known() {
+			usage = u
 		}
 		if len(ch.Choices) == 0 { // e.g. a usage-only chunk
 			return nil
@@ -289,7 +322,7 @@ func readOpenAIStream(body io.Reader, onText func(string)) (Message, error) {
 		return Message{}, errors.New("stream ended before the reply was complete")
 	}
 
-	out := Message{Role: RoleAssistant, Content: content.String(), Reasoning: reasoning.String()}
+	out := Message{Role: RoleAssistant, Content: content.String(), Reasoning: reasoning.String(), Usage: usage}
 	for _, c := range calls {
 		out.ToolCalls = append(out.ToolCalls, *c)
 	}

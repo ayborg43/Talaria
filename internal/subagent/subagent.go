@@ -51,7 +51,7 @@ func (l Limits) Validate() error {
 // more subagents, so delegation cannot run away.
 var excluded = []string{"delegate", "memory", "skill_save", "skill_delete", "cron_add", "cron_remove",
 	"task_start", "task_cancel", "goal_create", "goal_update", "watch_create", "watch_update", "agent_create",
-	"kanban_add", "kanban_move", "kanban_remove"}
+	"kanban_add", "kanban_move", "kanban_remove", "phone_do"}
 
 const framing = `You are a subagent working for Talaria, a personal agent. The main agent has delegated one task to you.
 You work alone: you cannot talk to the user or ask questions, and you cannot see the main conversation, so rely only on the task and your tools.
@@ -294,7 +294,7 @@ func (p *Pool) run(ctx context.Context, parent *agent.Agent, background func() s
 		sub.MarkUntrusted()
 	}
 
-	runCtx, cancel := context.WithTimeout(ctx, p.Timeout)
+	runCtx, cancel := context.WithTimeout(provider.WithLabel(ctx, provider.Label{Source: "delegate", Agent: agentName}), p.Timeout)
 	defer cancel()
 	answer, err := sub.Run(runCtx, task)
 	if sub.Acted() {

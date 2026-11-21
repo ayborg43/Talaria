@@ -101,6 +101,7 @@ fun Root(
     if (locked) { Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) { LockedScreen(activity, onUnlocked) }; return }
 
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    var tasksTab by rememberSaveable { mutableIntStateOf(0) } // which tab of Tasks is showing; kept here so the board widget can open the Board
     var draft by rememberSaveable { mutableStateOf("") }
     var chats by remember { mutableStateOf(false) }
     var browser by remember { mutableStateOf(false) }
@@ -127,6 +128,7 @@ fun Root(
             app.talaria.QuickAction.Ask -> askFocus++
             app.talaria.QuickAction.Approvals -> approvalJump++
             app.talaria.QuickAction.Photo -> onTakePhoto()
+            app.talaria.QuickAction.Board -> { tab = Tab.Tasks.ordinal; tasksTab = 1 }
         }
         onQuickHandled()
     }
@@ -154,7 +156,7 @@ fun Root(
             }
             Tab.Today -> TodayScreen(repo, mod, onAsk = { draft = it; tab = 0 }, onChat = { tab = 0 }, onAllFiles = { allFiles = true })
             Tab.Make -> MakeScreen(repo, mod, onStart = { draft = it; tab = 0 }, onAllFiles = { allFiles = true })
-            Tab.Tasks -> TasksHost(repo, mod, onOpenBrowser = { browser = true }, onChat = { tab = 0 })
+            Tab.Tasks -> TasksHost(repo, mod, tasksTab, { tasksTab = it }, onOpenBrowser = { browser = true }, onChat = { tab = 0 })
             Tab.Settings -> SettingsScreen(activity, repo, voice, mod, onAskNotifications = onAskNotifications)
         }
         }

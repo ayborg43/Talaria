@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"talaria/internal/export"
 	"talaria/internal/provider"
 )
 
@@ -546,4 +547,20 @@ func tidyTitle(text string) string {
 		return "New chat"
 	}
 	return t
+}
+
+// Sources is every kept conversation with its transcript, newest first, for an export. They are copies.
+func (c *Convos) Sources() []export.Source {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]export.Source, 0, len(c.order))
+	for _, id := range c.order {
+		cv := c.items[id]
+		if cv == nil {
+			continue
+		}
+		out = append(out, export.Source{ID: cv.ID, Title: cv.Title, Agent: cv.Agent, Archived: cv.Archived, Updated: cv.UpdatedAt,
+			Transcript: append([]provider.Message(nil), cv.Transcript...)})
+	}
+	return out
 }

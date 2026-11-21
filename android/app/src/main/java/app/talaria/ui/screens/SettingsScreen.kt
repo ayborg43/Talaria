@@ -162,7 +162,7 @@ private fun SettingsHome(activity: AppCompatActivity, repo: Repo, modifier: Modi
                     Column {
                         val phoneOps by (activity.application as app.talaria.TalariaApp).phone.ops.collectAsState()
                         LinkRow(
-                            "What Talaria may read", "Location, contacts, calendar and notifications, only when you ask and only what you switch on.",
+                            "What Talaria may read and do", "Look things up (location, contacts, calendar, notifications) and do small things (an alarm, a timer, a reminder, a map, a text written for you to send), each only when you ask and only what you switch on.",
                             trailing = { Pill(if (phoneOps.isEmpty()) "Off" else "${phoneOps.size} on", if (phoneOps.isEmpty()) Tone.Neutral else Tone.Brass) },
                             onClick = { onOpen("phone") },
                         )

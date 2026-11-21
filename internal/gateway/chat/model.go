@@ -761,14 +761,17 @@ func (g *Engine) applyBackend(c *chat, a *agent.Agent, text string) {
 		return
 	}
 	a.Provider, a.Model = be.Provider, be.Model
+	kind := string(d.kind)
+	if kind == "" {
+		kind = string(routing.KindOf(text))
+	}
+	c.mu.Lock()
+	c.lastKind = kind
+	c.mu.Unlock()
 	if mn, ok := g.T.(ModelNoter); ok {
 		mn.NoteModel(c.id, be.Model)
 	}
 	if rn, ok := g.T.(RouteNoter); ok {
-		kind := string(d.kind)
-		if kind == "" {
-			kind = string(routing.KindOf(text))
-		}
 		rn.NoteRoute(c.id, use, be.Model, kind, d.why)
 	}
 }

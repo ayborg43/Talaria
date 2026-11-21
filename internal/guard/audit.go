@@ -195,3 +195,33 @@ func clip(s string, n int) string {
 	}
 	return s
 }
+
+// Since calls fn with every record written at or after t, oldest first, reading one line at a time so a long log
+// is never held in memory whole.
+func (l *Log) Since(t time.Time, fn func(Record)) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, path := range []string{l.Path + ".1", l.Path} {
+		fh, err := os.Open(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		sc := bufio.NewScanner(fh)
+		sc.Buffer(make([]byte, 64<<10), 1<<20)
+		for sc.Scan() {
+			var r Record
+			if json.Unmarshal(sc.Bytes(), &r) == nil && !r.Time.Before(t) {
+				fn(r)
+			}
+		}
+		err = sc.Err()
+		fh.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}

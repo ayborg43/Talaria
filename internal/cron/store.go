@@ -64,6 +64,9 @@ type Job struct {
 	Agent string `json:"agent,omitempty"`
 	// Card is the kanban card (see package kanban) this task works on; the card follows the task.
 	Card string `json:"card,omitempty"`
+	// Untrusted says the prompt carries something an outside party wrote (a webhook's payload): the run starts as one
+	// that has already read outside content, so anything that could send something out is refused.
+	Untrusted bool `json:"untrusted,omitempty"`
 	// RecipeValues is what the user filled in for it (a topic), so the app can show it again when the recipe is changed.
 	RecipeValues map[string]string `json:"recipe_values,omitempty"`
 	// TimeoutSec overrides how long one run may take; 0 means the scheduler's own limit.

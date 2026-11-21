@@ -135,3 +135,81 @@ func (s *Server) personasPost(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+// agentFileGet is one saved agent as a file to send to someone: its name, icon, whether it only looks, and the
+// instructions. Its model profile and everything else stays here.
+func (s *Server) agentFileGet(w http.ResponseWriter, r *http.Request) {
+	if s.Agents == nil {
+		fail(w, http.StatusNotImplemented, "named agents are not set up here")
+		return
+	}
+	a, ok := s.Agents.Get(strings.TrimSpace(r.URL.Query().Get("id")))
+	if !ok {
+		fail(w, http.StatusNotFound, "there is no such agent")
+		return
+	}
+	name := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			return r
+		}
+		return '-'
+	}, a.Name)
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`.agent.md"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write([]byte(persona.Export(a)))
+}
+
+// agentFilePost reads an agent file someone sent. Without import it only shows what is in it, so the person reads the
+// instructions before anything is made. With import it saves the agent: no model profile (it is the person's to
+// choose afterwards), and looking only unless the person turned that off in the page, whatever the file asked for.
+func (s *Server) agentFilePost(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Text     string `json:"text"`
+		Import   bool   `json:"import"`
+		ReadOnly *bool  `json:"read_only"`
+		Color    string `json:"color"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, persona.MaxFile*2)
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if s.Agents == nil || s.Convos == nil {
+		fail(w, http.StatusNotImplemented, "named agents are not set up here")
+		return
+	}
+	a, err := persona.Parse(in.Text)
+	if err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	exists := false
+	for _, o := range s.Agents.List() {
+		if strings.EqualFold(o.Name, a.Name) {
+			exists = true
+		}
+	}
+	if !in.Import {
+		writeJSON(w, http.StatusOK, map[string]any{"agent": PersonaInfo{Name: a.Name, Icon: a.Icon, Instructions: a.Instructions, ReadOnly: a.ReadOnly}, "exists": exists})
+		return
+	}
+	a.ReadOnly = in.ReadOnly == nil || *in.ReadOnly // an imported agent only looks until the person says otherwise
+	a.Color = in.Color
+	if a.Color == "" {
+		a.Color = ChannelColors[0]
+	}
+	if !slices.Contains(ChannelColors, a.Color) {
+		fail(w, http.StatusBadRequest, "the colour is one of: "+strings.Join(ChannelColors, ", "))
+		return
+	}
+	saved, err := s.Agents.Save(a)
+	if err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	out := map[string]any{"ok": true, "saved": saved.Name}
+	for k, v := range s.personasState() {
+		out[k] = v
+	}
+	writeJSON(w, http.StatusOK, out)
+}

@@ -63,6 +63,15 @@ private val kinds = listOf(
     Kind(Op.NOTIFICATIONS, "Notifications", "What is showing in your notifications, when you ask. These can hold private things such as codes; only turn this on if you want that."),
 )
 
+/** The small things the agent may do on this phone. Each is asked of you on every use, and none sends, calls or deletes. */
+private val writeKinds = listOf(
+    Kind(Op.ALARM, "Set an alarm", "Asks your clock app for an alarm at a time you approve."),
+    Kind(Op.TIMER, "Start a timer", "Asks your clock app to start a countdown you approve."),
+    Kind(Op.REMINDER, "Prepare a reminder", "Opens your calendar with a reminder filled in. It is only kept when you press Save."),
+    Kind(Op.MAP, "Show a place on the map", "Opens your maps app at a place or address you approve."),
+    Kind(Op.SMS_DRAFT, "Write a text for you", "Opens your messaging app with a text already written. It is never sent for you: you read it and press send yourself."),
+)
+
 /**
  * What the agent may read on this phone. Everything starts off. A switch is the person's yes; Android's own permission
  * is the second one, asked at the moment the switch goes on and taken back by the person at any time.
@@ -114,7 +123,7 @@ fun PhoneAccessScreen(activity: AppCompatActivity, repo: Repo, onBack: () -> Uni
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
             item {
                 Text(
-                    "Talaria can look things up on this phone when you ask it something that needs them, such as \"where am I?\" or \"what is Amina's number?\". Everything is off until you turn it on. Talaria can only read: it cannot change, send or delete anything on your phone.",
+                    "Talaria can look things up on this phone when you ask it something that needs them, such as \"where am I?\" or \"what is Amina's number?\". Everything is off until you turn it on. Reading is separate from doing: below the reads are a few small things Talaria may do, and even those are asked of you every time. It cannot send a message, place a call or delete anything on your phone.",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
                 )
                 Gap(8.dp)
@@ -157,6 +166,21 @@ fun PhoneAccessScreen(activity: AppCompatActivity, repo: Repo, onBack: () -> Uni
                     }
                 }
 
+                SectionTitle("What Talaria may do")
+                Text(
+                    "Each time, Talaria shows you exactly what it will do and waits for your yes, in the app or in a notification. When Talaria is not open on the phone, Android only lets it open another app after you tap a notice, so you may be asked to tap once more.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+                )
+                Gap(8.dp)
+                Panel(Modifier.fillMaxWidth()) {
+                    Column {
+                        writeKinds.forEachIndexed { i, k ->
+                            if (i > 0) HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                            ToggleRow(k.title, k.body, k.op in ops) { v -> if (v) turnOn(k.op) else link.setOps(ops - k.op) }
+                        }
+                    }
+                }
+
                 if (Op.TRIGGERS in ops) TriggersList(repo, resumed)
 
                 SectionTitle("Recently asked")
@@ -164,13 +188,13 @@ fun PhoneAccessScreen(activity: AppCompatActivity, repo: Repo, onBack: () -> Uni
                     Column(Modifier.padding(16.dp)) {
                         if (log.isEmpty()) Text("Nothing yet. When Talaria looks something up on this phone, it is written here.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         log.take(10).forEach { e ->
-                            val title = kinds.firstOrNull { it.op == e.op }?.title ?: e.op
+                            val title = (kinds + writeKinds).firstOrNull { it.op == e.op }?.title ?: e.op
                             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text(title, style = MaterialTheme.typography.bodyMedium)
-                                    Text(DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(e.at)) + if (e.ok) "" else " · " + e.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(e.at)) + if (e.note.isBlank()) "" else " · " + e.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                Pill(if (e.ok) "Shared" else "Refused", if (e.ok) Tone.Ok else Tone.Neutral)
+                                Pill(if (!e.ok) "Refused" else if (e.op in Op.writes) "Done" else "Shared", if (e.ok) Tone.Ok else Tone.Neutral)
                             }
                         }
                     }

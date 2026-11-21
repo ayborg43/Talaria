@@ -47,7 +47,20 @@ type Message struct {
 	// only given back to the API that produced it, which some require while a
 	// tool-using conversation goes on.
 	Reasoning string
+	// Usage is what the service says the request cost in tokens, on assistant messages the providers return. The zero
+	// value means the service did not say. It is never sent to a model or kept in history.
+	Usage Usage
 }
+
+// Usage is the tokens one request used: what was sent, and what came back. Estimated is set by the meter, not by a
+// service, when it had to guess from the text.
+type Usage struct {
+	In, Out   int
+	Estimated bool
+}
+
+// Known says the service reported a count.
+func (u Usage) Known() bool { return u.In > 0 || u.Out > 0 }
 
 // ToolSpec describes a tool to the model. Parameters is a JSON Schema object.
 type ToolSpec struct {

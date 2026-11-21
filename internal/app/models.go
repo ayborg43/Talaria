@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"talaria/internal/tool"
 )
@@ -84,3 +85,55 @@ func registerModelTool(r *tool.Registry, list func() []ModelInfo) {
 
 // RegisterModelToolForTest registers model_list for a test in another package.
 func RegisterModelToolForTest(r *tool.Registry, rt *Runtime) { registerModelTool(r, rt.models) }
+
+// SetUsage lets the agent say what the models have cost. summary describes the last days days in a few sentences.
+func (rt *Runtime) SetUsage(summary func(days int) string) { rt.usageSummary = summary }
+
+// registerUsageTool adds usage_summary: tokens and cost by model, agent and kind of work.
+func registerUsageTool(r *tool.Registry, summary func(days int) string) {
+	r.Register(tool.Tool{
+		Name: "usage_summary",
+		Description: "Say how much the AI models have been used and what that cost, over today (days=1), this week (days=7) or this month (days=30): " +
+			"requests and tokens, the dollars where the owner has set a price for the model, and where most of it went (which model, which agent, what kind of work). " +
+			"Use it when the owner asks what they have spent, or before choosing a model for a big job.",
+		Schema:   json.RawMessage(`{"type":"object","properties":{"days":{"type":"integer","minimum":1,"maximum":90}}}`),
+		Parallel: true,
+		Run: func(_ context.Context, args json.RawMessage) (string, error) {
+			var a struct{ Days int }
+			json.Unmarshal(args, &a)
+			if a.Days < 1 {
+				a.Days = 7
+			}
+			if a.Days > 90 {
+				a.Days = 90
+			}
+			return summary(a.Days), nil
+		},
+	})
+}
+
+// SetDigest lets the agent say what it did on its own lately. digest writes the account for the last span.
+func (rt *Runtime) SetDigest(digest func(span time.Duration) string) { rt.whileAway = digest }
+
+// registerWhileAwayTool adds while_away: the work done unasked, from the activity log, finished tasks, watches, goals and the board.
+func registerWhileAwayTool(r *tool.Registry, digest func(span time.Duration) string) {
+	r.Register(tool.Tool{
+		Name: "while_away",
+		Description: "Say what you did on your own over the last stretch of time: tasks and scheduled work that finished (and which failed), watches that saw a change, " +
+			"goals and board cards that moved, how many tool calls were made and how many were refused, what it cost, and what is waiting for the owner. " +
+			"Use it when the owner asks what happened while they were away, what you have been up to, or what is waiting. hours defaults to 24.",
+		Schema:   json.RawMessage(`{"type":"object","properties":{"hours":{"type":"integer","minimum":1,"maximum":720}}}`),
+		Parallel: true,
+		Run: func(_ context.Context, args json.RawMessage) (string, error) {
+			var a struct{ Hours int }
+			json.Unmarshal(args, &a)
+			if a.Hours < 1 {
+				a.Hours = 24
+			}
+			if a.Hours > 720 {
+				a.Hours = 720
+			}
+			return digest(time.Duration(a.Hours) * time.Hour), nil
+		},
+	})
+}

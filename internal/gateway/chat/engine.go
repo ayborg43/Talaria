@@ -75,6 +75,8 @@ type Engine struct {
 	// set, is what has been learned about how replies were received; the router consults it when Learn is on.
 	RouterSettings func() RouterSettings
 	Learn          *routing.Store
+	// Agents lists the saved agents a message can be handed to by starting with @name. Nil turns that off.
+	Agents func() []Persona
 
 	// MessagesPerMinute limits how fast one chat may give the agent work, a burst of that many
 	// included; 0 is no limit. Commands such as /stop are never limited.
@@ -122,6 +124,7 @@ type chat struct {
 	profile  string       // model profile chosen with /model; "" is the default
 	once     string       // a profile for the next task only: a retry on a stronger model
 	onceKind routing.Kind // what the reply it replaces was taken for
+	lastKind string       // what the router took the latest message for, to say where its cost went
 	// persona is the named agent this chat is talking with now, or nil; baseSystem is the system prompt the agent was
 	// built with, to which the persona's is added.
 	persona    *Persona
@@ -423,6 +426,35 @@ func (e *Engine) History(chatID int64) []provider.Message {
 	return c.agent.Transcript()
 }
 
+// mention finds a saved agent named at the start of a message ("@Inbox sort my mail"), matching the longest name, in any case,
+// followed by a space or the end. It returns the agent and the rest of the message; there is no match when nothing follows the name.
+func (e *Engine) mention(text string) (*Persona, string, bool) {
+	text = strings.TrimSpace(text)
+	if e.Agents == nil || !strings.HasPrefix(text, "@") {
+		return nil, "", false
+	}
+	body := text[1:]
+	var best *Persona
+	for _, p := range e.Agents() {
+		n := len(p.Name)
+		if n == 0 || n >= len(body) || !strings.EqualFold(body[:n], p.Name) || (body[n] != ' ' && body[n] != '\n' && body[n] != '\t') {
+			continue
+		}
+		if best == nil || n > len(best.Name) {
+			p := p
+			best = &p
+		}
+	}
+	if best == nil {
+		return nil, "", false
+	}
+	rest := strings.TrimSpace(body[len(best.Name):])
+	if rest == "" {
+		return nil, "", false
+	}
+	return best, rest, true
+}
+
 // Persona is a named agent a conversation can take on: instructions added to the model's, a model profile of its
 // own, and, if ReadOnly, no tool that needs approval.
 type Persona struct {
@@ -540,7 +572,26 @@ func (e *Engine) runOneWith(c *chat, text string, job *resumeJob) {
 		}
 	}
 	a := c.agent
+	// "@Researcher find the paper" hands this one message to a saved agent: its instructions, model and look-only limit
+	// apply for this message, in this conversation, and the usual ones come back after. It only narrows, like talking with the agent.
+	var mentioned *Persona
+	if job == nil && c.persona == nil {
+		if p, rest, ok := e.mention(text); ok {
+			c.persona, text, mentioned = p, rest, p
+			c.task = rest
+			c.applyPersona()
+		}
+	}
 	c.mu.Unlock()
+	if mentioned != nil {
+		defer func() {
+			c.mu.Lock()
+			c.persona = nil
+			c.applyPersona()
+			c.mu.Unlock()
+		}()
+		e.send(c.id, "→ "+mentioned.Name)
+	}
 	if job != nil {
 		e.applyBackend(c, a, job.h.Task) // the model for the work being taken up again is the one that work calls for
 	} else {
@@ -596,7 +647,14 @@ func (e *Engine) runOneWith(c *chat, text string, job *resumeJob) {
 		text = notice + "\n\n" + text
 	}
 
-	reply, err := a.Run(ctx, text)
+	label := provider.Label{Source: "chat"}
+	c.mu.Lock()
+	label.Kind = c.lastKind
+	if c.persona != nil {
+		label.Agent = c.persona.Name
+	}
+	c.mu.Unlock()
+	reply, err := a.Run(provider.WithLabel(ctx, label), text)
 	stopTyping()
 	c.mu.Lock()
 	c.turns++

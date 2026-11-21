@@ -35,6 +35,8 @@ function segments(items, current, pick) {
   seg.hidden = false;
   seg.replaceChildren(...items.map(([id, label]) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(id === current), text: label, onclick: () => pick(id) })));
 }
+// replaceChildren with null or false in the list would write the word "null": leave those out.
+const fill = (el, ...kids) => el.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
 const failed = (e) => { if (!(e instanceof AuthError)) toast(e.message); };
 
 // ---------- the agent's computer ----------
@@ -847,6 +849,9 @@ function paneYou() {
       h('div', { class: 'field-note', text: 'The name and tone are given to the agent with its notes, from the next conversation on.' }),
       h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: () => saveMe({ profile: { name: name.value, avatar: avatar.value, tone: tone.value, theme: p.theme || '' } }, 'Saved.') }))),
     briefCard(),
+    digestCard(),
+    webhooksCard(),
+    backupCard(),
     themeCard(p),
     notesCard('user', 'What it knows about you', 'The agent writes these as it learns; you can correct or remove any of them.', me.user),
     notesCard('memory', 'Its own notes', 'What it has noted about its work and this setup.', me.memory),
@@ -957,6 +962,121 @@ function briefCard() {
     h('div', { class: 'field' }, h('label', { class: 'field-label', for: 'brief-at', text: 'Time, in your time zone' }), at),
     next ? h('div', { class: 'field-note', text: next }) : null,
     h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: save }), h('button', { class: 'btn', type: 'button', text: 'Brief me now', onclick: () => { location.hash = '#chat'; sendText('Give me my morning brief'); } })));
+}
+// ---------- "what did you do while I was away?" ----------
+// A plain account of what Talaria did on its own, written from what it keeps (no model is asked). It can be read at
+// any time, or sent into the chat each morning or each Monday.
+function digestCard() {
+  const card = h('div', { class: 'card' }, h('h2', null, 'While you were away'));
+  const body = h('div');
+  card.append(body);
+  const load = async () => {
+    let r;
+    try { r = await api('/api/digest'); } catch (e) { failed(e); return; }
+    const d = r.schedule;
+    if (!d || !d.available) { card.remove(); return; }
+    const at = h('input', { id: 'digest-at', type: 'time', value: d.at || '08:00', step: '300' });
+    const on = h('input', { type: 'checkbox', checked: !!d.enabled });
+    const weekly = h('select', { 'aria-label': 'How often' }, h('option', { value: 'daily', text: 'Every day' }), h('option', { value: 'weekly', text: 'Every Monday' }));
+    weekly.value = d.weekly ? 'weekly' : 'daily';
+    const out = h('div', { class: 'md' });
+    const save = async () => {
+      try { await api('/api/digest', { method: 'POST', body: { enabled: on.checked, at: at.value || '08:00', weekly: weekly.value === 'weekly' } }); toast(on.checked ? 'The digest will arrive at ' + (at.value || '08:00') + '.' : 'The digest is off.'); }
+      catch (e) { failed(e); }
+      load();
+    };
+    const show = async (hours) => {
+      try { const x = await api('/api/digest?hours=' + hours); out.replaceChildren(markdown(x.text || '')); } catch (e) { failed(e); }
+    };
+    fill(body, 
+      h('div', { class: 'field-note', text: 'Tasks that finished, watches that saw a change, goals and board cards that moved, what it cost, and what is waiting for you. Written from the records Talaria already keeps, so it costs nothing.' }),
+      h('label', { class: 'opt' + (d.enabled ? ' on' : '') }, on, h('span', { class: 'grow' }, h('b', { text: 'Send it to me' }), h('span', { class: 's', text: 'Nothing is sent on a quiet day.' }))),
+      h('div', { class: 'field' }, h('label', { class: 'field-label', for: 'digest-at', text: 'Time, in your time zone' }), at, weekly),
+      d.enabled && d.next ? h('div', { class: 'field-note', text: 'Next: ' + fmtWhen(new Date(d.next)) }) : null,
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: save }),
+        h('button', { class: 'btn', type: 'button', text: 'Last 24 hours', onclick: () => show(24) }), h('button', { class: 'btn', type: 'button', text: 'Last 7 days', onclick: () => show(168) })),
+      out);
+  };
+  load();
+  return card;
+}
+// ---------- webhooks: something else calls Talaria ----------
+// Each webhook is an address another service can call (a form, a monitor, a build). Calling it starts a background task
+// that does what you wrote, with what was sent quoted to it as data. The secret is shown once; only a hash is kept.
+function webhooksCard() {
+  const card = h('div', { class: 'card' }, h('h2', null, 'Webhooks'));
+  const body = h('div');
+  card.append(body);
+  let fresh = null; // the one answer that carries a secret
+  const load = async (v) => {
+    try { v = v || await api('/api/webhooks'); } catch (e) { failed(e); return; }
+    if (!v.available) { card.remove(); return; }
+    const act = async (b) => { try { const r = await api('/api/webhooks', { method: 'POST', body: b }); fresh = r.new || null; load(r); } catch (e) { failed(e); } };
+    const name = h('input', { type: 'text', maxlength: '60', placeholder: 'Name, such as Contact form', 'aria-label': 'Webhook name' });
+    const prompt = h('textarea', { rows: '3', maxlength: '2000', placeholder: 'What should Talaria do each time it is called? ("Draft a reply to whoever filled in the form and put it in Drafts")', 'aria-label': 'What to do' });
+    const agent = h('select', { 'aria-label': 'Which agent' }, h('option', { value: '', text: 'Talaria' }), v.agents.map((a) => h('option', { value: a, text: a })));
+    const rows = h('div', { class: 'rows' });
+    for (const k of v.hooks) {
+      rows.append(h('div', { class: 'row' }, h('span', { class: 'grow' }, h('span', { class: 't', text: k.name + (k.paused ? ' (paused)' : '') }),
+        h('span', { class: 's', text: boardLine(k.prompt, 90) + ' · called ' + k.calls + (k.calls === 1 ? ' time' : ' times') + (k.last ? ', last ' + fmtWhen(new Date(k.last)) : '') }),
+        h('span', { class: 's', text: k.url })),
+        h('button', { class: 'btn small', type: 'button', text: k.paused ? 'Resume' : 'Pause', onclick: () => act({ pause: k.id, on: !k.paused }) }),
+        h('button', { class: 'btn small', type: 'button', text: 'New secret', onclick: () => { if (confirm('The old secret stops working at once. Go on?')) act({ rotate: k.id }); } }),
+        h('button', { class: 'btn small danger', type: 'button', text: 'Delete', onclick: () => { if (confirm('Delete this webhook?')) act({ delete: k.id }); } })));
+    }
+    const secret = fresh ? h('div', { class: 'note', role: 'status' },
+      h('b', { text: 'Copy this now: it cannot be shown again.' }),
+      h('div', { class: 'field-note', text: 'Send POST requests to the webhook\'s address with the header Authorization: Bearer <secret>, or use this address, which has the secret in it:' }),
+      h('code', { text: fresh.url }), ' ', h('code', { text: fresh.secret }),
+      h('div', { class: 'btn-row' }, h('button', { class: 'btn small', type: 'button', text: 'Copy the address', onclick: () => { navigator.clipboard && navigator.clipboard.writeText(fresh.url); toast('Copied.'); } }),
+        h('button', { class: 'btn small', type: 'button', text: 'Done', onclick: () => { fresh = null; load(); } }))) : null;
+    fill(body, 
+      h('div', { class: 'field-note', text: 'An address another service can call to make Talaria do something. What the caller sends is shown to the task as untrusted information, never as instructions, and the task cannot send, post or delete: nobody is there to approve it. Up to 60 calls an hour each.' }),
+      v.public ? null : h('div', { class: 'note', text: 'This server has no https address set (TALARIA_WEB_PUBLIC_URL), so another service on the internet cannot reach these.' }),
+      secret,
+      v.hooks.length ? rows : h('div', { class: 'field-note', text: 'No webhooks yet.' }),
+      v.hooks.length < v.max ? h('div', { class: 'field' }, name, prompt, agent,
+        h('button', { class: 'btn primary', type: 'button', text: 'Make a webhook', onclick: () => { if (name.value.trim() && prompt.value.trim()) act({ create: { name: name.value, prompt: prompt.value, agent: agent.value } }); else toast('Give it a name and say what to do.'); } })) : null);
+  };
+  load();
+  return card;
+}
+
+// ---------- back up, or move to another server ----------
+// The whole state as one file: history, notes, skills, jobs, goals, config, and the vault in its encrypted form. The
+// vault's key file is never in it. Putting a backup on a server waits for its next start, then moves what was there aside.
+function backupCard() {
+  const card = h('div', { class: 'card' }, h('h2', null, 'Back up or move Talaria'));
+  const body = h('div');
+  card.append(body);
+  const load = async () => {
+    let r;
+    try { r = await api('/api/restore'); } catch (e) { failed(e); return; }
+    if (!r.available) { card.remove(); return; }
+    const pick = h('input', { type: 'file', accept: '.gz,.tgz,application/gzip', 'aria-label': 'A backup file' });
+    const upload = h('button', { class: 'btn', type: 'button', text: 'Restore from this file', onclick: async () => {
+      const f = pick.files && pick.files[0];
+      if (!f) { toast('Choose a backup file first.'); return; }
+      if (!confirm('This server will switch to the state in this backup the next time it starts. What it holds now is kept aside, not deleted. Go on?')) return;
+      try { await api('/api/restore', { method: 'POST', raw: true, body: f }); toast('The backup is checked and waiting. Restart Talaria to put it in place.'); } catch (e) { failed(e); }
+      load();
+    } });
+    const waiting = r.pending
+      ? h('div', { class: 'note', role: 'status' }, 'A backup is waiting' + (r.created ? ' (made ' + fmtWhen(new Date(r.created)) + ')' : '') + '. Restart Talaria to put it in place: until then nothing has changed. ',
+        h('button', { class: 'btn small', type: 'button', text: 'Cancel it', onclick: async () => { try { await api('/api/restore?cancel=1', { method: 'POST' }); } catch (e) { failed(e); } load(); } }))
+      : null;
+    fill(body, 
+      h('div', { class: 'field-note', text: 'One file holds your history, notes, skills, jobs, goals and settings, and the vault as it is stored (encrypted). The vault\'s key file is not in it: keep that, or its passphrase, apart, or the saved logins cannot be opened on the new server. Treat the file as a secret.' }),
+      h('div', { class: 'btn-row' }, h('a', { class: 'btn primary', href: '/api/backup', download: '', text: 'Download a backup' })),
+      h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Your conversations, for training or testing a model elsewhere' }),
+        h('div', { class: 'field-note', text: 'One conversation per line, with its tool calls and results, in the chat format most training tools read. Secrets are removed, and pictures and your notes are left out. Talaria trains nothing itself.' }),
+        h('div', { class: 'btn-row' }, h('a', { class: 'btn', href: '/api/trajectories?min_tools=1', download: '', text: 'Conversations that used tools' }), h('a', { class: 'btn', href: '/api/trajectories', download: '', text: 'All conversations' }))),
+      h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Move here from another server' }), pick, upload,
+        h('div', { class: 'field-note', text: 'On the old server, download a backup. On this one, choose it here. It is checked first: only plain files and folders are accepted.' })),
+      waiting);
+  };
+  load();
+  return card;
 }
 // The first day: until it has been done or waved away, an empty chat offers to set up and to be introduced.
 const ONBOARD_PROMPT = `This is my first time here. Introduce yourself in three short paragraphs, plain text:
@@ -1357,6 +1477,7 @@ function openRoutine(id) {
 // look and not touch. It is the same Talaria with those added: it can never do more than you have allowed.
 const AG = { available: false, agents: [], profiles: [], default_profile: '', colors: [], max: 8 };
 async function loadPersonas() {
+  AG.loaded = true;
   try { const d = await api('/api/personas'); Object.assign(AG, { available: !!d.available, agents: d.agents || [], profiles: d.profiles || [], default_profile: d.default_profile || '', colors: d.colors || CHAN_COLORS, max: d.max || 8 }); }
   catch (e) { if (e instanceof AuthError) return; }
 }
@@ -1368,12 +1489,87 @@ function agentsCard() {
   for (const a of AG.agents) {
     rows.append(h('div', { class: 'row' }, h('span', { class: 'chan-ico chan ' + a.color, text: a.icon || a.name.slice(0, 1).toUpperCase() }),
       h('span', { class: 'grow' }, h('span', { class: 't', text: a.name + (a.active ? ' · open now' : '') }), h('span', { class: 's', text: [a.read_only ? 'Looks only' : 'Can act as you allow', a.profile ? 'Model ' + a.profile : ''].filter(Boolean).join(' · ') })),
-      h('span', { class: 'acts keep' }, h('button', { class: 'btn small primary', type: 'button', text: 'Chat', onclick: () => chatWithAgent(a) }), h('button', { class: 'btn small', type: 'button', text: 'Edit', onclick: () => openAgentForm(a) }))));
+      h('span', { class: 'acts keep' }, h('button', { class: 'btn small primary', type: 'button', text: 'Chat', onclick: () => chatWithAgent(a) }), h('button', { class: 'btn small', type: 'button', text: 'Edit', onclick: () => openAgentForm(a) }),
+        h('a', { class: 'btn small', href: '/api/agent-file?id=' + encodeURIComponent(a.id), download: '', title: 'Save this agent as a file to send to someone (its model and everything else stays here)', text: 'Share' }))));
   }
   if (AG.agents.length) card.append(rows);
-  if (AG.agents.length < AG.max) card.append(h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'button', text: 'New agent', onclick: () => openAgentForm(null) })));
+  if (AG.agents.length < AG.max) card.append(h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'button', text: 'New agent', onclick: () => openAgentForm(null) }), h('button', { class: 'btn', type: 'button', text: 'Import an agent', onclick: openAgentImport })));
   return card;
 }
+// An agent someone sent as a file. It is read and shown first, in full: its instructions steer the agent in every
+// conversation with it, so nothing is made until you have seen them. It comes in looking only, and without a model.
+function openAgentImport() {
+  const body = openPanel('Import an agent', 'A file someone sent you (.agent.md)');
+  body.className = 'panel-body';
+  const pick = h('input', { type: 'file', accept: '.md,.txt,text/markdown,text/plain', 'aria-label': 'An agent file' });
+  const paste = h('textarea', { rows: '6', maxlength: '9000', placeholder: 'Or paste the file here', 'aria-label': 'Paste an agent file' });
+  const out = h('div');
+  const show = async () => {
+    let text = paste.value;
+    if (!text && pick.files && pick.files[0]) { text = await pick.files[0].text(); paste.value = text; }
+    if (!text.trim()) { toast('Choose a file or paste one.'); return; }
+    let r;
+    try { r = await api('/api/agent-file', { method: 'POST', body: { text } }); } catch (e) { failed(e); return; }
+    const look = h('input', { type: 'checkbox', checked: true });
+    look.checked = true;
+    const add = h('button', { class: 'btn primary', type: 'button', text: 'Add this agent', disabled: r.exists ? '' : null });
+    add.addEventListener('click', async () => {
+      add.disabled = true;
+      try { const d = await api('/api/agent-file', { method: 'POST', body: { text, import: true, read_only: look.checked } }); AG.agents = d.agents || []; toast('Added “' + d.saved + '”.'); closePanel(); if (S.tab === 'agents') renderAgentsPage(); }
+      catch (e) { failed(e); add.disabled = false; }
+    });
+    out.replaceChildren(h('div', { class: 'card' },
+      h('h2', null, (r.agent.icon ? r.agent.icon + ' ' : '') + r.agent.name),
+      r.exists ? h('div', { class: 'note', text: 'You already have an agent with this name. Rename one of them first.' }) : null,
+      h('div', { class: 'field-label', text: 'Its instructions, exactly as written' }),
+      h('pre', { class: 'agent-says', text: r.agent.instructions }),
+      h('label', { class: 'check' }, look, ' Looks only: it can read and search, and nothing that asks for approval is open to it'),
+      h('div', { class: 'field-note', text: 'It comes in without a model of its own (you can choose one under Edit). Read the instructions: they shape everything this agent does.' }),
+      h('div', { class: 'btn-row' }, add)));
+  };
+  body.replaceChildren(h('div', { class: 'card chan-form' }, pick, paste, h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Read it', onclick: show }))), out);
+}
+
+// ---------- your agents as contacts ----------
+// At the top of the conversation list: each saved agent as a contact, with a dot while one of its tasks is running.
+// Tap to talk with it; the @ puts @name in the message box, which hands that one message to it.
+function rosterCard() {
+  if (!AG.available || !AG.agents.length) return null;
+  const rows = h('div', { class: 'rows' });
+  const card = h('div', { class: 'card' }, h('h2', null, 'Your agents'), rows);
+  const draw = (busy) => {
+    rows.replaceChildren(...AG.agents.map((a) => h('div', { class: 'row convo' },
+      h('button', { class: 'rowbtn', type: 'button', onclick: () => { closeSheet(); chatWithAgent(a); } },
+        h('span', { class: 'chan-ico chan ' + a.color, text: a.icon || a.name.slice(0, 1).toUpperCase() }),
+        h('span', { class: 'grow' }, h('span', { class: 't', text: a.name }), h('span', { class: 's', text: boardLine(a.instructions, 70) })),
+        busy.has(a.name.toLowerCase()) ? h('span', { class: 'pill brass', text: 'WORKING' }) : null),
+      h('span', { class: 'acts keep' }, h('button', { class: 'btn small', type: 'button', title: 'Hand one message to ' + a.name, 'aria-label': 'Mention ' + a.name, text: '@', onclick: () => {
+        closeSheet(); input.value = '@' + a.name + ' '; input.dispatchEvent(new Event('input')); input.focus();
+      } })))));
+  };
+  draw(new Set());
+  api('/api/board').then((b) => draw(new Set((b.cards || []).filter((c) => c.column === 'running' && c.agent).map((c) => c.agent.toLowerCase())))).catch(() => {});
+  return card;
+}
+
+// ---------- @name at the start of a message ----------
+// Typing @ at the start of the box offers the saved agents whose names fit what has been typed; choosing one fills in
+// @name and a space. The server does the handing over: the message goes to that agent, for that one message.
+function mentionHints() {
+  const bar = $('#mention');
+  if (!bar) return;
+  if (!AG.loaded) loadPersonas();
+  const v = input.value;
+  const m = /^@([^\n]*)$/.exec(v);
+  const typed = m ? m[1].toLowerCase() : null;
+  const fits = typed === null || !AG.available ? [] : AG.agents.filter((a) => a.name.toLowerCase().startsWith(typed) && !(typed.length > a.name.length)).slice(0, 8);
+  if (!fits.length || (fits.length === 1 && typed === fits[0].name.toLowerCase() + ' ')) { bar.hidden = true; bar.replaceChildren(); return; }
+  bar.hidden = false;
+  bar.replaceChildren(...fits.map((a) => h('button', { type: 'button', class: 'chip', text: (a.icon ? a.icon + ' ' : '') + '@' + a.name, onclick: () => {
+    input.value = '@' + a.name + ' '; bar.hidden = true; input.dispatchEvent(new Event('input')); input.focus();
+  } })));
+}
+
 async function chatWithAgent(a) {
   try { await api('/api/personas', { method: 'POST', body: { action: 'chat', id: a.id } }); } catch (e) { failed(e); return; }
   closePanel(); location.hash = '#chat';
@@ -1746,7 +1942,7 @@ function testQuestionsCard(s) {
           h('button', { class: 'btn small', type: 'button', text: 'Run', disabled: r.running ? '' : null, onclick: () => post({ run: p }) })));
       }
     }
-    body.replaceChildren(
+    fill(body, 
       r.cases.length ? list : h('div', { class: 'field-note', text: 'No questions yet.' }),
       h('div', { class: 'field' }, q, exp, avoid, add),
       r.cases.length ? h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'How each model did' }), runs) : null,
@@ -1787,6 +1983,63 @@ function docsCard() {
 // ---------- how a model is chosen for each message ----------
 // The keyword rules always apply. Smart routing adds a small model that labels each message; learning counts how replies
 // were received (thumbs, a retry, a correction, carrying on) and lets a clearly better model take over for that kind.
+// ---------- what the models cost ----------
+// Tokens by model, agent and kind of work, and dollars where the owner has said what a model costs. Prices are their
+// own figures per profile (dollars for a million tokens); nothing here asks a service for them.
+function usageCard() {
+  const card = h('div', { class: 'card' }, h('h2', null, 'What the models cost'));
+  const body = h('div');
+  card.append(body);
+  let days = 7;
+  const money = (f) => (f === 0 ? '$0' : f < 0.01 ? 'under $0.01' : f < 10 ? '$' + f.toFixed(2) : '$' + Math.round(f));
+  const toks = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'k' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n));
+  const load = async () => {
+    let r;
+    try { r = await api('/api/usage?days=' + days); } catch (e) { failed(e); return; }
+    if (!r.available) { card.remove(); return; }
+    const rep = r.report;
+    const seg = h('div', { class: 'seg inner', role: 'tablist' }, [[1, 'Today'], [7, 'Week'], [30, 'Month']].map(([d, label]) =>
+      h('button', { type: 'button', role: 'tab', 'aria-selected': String(d === days), text: label, onclick: () => { days = d; load(); } })));
+    const max = Math.max(1, ...rep.per_day.map((x) => x.tokens));
+    // Heights are set on the element, not as a style attribute: the page's content security policy allows no inline styles.
+    const bars = h('div', { class: 'usage-bars', role: 'img', 'aria-label': 'Tokens per day' }, rep.per_day.map((x) => {
+      const bar = h('span', { class: 'usage-bar', title: x.date + ': ' + toks(x.tokens) + ' tokens' });
+      bar.style.height = Math.max(2, Math.round(x.tokens / max * 100)) + '%';
+      return bar;
+    }));
+    const table = (title, ls) => {
+      if (!ls.length || (ls.length === 1 && ls[0].name === 'other')) return null;
+      const rows = h('div', { class: 'rows' });
+      for (const l of ls.slice(0, 6)) {
+        rows.append(h('div', { class: 'row' }, h('span', { class: 'grow' }, h('span', { class: 't', text: l.name }),
+          h('span', { class: 's', text: l.totals.calls + (l.totals.calls === 1 ? ' request · ' : ' requests · ') + toks(l.totals.in) + ' in · ' + toks(l.totals.out) + ' out' })),
+          h('span', { class: 's', text: l.priced ? money(l.cost) : 'no price' })));
+      }
+      return h('div', { class: 'field' }, h('span', { class: 'field-label', text: title }), rows);
+    };
+    const price = h('div', { class: 'rows' });
+    for (const p of r.prices) {
+      const inp = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', placeholder: 'in', 'aria-label': p.profile + ' dollars per million tokens in', value: p.price_in == null ? '' : String(p.price_in) });
+      const out = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', placeholder: 'out', 'aria-label': p.profile + ' dollars per million tokens out', value: p.price_out == null ? '' : String(p.price_out) });
+      const num = (v) => (v.trim() === '' ? null : Number(v));
+      price.append(h('div', { class: 'row' }, h('span', { class: 'grow' }, h('span', { class: 't', text: p.profile }), h('span', { class: 's', text: p.model || '' })), inp, out,
+        h('button', { class: 'btn small', type: 'button', text: 'Save', onclick: async () => {
+          try { await api('/api/usage', { method: 'POST', body: { profile: p.profile, price_in: num(inp.value), price_out: num(out.value) } }); } catch (e) { failed(e); }
+          load();
+        } })));
+    }
+    fill(body, 
+      seg,
+      h('div', { class: 'field-note', role: 'status', text: r.summary }),
+      rep.total.totals.calls ? bars : null,
+      table('By model', rep.by_model), table('By kind of work', rep.by_kind), table('By agent', rep.by_agent), table('By who asked', rep.by_source),
+      h('details', null, h('summary', { text: 'What each model costs (dollars for a million tokens, in and out)' }),
+        h('div', { class: 'field-note', text: "Your own figures, from the service's price list. Without them a model is counted in tokens only." }), price));
+  };
+  load();
+  return card;
+}
+
 function routingCard(s) {
   if ((s.profiles || []).length < 2) return null;
   const card = h('div', { class: 'card' }, h('h2', null, 'How Talaria chooses a model'),
@@ -1814,7 +2067,7 @@ function routingCard(s) {
         h('span', { class: 's', text: [x.Up && x.Up + ' good', x.Down && x.Down + ' poor', x.Retry && x.Retry + ' sent back', x.Correction && x.Correction + ' corrected', x.Continue && x.Continue + ' carried on'].filter(Boolean).join(' · ') + ' · score ' + x.score.toFixed(2) }))));
     }
     const reset = h('button', { class: 'btn', type: 'button', text: 'Forget what it learned', onclick: () => { if (confirm('Forget how replies were received? The router goes back to its rules.')) save({ reset: true }); } });
-    body.replaceChildren(
+    fill(body, 
       check('Smart routing', 'A small model labels each message when the keywords are not sure. It adds a wait of up to a couple of seconds before the first reply, and the rules take over if it is slow.', r.smart, 'smart'),
       r.smart ? h('div', { class: 'field' }, h('label', { class: 'field-label', text: 'Model that labels messages' }), sel) : null,
       check('Learn from how replies are received', 'Counts thumbs, retries, corrections and carrying on, and lets a model that has clearly done better on a kind of message take over for it.', r.learn, 'learn'),

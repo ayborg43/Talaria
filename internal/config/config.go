@@ -108,6 +108,32 @@ type Profile struct {
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
+// ModelPrice is what a profile's model costs, in US dollars for a million tokens sent (In) and received (Out). They are the
+// owner's own figures, for the cost shown under Settings; Talaria ships no price list, since prices change.
+type ModelPrice struct {
+	In  float64 `json:"in"`
+	Out float64 `json:"out"`
+}
+
+// Price is what a profile's model costs, and whether the owner has said. The implicit profile of a setup with no config
+// file is called "default".
+func (c *Config) Price(name string) (in, out float64, ok bool) {
+	p, found := c.Prices[name]
+	return p.In, p.Out, found
+}
+
+// SetPrice records, or with ok false forgets, what a profile's model costs.
+func (c *Config) SetPrice(name string, p ModelPrice, ok bool) {
+	if !ok {
+		delete(c.Prices, name)
+		return
+	}
+	if c.Prices == nil {
+		c.Prices = map[string]ModelPrice{}
+	}
+	c.Prices[name] = p
+}
+
 // Routing is how the model for each message is chosen when the person has not chosen one. The keyword rules always
 // apply; these add to them.
 type Routing struct {
@@ -435,6 +461,8 @@ type Workspace struct {
 
 type Config struct {
 	DefaultProfile string `json:"default_profile,omitempty"`
+	// Prices says what each profile's model costs, by profile name (see ModelPrice), so the usage screen can show dollars.
+	Prices map[string]ModelPrice `json:"prices,omitempty"`
 	// FallbackProfile and FallbackProfiles name the profiles tried, in order, when a model is not working: rate
 	// limited, overloaded, unreachable, out of credit, a key refused, a model the service does not have. They apply
 	// to every profile that sets no fallbacks of its own, and each profile's own list replaces them.
@@ -537,6 +565,14 @@ func Load(path string) (*Config, error) {
 // warnings. Write runs it too, so what is saved always loads.
 func (c *Config) validate(path string) error {
 	var warnings []string
+	for name, p := range c.Prices {
+		if _, ok := c.Profiles[name]; !ok && name != "default" {
+			return fmt.Errorf("%s: prices names %q, which is not a profile", path, name)
+		}
+		if p.In < 0 || p.In > 100000 || p.Out < 0 || p.Out > 100000 {
+			return fmt.Errorf("%s: prices for %q are dollars for a million tokens, between 0 and 100000", path, name)
+		}
+	}
 	for _, name := range c.EnvironmentNames() {
 		spec := c.Environments[name]
 		if err := spec.Validate(name); err != nil {

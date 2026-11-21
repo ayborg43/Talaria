@@ -19,6 +19,10 @@
     <!-- For "when I connect to this Bluetooth device": the name of the device is only given with this. -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Lets the agent ask the clock app for an alarm or a timer (each only when switched on, and only after the person approved it).
+         This is an ordinary permission. Talaria has no permission to send texts, place calls or change the calendar: a text is only written out
+         and a reminder only filled in, for the person to send or save. -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
 
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
@@ -58,6 +62,7 @@
                 <action android:name="app.talaria.action.ASK" />
                 <action android:name="app.talaria.action.APPROVALS" />
                 <action android:name="app.talaria.action.PHOTO" />
+                <action android:name="app.talaria.action.BOARD" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
@@ -99,6 +104,16 @@
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/talaria_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.TalariaBoardWidget"
+            android:exported="false"
+            android:label="@string/widget_board_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/talaria_board_widget_info" />
         </receiver>
 
         <service

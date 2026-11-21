@@ -41,8 +41,8 @@ func TestCommandTable(t *testing.T) {
 		}
 	}
 	// The unknown-command error lists every command from the table itself.
-	want := "tal gateway, tal cron list, tal mcp list, tal env, tal log, tal policy, " +
-		"tal workspace, tal vault, tal connect, tal backup, tal restore, tal doctor, " +
+	want := "tal run PROMPT, tal gateway, tal cron list, tal mcp list, tal env, tal log, tal policy, " +
+		"tal workspace, tal vault, tal connect, tal digest [hours], tal export, tal usage [days], tal backup, tal restore, tal doctor, " +
 		"tal calendar, tal email, tal version, tal config"
 	if got := commandHints(); got != want {
 		t.Fatalf("hints:\n got %q\nwant %q", got, want)
@@ -95,7 +95,7 @@ func TestGatewayBackends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := first.Provider.(*provider.Anthropic); !ok || first.Desc != "anthropic, claude-x" {
+	if _, ok := provider.Unwrap(first.Provider).(*provider.Anthropic); !ok || first.Desc != "anthropic, claude-x" {
 		t.Fatalf("%+v", first)
 	}
 	if again, _ := b.Open("claude"); again.Provider != first.Provider {
@@ -121,12 +121,12 @@ func TestGatewayBackendsStayLiveAndCarryEffort(t *testing.T) {
 	}
 	if be, err := b.OpenEffort("deep", "high"); err != nil {
 		t.Fatalf("effort: %v", err)
-	} else if p, ok := be.Provider.(*provider.OpenAI); !ok || p.ReasoningEffort != "high" {
+	} else if p, ok := provider.Unwrap(be.Provider).(*provider.OpenAI); !ok || p.ReasoningEffort != "high" {
 		t.Fatalf("effort did not reach the model: %+v", be.Provider)
 	}
 	if be, err := b.OpenEffort("main", "high"); err != nil {
 		t.Fatalf("effort on a plain model: %v", err)
-	} else if p, ok := be.Provider.(*provider.OpenAI); !ok || p.ReasoningEffort != "" {
+	} else if p, ok := provider.Unwrap(be.Provider).(*provider.OpenAI); !ok || p.ReasoningEffort != "" {
 		t.Fatalf("effort should mean nothing without thinking: %+v", be.Provider)
 	}
 

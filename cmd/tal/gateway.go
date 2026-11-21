@@ -19,6 +19,8 @@ import (
 	"talaria/internal/routing"
 	"talaria/internal/runlog"
 	"talaria/internal/trigger"
+	"talaria/internal/usage"
+	"talaria/internal/webhook"
 	"time"
 
 	"talaria/internal/activity"
@@ -181,6 +183,14 @@ func runGateway(c *cli) error {
 	// The agents the person saved under Agents can be handed tasks by name; the main agent cannot add or remove them.
 	agents := &persona.Store{Path: filepath.Join(c.home, "agents.json")}
 	c.rt.SetNamed(namedAgents(agents))
+	// "@name do this" at the start of a message hands that message to the saved agent.
+	savedPersonas := func() []chat.Persona {
+		var out []chat.Persona
+		for _, a := range agents.List() {
+			out = append(out, chat.Persona{Name: a.Name, System: a.System(), Profile: a.Profile, ReadOnly: a.ReadOnly})
+		}
+		return out
+	}
 	c.rt.SetAgents(agents, c.cfg.ProfileNames) // the agent may suggest one; the user approves each
 	// The board: a Ready card that has an agent starts as a background task, and follows it to Review.
 	var board *kanban.Dispatcher
@@ -265,6 +275,14 @@ func runGateway(c *cli) error {
 	// attach gives a service its scheduler, and the commands and hooks that
 	// connect its chats to background tasks and goals.
 	runs := &runlog.Log{Path: filepath.Join(c.home, "runs.json")}
+	// What the digest is written from; the web service adds what is waiting for the person once it exists.
+	digestZone, _ := calendarZone(c.cfg, c.getenv)
+	digestSrc := &digestSources{home: c.home, zone: digestZone, runs: runs, watches: c.rt.Watches(), goals: c.rt.Goals(), cards: c.rt.Cards(),
+		ledger: func() *usage.Ledger { return c.ledger }, prices: usagePrices(c.cfg)}
+	c.rt.SetDigest(func(span time.Duration) string {
+		now := time.Now()
+		return digestSrc.build(now.Add(-span), now).Text
+	})
 	routines := &routine.Store{Path: filepath.Join(c.home, "routines.json")}
 	attach := func(s *service, logf func(string, ...any)) (map[string]chat.Command, func(int64), func(int64) int) {
 		note := cronNote
@@ -273,7 +291,7 @@ func runGateway(c *cli) error {
 			note, taskText = cronNoteMarkdown, taskNoteMarkdown
 		}
 		runner := &jobRunner{rt: c.rt, backends: backends, envs: s.envs, allowed: s.allowed, note: note, taskNote: taskText, goals: c.rt.Goals(), yolo: c.yolo, sink: s.sink, runs: runs, routines: routines,
-			routine: c.cfg.RoutineProfileName, agents: agents}
+			routine: c.cfg.RoutineProfileName, agents: agents, digest: digestSrc}
 		s.sched = &cron.Scheduler{
 			Store:    c.rt.Cron,
 			Gateway:  s.name,
@@ -349,6 +367,7 @@ func runGateway(c *cli) error {
 		g := &telegram.Gateway{
 			API: api, Allowed: allowed, Logf: logf,
 			MessagesPerMinute: c.cfg.Limits.Messages(), Stream: c.cfg.Telegram.StreamReplies(), Environment: envDesc, Environments: s.envs, Backends: backends,
+			Agents:     savedPersonas,
 			Prefs:      &chat.FilePrefs{Path: filepath.Join(c.home, "telegram_chats.json")},
 			OffsetPath: filepath.Join(c.home, "telegram_offset.json"),
 			OutboxPath: filepath.Join(c.home, "outbox_telegram.json"),
@@ -405,6 +424,7 @@ func runGateway(c *cli) error {
 		g := &discord.Gateway{
 			API: api, Allowed: allowed, Logf: logf,
 			MessagesPerMinute: c.cfg.Limits.Messages(), Stream: c.cfg.Discord.StreamReplies(), Environment: envDesc, Environments: s.envs, Backends: backends,
+			Agents:     savedPersonas,
 			Prefs:      &chat.FilePrefs{Path: filepath.Join(c.home, "discord_chats.json")},
 			OutboxPath: filepath.Join(c.home, "outbox_discord.json"),
 		}
@@ -443,6 +463,7 @@ func runGateway(c *cli) error {
 			T: webHub, Allowed: allowed, Logf: logf, Stream: true, MessagesPerMinute: c.cfg.Limits.Messages(),
 			Environment: envDesc, Backends: backends, Prefs: &chat.FilePrefs{Path: filepath.Join(c.home, "web_chats.json")},
 			Outbox: &chat.Outbox{Path: filepath.Join(c.home, "outbox_web.json")},
+			Agents: savedPersonas,
 		}
 		if gd := c.rt.Guard(); gd != nil {
 			eng.Permissions = guard.ChatPermissions{G: gd, Gateway: s.name}
@@ -469,6 +490,8 @@ func runGateway(c *cli) error {
 			AGUIKey:      webSet.AGUIKey,
 			Runs:         runs,
 			Cards:        c.rt.Cards(),
+			Usage:        c.ledger,
+			Home:         c.home,
 			Rec:          &routine.Recorder{},
 			Agents:       agents,
 			Routines:     routines,
@@ -489,6 +512,28 @@ func runGateway(c *cli) error {
 			return out
 		}
 		srv.Sources.ReviewTask = reviewed.Add
+		srv.Hooks = &webhook.Store{Path: filepath.Join(c.home, "webhooks.json")}
+		srv.Sources.Webhook = func(h webhook.Hook, prompt string) error {
+			// A task like any other (it shows under Tasks, and the limit on how many run at once applies), but its prompt came
+			// from outside, so it is marked, and it cannot use anything that asks first: nobody is there to answer.
+			_, err := cron.StartTask(c.rt.Cron, s.sched, cron.Job{Name: tidy("Webhook: "+h.Name, 60, "Webhook"), Prompt: prompt, Gateway: s.name, ChatID: web.ChatID,
+				Agent: h.Agent, Profile: h.Profile, Untrusted: true})
+			return err
+		}
+		digestSrc.waiting = func() (int, int) {
+			review := 0
+			for _, d := range c.rt.Cron.DoneTasks(s.name, web.ChatID) {
+				if !reviewed.Has(d.Job.ID) {
+					review++
+				}
+			}
+			return eng.Held.Count(), review
+		}
+		srv.Sources.Digest, srv.Sources.SetDigest = webDigest(c.rt.Cron, zone), setDigest(c.rt.Cron, zone)
+		srv.Sources.DigestNow = func(span time.Duration) string {
+			now := time.Now()
+			return digestSrc.build(now.Add(-span), now).Text
+		}
 		if ideas := c.rt.Ideas(); ideas != nil {
 			srv.Sources.Suggestions, srv.Sources.StartSuggestion, srv.Sources.HideSuggestion = webSuggestions(ideas, c.rt.Cron, func() cron.Control { return s.sched })
 		}

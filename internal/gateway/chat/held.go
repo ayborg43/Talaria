@@ -136,6 +136,18 @@ func (s *HeldStore) Get(token string) (Held, bool) {
 	return Held{}, false
 }
 
+// Count is how many requests are waiting for an answer now.
+func (s *HeldStore) Count() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	s.pruneLocked()
+	return len(s.items)
+}
+
 // Take removes a request and returns it, once: a second answer finds nothing.
 func (s *HeldStore) Take(token string) (Held, bool) {
 	s.mu.Lock()

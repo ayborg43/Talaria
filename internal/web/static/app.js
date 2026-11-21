@@ -698,7 +698,7 @@ function autosize() { input.style.height = 'auto'; input.style.height = Math.min
 // reconnecting never clears what was typed (this is a single page, and nothing
 // here resets the box), and stopping the agent leaves it alone too. It clears
 // only once the message is sent.
-input.addEventListener('input', () => { autosize(); renderChrome(); });
+input.addEventListener('input', () => { autosize(); renderChrome(); mentionHints(); });
 input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !matchMedia('(pointer: coarse)').matches) { e.preventDefault(); $('#composer').requestSubmit(); }
 });
@@ -816,7 +816,7 @@ async function openSheet() {
   if (!body.children.length) body.replaceChildren(h('div', { class: 'card empty', text: 'Loading…' }));
   try {
     const d = await api('/api/chats' + (sheetArchived ? '?archived=1' : ''));
-    body.replaceChildren(conversationsCard(d.chats || [], sheetArchived));
+    body.replaceChildren(...[sheetArchived ? null : rosterCard(), conversationsCard(d.chats || [], sheetArchived)].filter(Boolean));
   } catch (e) { if (!(e instanceof AuthError)) body.replaceChildren(h('div', { class: 'card empty', text: e.message })); }
 }
 function closeSheet() { $('#sheet').hidden = true; sheetArchived = false; }
@@ -1519,6 +1519,7 @@ function paneModels(s) {
   const rc = routineCard(s); if (rc) out.push(rc);
   const fc = fallbackCard(s); if (fc) out.push(fc);
   const rtc = routingCard(s); if (rtc) out.push(rtc);
+  out.push(usageCard());
   out.push(testQuestionsCard(s));
   for (const p of ps) out.push(profileNameCard(p));
   if (!ps.length) out.push(h('div', { class: 'card' }, h('h2', null, 'Profiles'), h('div', { class: 'empty', text: (S.model ? S.model + ' comes from the server settings. ' : '') + 'Add a profile to keep more than one model and switch between them.' })));

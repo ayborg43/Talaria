@@ -178,6 +178,21 @@ one at a time in the background, and gives "8 of 10 on your test questions (2.1s
 profile in Settings, and `model_list` tells the agent ("Tested: 8 of 10 ..."), so it can use it when it picks a model for a task. After adding a profile the phone offers to run them on it. A case with nothing to check
 is shown but never counted.
 
+### What the models cost
+
+Every answered request is counted: tokens in and out, by day, by profile and model, by who asked (a chat, a scheduled job, a
+background task, a watch, a delegated helper, `tal run`), by saved agent, and by the router's kind of message. Settings → AI models →
+**What the models cost** shows it for today, this week or this month, with a small bar per day; `tal usage [days]` prints the same, and the agent
+has a `usage_summary` tool ("what have I spent this week?"). The counts are what the service reports; a service that reports none is
+estimated from the text (about four characters to a token) and the report says how many requests were guessed.
+
+Dollars are only shown where you say what a model costs: `"prices": {"claude": {"in": 3, "out": 15}}` in the config, by profile name (`default` is the profile of a setup with
+no config file), in US dollars for a million tokens in and out, or under "What each model costs" in Settings. Talaria ships no price list, because prices change and a wrong one is worse than none.
+A profile with no price is counted in tokens, and the summary names it: "No price is set for cheap, so what it cost is not counted."
+It is one small file, `~/.talaria/usage.json` (a row per day, profile, model, source, agent and kind: a few hundred a month at most), written
+at most every 20 seconds and kept for 400 days. OpenAI-compatible streaming asks the service to end the reply with its token counts
+(`stream_options.include_usage`); a service that refuses an unknown option would need a profile of its own, and none known does.
+
 ### Search your own files and notes
 
 The agent has `docs_search` and `docs_read` over what you keep: the files Talaria stores (uploads, documents it made; text, Markdown, web pages and PDFs), the notes it holds about you, and folders you name
@@ -576,6 +591,24 @@ Each tool appears to the model as `mcp_<server>_<tool>`.
   needs interactive input returns an error saying so. Resources and prompts are not used.
 - OAuth sign-in for remote servers (below). Not supported: the deprecated HTTP+SSE transport, and refreshing the
   tool list while running (restart to pick up changes).
+
+### Talaria as a tool for other programs
+
+```bash
+./tal run "summarise the open pull requests"              # one piece of work, unattended; the reply on stdout
+./tal run --json --agent Researcher "find the paper"      # one JSON document: reply, tools used, tokens, how it ended
+echo "check the build" | ./tal run --json -               # the prompt from standard input
+./tal mcp serve                                           # an MCP server on stdin/stdout, for Claude Desktop, Cursor and others
+```
+
+`tal run` works without anyone to approve: a tool that needs approval is refused and listed in `denied`, unless you pass `--allow-risky` (or the global `-yolo`). It cannot schedule or start more work. The
+exit code says how it went: **0** finished, **1** failed, **3** finished only as far as its rules allowed (something was refused), so a script can branch on it. `--agent` names a saved agent (its instructions, model and look-only limit apply), and
+`-profile` picks the model. The JSON has `ok`, `reply`, `error`, `tools` (each with its arguments, and `denied`), `usage` (requests and tokens, `estimated` when a count was guessed) and `seconds`.
+
+`tal mcp serve` is deliberately small. Add it to a client's config as a command, for example `{"mcpServers": {"talaria": {"command": "/path/to/tal", "args": ["mcp", "serve"]}}}`. It offers seven tools: **ask** (hand Talaria a
+piece of work: same unattended rules as `tal run`, never `allow_risky`), **agents**, **board**, **board_add** (adds to the Backlog: it starts nothing until you move the card to Ready), **tasks**, **while_away** and **usage**.
+It offers no way to approve anything, delete, change settings, read credentials or start a board card: a client can hand Talaria work, never lift one of its limits. Requests are handled one at a time; start a second server for a second client.
+It speaks JSON-RPC over lines, protocol versions 2024-11-05 to 2025-11-25, tools only. Logs go to stderr, never to the protocol stream.
 
 ### Connecting to a service
 
@@ -1331,6 +1364,15 @@ kept like a channel, and the header says who you are talking to.
 - Its model profile applies while you talk with it, and jobs started from that conversation start on it too. Going back to an
   ordinary conversation puts the usual instructions and model back. Edit or remove an agent at any time; the conversations stay, as ordinary ones.
 - Agents share one memory, one set of goals and watches, and one set of rules with the rest of Talaria. They are kept in `~/.talaria/agents.json`.
+- **`@name` hands one message to an agent.** Start a message with `@Inbox sort my mail` (any case; the longest matching name wins) in the web app,
+  Telegram or Discord, and that message is answered by the saved agent, with its instructions, its model and its look-only limit, in the same
+  conversation; the usual agent is back for the next message. It says "→ Inbox" first so you can see who has it. In a conversation that is already
+  with an agent, an `@` is just text. The web app and the phone offer the names as you type `@`, and the conversation list shows your agents as
+  contacts, with **WORKING** while one of their board cards is running.
+- **Share an agent as one file.** **Share** on an agent saves `Name.agent.md`: a small header (`talaria-agent: 1`, name, icon, looks-only) and the
+  instructions, as plain text anyone can read. Nothing else goes in it: not its model profile (those are yours, with your keys), not memory, notes, goals,
+  conversations or anything about your machine. **Import an agent** reads such a file strictly (unknown settings are refused), shows the instructions in full, and
+  only then adds it: always without a model, and looking only unless you turn that off, whatever the file asked for. A name you already use is refused.
 
 ### Your phone (the Android app)
 
@@ -1342,6 +1384,7 @@ No Google services and no push service are involved.
 |---|---|
 | `phone_info` | `status` (battery, charging, network, free space, do-not-disturb, time zone) or `location` (a position rounded to about 100 m, with its age) |
 | `phone_read` | `contacts` (one name looked up, never the list), `calendar` (the phone's own calendars, 1 to 14 days) or `notifications` (what is showing now, newest first) |
+| `phone_do` | `alarm`, `timer`, `reminder` (opens the calendar filled in: you press Save), `map` or `sms_draft` (opens the messaging app with the text written: you press send; it can never send a message, call or delete) |
 
 - **Everything starts off, on the phone.** Settings -> Your phone has one switch per kind; turning one on asks for Android's own permission at that moment.
   A request for anything switched off, or whose permission was taken back, is refused on the phone, and the server refuses it first when the phone has not listed it.
@@ -1349,6 +1392,7 @@ No Google services and no push service are involved.
 - **Read only.** There is no tool to send, change or delete anything on the phone.
 - **Outside text.** `phone_read` returns text other people wrote (a notification, an invite's title), so it counts as outside content: once the agent has read it,
   anything that could send something out asks first, as after a web page. `phone_info` does not.
+- **`phone_do` asks every time.** It shows exactly what it will set, has no *Always* button, is refused in jobs and for delegated helpers, and has its own switch per kind on the phone, off by default. Android 10+ does not let an app open another from the background: with Talaria open the alarm or timer is set at once and the other apps open filled in; otherwise the phone posts a notification and nothing happens until you tap it. Rules: **Change things on your phone**.
 - **Your rules apply.** **Read your phone** is a row in What it asks first (`phone_info`, `phone_read`): set it to Ask me to approve each look.
 - **Location needs one more step to answer with the app closed**: Android only gives a closed app a position if location is allowed "all the time"; without it the agent is told to ask again with the app open.
 - The link is only open while the phone is signed in and connected, and a newer connection replaces an older one. `GET /api/phone` says whether a phone is linked and what it shares.
@@ -1477,6 +1521,27 @@ Four tools the agent uses inside the conversation, each asked about and bounded:
   actually filled; nothing of it runs at startup or idle.
 - **Spending** (`finance_import`): paste a transaction CSV (`date,description,amount,category`) and get a summary with
   categories and a savings figure. Positive amounts are expenses, negative are income; no currency conversion is inferred.
+
+## While you were away
+
+"What did you do while I was away?" is answered from what Talaria already keeps, with no model asked and so no cost: background tasks and scheduled work that finished
+(failures first), watches that saw a change, goals and board cards that moved, how many tool calls were made and how many were refused, what it cost, and what is waiting
+for you (questions to answer, finished tasks to look at). Ask the agent (its `while_away` tool), run `tal digest [hours]`, or open Settings → **While you were away**
+and press *Last 24 hours*. Turn on the scheduled one there to have it posted into the chat every morning (or every Monday) at a time you choose, covering the time since the
+last one; on a quiet day nothing is sent. The activity log is read one line at a time, so a long log is never held in memory.
+
+## Webhooks
+
+A webhook is an address another service can call (a form, a monitor, a build) to make Talaria do something. In Settings → **Webhooks** give one a name and say what to do when it
+is called ("draft a reply to whoever filled in the form, and put it in Drafts"), optionally as one of your saved agents. You get an address and a secret **once**; only a hash of the
+secret is kept. Call it with `POST /hooks/<id>` and `Authorization: Bearer <secret>`, or, for a sender that cannot set a header, `POST /hooks/<id>/<secret>`.
+
+- It starts an ordinary background task (it shows under Tasks, and the limit of three at once applies; a full chat answers 429 with `Retry-After`). What the caller sent (up to 64 KB) is given to
+  that task quoted as **untrusted data**, and the task starts as one that has already read outside content, so anything that could send something out is refused; it cannot ask you, and a webhook
+  never carries `allow_risky`. It can read, search, summarise, write documents and drafts.
+- A wrong secret or an unknown id gets the same plain 404, and an address that guesses wrongly 20 times in a minute is told to wait. A webhook can be paused, given a new secret (the old one stops at once) or
+  deleted; each answers at most 60 calls an hour. At most 20 webhooks. The agent has no tool to make one: a webhook is a door into Talaria, and only you, signed in, decide who gets a key.
+- The door is on the web app's own address, so `TALARIA_WEB_PUBLIC_URL` (https) is what makes it reachable from outside. It is a separate handler from the signed-in app: it needs no cookie, and it can only do what is above.
 
 ## Scheduled jobs
 
@@ -1607,6 +1672,15 @@ file in a password manager, or the saved logins cannot be opened after a restore
 contains your history. A restore refuses an archive with anything but plain files and folders in it, and any name that
 would land outside the state folder, and writes owner-only. Stop the gateway before restoring.
 
+**Back up or move from the app.** Settings → **Back up or move Talaria** downloads the same archive (`GET /api/backup`, signed in) and takes one back. To move to another server, download on the old one and choose the file on the new one:
+the upload is checked whole (a Talaria backup, only plain files and safe names, a size limit) and kept as `pending-restore.tar.gz`; nothing changes until the next start, because the state it replaces is in use now.
+At the next `tal gateway` start it is put in place **inside** the state folder (so it works when that folder is a mounted volume, as in Docker): each current entry is moved into `.before-restore-DATE` beside it, never deleted, and
+a backup that cannot be restored is set aside as `pending-restore.tar.gz.failed` and changes nothing. A backup does not carry the vault's key file: bring the passphrase or key file to the new server. The restore's own working files are left out of the next backup.
+
+**Your conversations as training data.** `tal export [-o FILE] [-since DATE] [-archived] [-min-tools N]` (and Settings, or `GET /api/trajectories`) writes the kept web conversations as JSON Lines, one conversation per line, in the chat-completions message
+format (`user`, `assistant` with `tool_calls`, `tool` results) plus a few stats, the shape the common fine-tuning and evaluation tools read. Known secrets are scrubbed, pictures are replaced by a note, the system prompt (which carries your notes) and
+the model's hidden reasoning are never included. Talaria trains nothing: use the file wherever you do that. It is as private as the conversations are.
+
 **Watching it run.** Off by default; to turn it on:
 
 ```json
@@ -1654,7 +1728,7 @@ and how it ended.
 
 | Path | Role |
 |---|---|
-| `cmd/tal` | CLI entrypoint (`tal`, `tal -p`, `tal gateway`, `tal cron list`, `tal log`, `tal policy`, `tal workspace`, `tal vault`, `tal connect`, `tal calendar`, `tal email`, `tal backup`, `tal restore`, `tal doctor`, `tal version`, `tal config`, `tal mcp list`, `tal env`) |
+| `cmd/tal` | CLI entrypoint (`tal`, `tal -p`, `tal gateway`, `tal cron list`, `tal log`, `tal policy`, `tal workspace`, `tal vault`, `tal connect`, `tal calendar`, `tal email`, `tal backup`, `tal restore`, `tal run`, `tal mcp serve`, `tal usage`, `tal digest`, `tal export`, `tal doctor`, `tal version`, `tal config`, `tal mcp list`, `tal env`) |
 | `internal/app` | builds agents (tools, prompt, history) for the CLI and gateways |
 | `internal/cron` | schedule parser, job store, scheduler, `cron_*` tools |
 | `internal/execenv` | where the shell and file tools run: this machine, a Docker container, or an SSH host; also starts long-running processes there |
@@ -1677,6 +1751,11 @@ and how it ended.
 | `internal/guard` | permission rules, "always allow" choices, the activity log, secret scrubbing |
 | `internal/backup` | `tal backup` and `tal restore`: the state folder as one archive, safely unpacked |
 | `internal/metrics`, `internal/ops` | counters in the Prometheus text format, and the health and metrics endpoint |
+| `internal/usage` | the ledger of tokens and what they cost, by model, agent, kind and day, and the plain-words summary |
+| `internal/digest` | "what did you do while I was away?": the account written from the records Talaria keeps, with no model |
+| `internal/webhook` | inbound webhooks: secrets kept as hashes, rate limits, and the prompt that quotes a payload as data |
+| `internal/mcpserve` | the MCP server behind `tal mcp serve`: JSON-RPC over stdio and a fixed list of tools |
+| `internal/export` | conversations as JSON Lines trajectories, scrubbed |
 | `internal/version` | which build this is |
 | `internal/gateway/chat` | what every chat service shares: per-chat agents and workers, streamed edits, button approvals, `/model`, `/env`, message splitting; a service supplies a small `Transport` |
 | `internal/gateway/telegram` | Bot API client; long polling feeding the chat engine |

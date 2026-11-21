@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"talaria/internal/agent"
+	"talaria/internal/provider"
 	"talaria/internal/routine"
 	"talaria/internal/runlog"
 	"time"
@@ -64,6 +65,8 @@ type jobRunner struct {
 	routines *routine.Store
 	// agents holds the user's saved agents; a task that names one (a kanban card's) works as that agent.
 	agents *persona.Store
+	// digest writes the scheduled "while you were away" digest, which asks no model.
+	digest *digestSources
 }
 
 func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
@@ -72,6 +75,14 @@ func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
 	}
 	if j.Kind == cron.KindWatch {
 		return r.runWatch(ctx, j)
+	}
+	if j.Kind == "" && j.Name == digestName && r.digest != nil { // written from what is kept: no model, no tools, no cost
+		now := time.Now()
+		d := r.digest.build(digestWindow(j, now), now)
+		if d.Empty {
+			return cron.Silent, nil
+		}
+		return d.Title + "\n\n" + d.Text, nil
 	}
 
 	var named *persona.Agent
@@ -135,6 +146,9 @@ func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
 		// The morning brief may leave suggestions for the user to start or hide; no other job proposes anything.
 		Suggest: j.Kind == "" && j.Name == briefName,
 	})
+	if j.Untrusted {
+		a.MarkUntrusted() // what it was handed came from outside
+	}
 	a.RefuseRisky = j.Routine != "" // a routine clicks and types as shown, but never deletes or posts
 	if named != nil && named.ReadOnly {
 		a.ReadOnly = true // a look-only agent gets nothing that needs approval, whatever the card allowed
@@ -257,6 +271,7 @@ func (r *jobRunner) prepare(j cron.Job) (prompt, note, final string, err error) 
 // it made, and what it reported. It also lets the user steer it: anything they add while it works is read at its next
 // step. Only a web chat's jobs are recorded; the rest run as they always did.
 func (r *jobRunner) runRecorded(ctx context.Context, a *agent.Agent, j cron.Job, prompt string) (string, error) {
+	ctx = provider.WithLabel(ctx, provider.Label{Source: strings.ToLower(j.Kind), Agent: j.Agent}) // for what it costs
 	if r.runs == nil || j.Gateway != "web" {
 		return a.Run(ctx, prompt)
 	}

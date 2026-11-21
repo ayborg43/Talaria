@@ -142,6 +142,10 @@ class SessionStore(context: Context) : Credentials {
     var widgetTasks: Int
         get() = prefs.getInt("w_tasks", 0)
         set(v) { prefs.edit().putInt("w_tasks", v).apply() }
+    /** What the board widget last showed, as [app.talaria.widget.BoardWidgetState.encode] writes it. */
+    var widgetBoard: String
+        get() = prefs.getString("w_board", "") ?: ""
+        set(v) { prefs.edit().putString("w_board", v).apply() }
     var lastServers: String
         get() = prefs.getString("last", "") ?: ""
         set(v) { prefs.edit().putString("last", v).apply() }

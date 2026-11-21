@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"talaria/internal/activity"
 	"talaria/internal/agent"
@@ -141,9 +142,11 @@ func HomeDir(getenv func(string) string) (string, error) {
 type Runtime struct {
 	Cron *cron.Store // scheduled jobs
 
-	models        func() []ModelInfo // the models a task can be given; set by the gateway
-	triggers      *trigger.Store     // what the phone may tell the agent about; set by the gateway
-	agents        *persona.Store     // the user's saved agents, for agent_create; set by the gateway
+	models        func() []ModelInfo              // the models a task can be given; set by the gateway
+	usageSummary  func(days int) string           // what the models cost lately, in words; set by the gateway
+	whileAway     func(span time.Duration) string // what Talaria did on its own lately; set by the gateway
+	triggers      *trigger.Store                  // what the phone may tell the agent about; set by the gateway
+	agents        *persona.Store                  // the user's saved agents, for agent_create; set by the gateway
 	agentProfiles func() []string
 	docs          *docsearch.Index   // search over the person's files and notes; set by the gateway
 	kanban        *kanban.Dispatcher // starts the board's Ready cards as tasks; set by the gateway

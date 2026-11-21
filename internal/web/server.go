@@ -42,6 +42,8 @@ import (
 	"talaria/internal/provider"
 	"talaria/internal/routing"
 	"talaria/internal/trigger"
+	"talaria/internal/usage"
+	"talaria/internal/webhook"
 	"talaria/internal/x"
 )
 
@@ -115,6 +117,14 @@ type Sources struct {
 	// ("07:30", in Zone). Nil leaves the brief out of the app.
 	Brief    func() BriefInfo
 	SetBrief func(enabled bool, at string) error
+	// Digest says whether the "while you were away" digest is scheduled, SetDigest turns it on (daily, or weekly on
+	// Mondays) at a time of day or off, and DigestNow writes one for the last stretch of time. Nil leaves it out.
+	Digest    func() DigestInfo
+	SetDigest func(enabled bool, at string, weekly bool) error
+	DigestNow func(span time.Duration) string
+	// Webhook starts the background task a webhook that was called describes, with the prompt already written. It
+	// returns an error for which cron.IsBusy is true when the chat has as many tasks going as it may.
+	Webhook func(h webhook.Hook, prompt string) error
 	// Runs connects the Activity view to steering a running task and following up a finished one. Nil leaves
 	// those out; the record itself is Server.Runs.
 	Runs *RunHooks
@@ -171,6 +181,8 @@ type Server struct {
 
 	ConfigPath string
 	Cfg        *config.Config
+	// Home is the state directory, for the backup and restore the app offers. Empty leaves them out.
+	Home string
 	// Mailbox and Calendars are the live services Settings manages; nil when
 	// not set up. Getenv reads the environment for what Settings leaves empty.
 	Mailbox   *mailbox.Service
@@ -222,6 +234,11 @@ type Server struct {
 	Health *provider.Health
 	// Phone is the link to the user's phone, which the agent's phone tools use. Nil leaves the door shut.
 	Phone *phonelink.Hub
+	// Hooks is the inbound webhooks, and Sources.Webhook starts the task one of them describes. Nil leaves them out.
+	Hooks     *webhook.Store
+	hookFails failWindow
+	// Usage is what the models were asked and what that cost. Nil leaves the usage screen out.
+	Usage *usage.Ledger
 
 	voiceMu sync.Mutex
 	voice   voiceLimiter
@@ -291,6 +308,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/suggestions", s.authed(s.suggestionsPost))
 	mux.HandleFunc("GET /api/personas", s.authed(s.personasGet))
 	mux.HandleFunc("POST /api/personas", s.authed(s.personasPost))
+	mux.HandleFunc("GET /api/agent-file", s.authed(s.agentFileGet))
+	mux.HandleFunc("POST /api/agent-file", s.authed(s.agentFilePost))
 	mux.HandleFunc("GET /api/routines", s.authed(s.routinesGet))
 	mux.HandleFunc("POST /api/routines", s.authed(s.routinesPost))
 	mux.HandleFunc("GET /api/board", s.authed(s.boardGet))
@@ -319,6 +338,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/retry", s.authed(s.retry))
 	mux.HandleFunc("GET /api/routing", s.authed(s.routingGet))
 	mux.HandleFunc("POST /api/routing", s.authed(s.routingPost))
+	mux.HandleFunc("POST /hooks/{id}", s.hookCall)
+	mux.HandleFunc("POST /hooks/{id}/{secret}", s.hookCall)
+	mux.HandleFunc("GET /api/webhooks", s.authed(s.hooksGet))
+	mux.HandleFunc("POST /api/webhooks", s.authed(s.hooksPost))
+	mux.HandleFunc("GET /api/trajectories", s.authed(s.trajectoriesGet))
+	mux.HandleFunc("GET /api/backup", s.authed(s.backupGet))
+	mux.HandleFunc("GET /api/restore", s.authed(s.restoreGet))
+	mux.HandleFunc("POST /api/restore", s.authed(s.restorePost))
+	mux.HandleFunc("GET /api/digest", s.authed(s.digestGet))
+	mux.HandleFunc("POST /api/digest", s.authed(s.digestPost))
+	mux.HandleFunc("GET /api/usage", s.authed(s.usageGet))
+	mux.HandleFunc("POST /api/usage", s.authed(s.usagePost))
 	mux.HandleFunc("GET /api/phone", s.authed(s.phoneStatus))
 	mux.HandleFunc("GET /api/phone/link", s.authed(s.phoneLink))
 	mux.HandleFunc("GET /api/browser/live", s.authed(s.browserLive))

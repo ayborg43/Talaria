@@ -24,8 +24,22 @@ const (
 	OpTriggers      = "triggers"      // the phone may tell the agent when something happens on it (battery, charger, Wi-Fi, Bluetooth)
 )
 
+// What the phone can be asked to do (phone_do). Each is its own switch on the phone, off until the person turns it on,
+// and none of them sends a message, places a call or deletes anything: the most they do is set an alarm or timer, or
+// open another app with something already filled in for the person to look at.
+const (
+	OpAlarm    = "alarm"     // set an alarm for a time of day
+	OpTimer    = "timer"     // start a countdown
+	OpReminder = "reminder"  // a calendar entry, filled in, for the person to save
+	OpMap      = "map"       // open the maps app at a place
+	OpSMSDraft = "sms_draft" // open the messaging app with a text written, never sent
+)
+
+// Writes lists the operations that do something on the phone, in the order its settings show them.
+var Writes = []string{OpAlarm, OpTimer, OpReminder, OpMap, OpSMSDraft}
+
 // Ops lists every operation, in the order the phone's settings show them.
-var Ops = []string{OpStatus, OpLocation, OpContacts, OpCalendar, OpNotifications, OpTriggers}
+var Ops = append([]string{OpStatus, OpLocation, OpContacts, OpCalendar, OpNotifications, OpTriggers}, Writes...)
 
 // ErrNotConnected is what a tool gets when no phone is linked.
 var ErrNotConnected = errors.New("the phone is not connected. Talaria on the phone keeps a link while its alerts are on; opening the app brings it back")
@@ -260,7 +274,7 @@ func (h *Hub) Call(ctx context.Context, op string, args json.RawMessage) (json.R
 	allowed := slices.Contains(l.info.Caps, op)
 	l.mu.Unlock()
 	if !allowed {
-		return nil, fmt.Errorf("the user has not allowed this on their phone (%s). They can turn it on in Talaria's Settings, under Your phone", op)
+		return nil, fmt.Errorf("not allowed on the phone: the user has not switched this on (%s). They can turn it on in Talaria's Settings, under Your phone", op)
 	}
 	if len(args) == 0 {
 		args = json.RawMessage(`{}`)

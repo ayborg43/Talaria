@@ -215,3 +215,6 @@ func StartTask(s *Store, ctl Control, j Job) (Job, error) {
 	}
 	return j, nil
 }
+
+// IsBusyForTest is the error a full chat gives, for another package's tests.
+func IsBusyForTest() error { return tooManyTasks("busy") }

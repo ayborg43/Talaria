@@ -50,7 +50,8 @@ class TalariaApp : Application() {
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 private fun TalariaApp.keepWidgetCurrent() {
     // While the app is alive it tells the widget what is going on; when it is not, the widget asks the server itself now and then.
-    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default).launch {
+    val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+    scope.launch {
         kotlinx.coroutines.flow.combine(repo.conn, repo.workers, repo.messages) { conn, workers, messages ->
             // Until the first look at the server arrives (or while it is out of reach) the widget keeps what it last said.
             if (conn is app.talaria.data.Conn.Connecting || conn is app.talaria.data.Conn.Offline) null
@@ -59,7 +60,13 @@ private fun TalariaApp.keepWidgetCurrent() {
                 pending = messages.count { it.role == "approval" && it.state == "pending" },
                 tasks = workers.count { it.kind != "main" },
             )
-        }.filterNotNull().distinctUntilChanged().debounce(1_500).collect { app.talaria.widget.Widget.push(this@keepWidgetCurrent, it) }
+        }.filterNotNull().distinctUntilChanged().debounce(1_500).collect {
+            app.talaria.widget.Widget.push(this@keepWidgetCurrent, it)
+            // A task starting or finishing is usually a card moving on the board: let the board widget look too (it does nothing
+            // unless that widget is on a home screen), and say so at once when signed out.
+            if (!it.signedIn) app.talaria.widget.BoardWidget.push(this@keepWidgetCurrent, app.talaria.widget.BoardWidgetState())
+            else scope.launch { app.talaria.widget.BoardWidget.refresh(this@keepWidgetCurrent) }
+        }
     }
 }
 

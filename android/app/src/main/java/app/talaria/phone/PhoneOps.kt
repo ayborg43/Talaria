@@ -33,7 +33,7 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlin.coroutines.resume
 
-/** What Talaria may be asked to read from this phone. Every one is read-only and every one is off until the person turns it on. */
+/** What Talaria may be asked to read from this phone, or to do on it in small ways. Every one is off until the person turns it on. */
 object Op {
     const val STATUS = "status"
     const val LOCATION = "location"
@@ -42,7 +42,19 @@ object Op {
     const val NOTIFICATIONS = "notifications"
     /** Not a read: the phone tells the agent when something happens on it (battery, charger, Wi-Fi, Bluetooth). */
     const val TRIGGERS = "triggers"
-    val all = listOf(STATUS, LOCATION, CONTACTS, CALENDAR, NOTIFICATIONS, TRIGGERS)
+
+    /**
+     * Not reads either: small things the agent may do (phone_do), each asked of the person every time on the server and
+     * switched on here. None sends a message, places a call or deletes anything: a text is only written out for the
+     * person to send, a reminder is only filled in for them to save.
+     */
+    const val ALARM = "alarm"
+    const val TIMER = "timer"
+    const val REMINDER = "reminder"
+    const val MAP = "map"
+    const val SMS_DRAFT = "sms_draft"
+    val writes = listOf(ALARM, TIMER, REMINDER, MAP, SMS_DRAFT)
+    val all = listOf(STATUS, LOCATION, CONTACTS, CALENDAR, NOTIFICATIONS, TRIGGERS) + writes
 }
 
 /** Why a request could not be answered, in words the agent can pass on. */
@@ -78,6 +90,7 @@ object PhoneOps {
             Op.CONTACTS -> contacts(ctx, str(args, "query"))
             Op.CALENDAR -> calendar(ctx, (args["days"] as? JsonPrimitive)?.content?.toIntOrNull()?.coerceIn(1, 14) ?: 2)
             Op.NOTIFICATIONS -> notifications(ctx, str(args, "query"))
+            in Op.writes -> PhoneWrites.run(ctx, op, args)
             else -> throw Refused("This phone does not answer that: it reports events, it is not asked for them.")
         }
     }

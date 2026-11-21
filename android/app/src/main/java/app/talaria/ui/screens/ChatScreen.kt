@@ -343,6 +343,7 @@ fun ChatScreen(
                     IconButton(onClick = voice::clearNotice, Modifier.size(40.dp)) { Icon(Ti.Close, "Dismiss", Modifier.size(16.dp)) }
                 }
             }
+            MentionRow(repo, draft, onDraft)
             Composer(draft, onDraft, onSend = { send(draft) }, voice = voice, enabled = conn !is Conn.SignedOut, canAttach = conn is Conn.Online, onAttach = onAttach, onPhoto = onPhoto, uploading = uploading, focusSignal = focusSignal)
         }
     }
@@ -657,6 +658,31 @@ private fun Composer(draft: String, onDraft: (String) -> Unit, onSend: () -> Uni
                     ) { Icon(Ti.Wave, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) }
                 }
             }
+        }
+    }
+}
+
+
+/**
+ * While an "@" is being typed at the end of the message, the names of the saved agents that fit, one tap each to write
+ * `@name ` in. The names are asked of the server once, the first time an "@" is typed after the chat opens; typing "@"
+ * costs nothing when there are no agents. The message itself is sent as typed.
+ */
+@Composable
+private fun MentionRow(repo: Repo, draft: String, onDraft: (String) -> Unit) {
+    var names by remember(repo.store.baseUrl) { mutableStateOf<List<String>?>(null) }
+    val typing = app.talaria.ui.Mentions.typing(draft)
+    LaunchedEffect(typing, names == null) {
+        if (typing && names == null) names = runCatching { repo.api.getJson<app.talaria.data.PersonasDto>("/api/personas").let { p -> if (p.available) p.agents.map { it.name } else emptyList() } }.getOrDefault(emptyList())
+    }
+    val shown = if (typing) app.talaria.ui.Mentions.suggest(draft, names.orEmpty()) else emptyList()
+    if (shown.isEmpty()) return
+    androidx.compose.foundation.lazy.LazyRow(
+        Modifier.fillMaxWidth().padding(top = 4.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(shown, key = { it }) { n ->
+            androidx.compose.material3.SuggestionChip(onClick = { onDraft(app.talaria.ui.Mentions.insert(draft, n)) }, label = { Text("@$n") })
         }
     }
 }

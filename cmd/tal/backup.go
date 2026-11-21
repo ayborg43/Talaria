@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -97,4 +98,28 @@ func expandHome(p string) string {
 		}
 	}
 	return p
+}
+
+// applyPendingRestore puts in place a backup that was uploaded from the app, before anything else opens the state it
+// replaces. The state it replaces is moved into a ".before-restore-DATE" folder inside home, not deleted. A backup that
+// cannot be restored is set aside as pending-restore.tar.gz.failed so the next start does not try it again.
+func applyPendingRestore(home string, log *slog.Logger) {
+	pending := filepath.Join(home, backup.PendingName)
+	f, err := os.Open(pending)
+	if err != nil {
+		return
+	}
+	moved, n, err := backup.RestoreInPlace(f, home, []string{backup.PendingName}, nil)
+	f.Close()
+	if err != nil {
+		log.Error("the backup uploaded from the app could not be restored, and nothing was changed: " + err.Error())
+		os.Rename(pending, pending+".failed")
+		return
+	}
+	os.Remove(pending)
+	log.Info(fmt.Sprintf("restored %d files from the backup uploaded from the app", n))
+	if moved != "" {
+		log.Info("the state that was here is kept at " + moved + ": delete it once you are happy")
+	}
+	log.Info("the vault opens with its own passphrase or key file, which a backup does not carry")
 }

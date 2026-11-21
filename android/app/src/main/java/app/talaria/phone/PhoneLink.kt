@@ -139,7 +139,9 @@ class PhoneLink(private val ctx: Context, private val repo: Repo) {
                 withTimeout(20_000) { PhoneOps.run(ctx, op, args) }
             }
             val err = result.exceptionOrNull()
-            record(PhoneEvent(System.currentTimeMillis(), op, err == null, if (err == null) "" else message(err)))
+            // A thing done on the phone is written down with how it went (opened, or waiting for a tap); a read needs no note.
+            val how = (result.getOrNull() as? JsonObject)?.get("status")?.let { (it as? JsonPrimitive)?.content }?.takeIf { op in Op.writes }?.let(PhoneWrites::statusWords).orEmpty()
+            record(PhoneEvent(System.currentTimeMillis(), op, err == null, if (err == null) how else message(err)))
             send(ws, buildJsonObject {
                 put("t", "res"); put("id", id); put("ok", err == null)
                 if (err == null) put("data", result.getOrThrow()) else put("error", message(err))

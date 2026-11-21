@@ -28,6 +28,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -46,6 +47,7 @@ import (
 	"talaria/internal/mcp"
 	"talaria/internal/phone"
 	"talaria/internal/provider"
+	"talaria/internal/usage"
 	"talaria/internal/vault"
 	"talaria/internal/version"
 	"talaria/internal/watch"
@@ -83,7 +85,9 @@ type cli struct {
 	envName   string
 
 	servers *mcp.Manager
-	health  *provider.Health // what the fallback chains have learned about each profile
+	health  *provider.Health                     // what the fallback chains have learned about each profile
+	ledger  *usage.Ledger                        // tokens and cost of what the models were asked
+	tap     atomic.Pointer[func(provider.Spent)] // also told of each answered request, for a run that reports what it cost
 	res     config.Resolved
 	p       provider.Provider
 	env     execenv.Env
@@ -112,6 +116,7 @@ type command struct {
 // commands is every subcommand, in the order the unknown-command error lists
 // them. The empty name is the default: bare `tal` starts the interactive chat.
 var commands = []command{
+	{name: "run", hint: "run PROMPT", needsConfig: true, needsModel: true, run: (*cli).runRunCmd},
 	{name: "gateway", hint: "gateway", needsConfig: true, needsModel: true, run: (*cli).runGatewayCmd},
 	{name: "cron", hint: "cron list", needsConfig: true, run: (*cli).runCronCmd},
 	{name: "mcp", hint: "mcp list", needsConfig: true, run: (*cli).runMCPCmd},
@@ -122,6 +127,9 @@ var commands = []command{
 	{name: "vault", hint: "vault", needsConfig: true, run: (*cli).runVaultCmd},
 	{name: "connect", hint: "connect", needsConfig: true, run: (*cli).runConnectCmd},
 	{name: "disconnect", needsConfig: true, run: (*cli).runDisconnectCmd},
+	{name: "digest", hint: "digest [hours]", needsConfig: true, run: (*cli).runDigestCmd},
+	{name: "export", hint: "export", needsConfig: true, run: (*cli).runExportCmd},
+	{name: "usage", hint: "usage [days]", needsConfig: true, run: (*cli).runUsageCmd},
 	{name: "backup", hint: "backup", needsConfig: true, run: (*cli).runBackupCmd},
 	{name: "restore", hint: "restore", run: (*cli).runRestoreCmd},
 	{name: "doctor", hint: "doctor", needsConfig: true, run: (*cli).runDoctorCmd},
@@ -178,6 +186,9 @@ func run() error {
 	if cmd == nil {
 		return fmt.Errorf("unknown command %q (try: %s)", flag.Arg(0), commandHints())
 	}
+	if cmd.name == "gateway" {
+		applyPendingRestore(home, log) // before the config is read: a restore may replace it
+	}
 	if cmd.needsConfig {
 		cfg, err := config.Load(c.cfgPath)
 		if err != nil {
@@ -213,6 +224,8 @@ func (c *cli) setupModel(gateway bool) (err error) {
 	if err != nil {
 		return err
 	}
+	p = provider.Meter(p, res.Name, res.Model)
+	c.openLedger()
 	c.health = provider.NewHealth()
 	p = withFallbacks(c.cfg, c.getenv, c.health, c.log, res.Name, res.Model, p)
 	// Where the shell and file tools run. A container or connection that cannot
@@ -242,6 +255,7 @@ func (c *cli) setupModel(gateway bool) (err error) {
 	// Connected services, which may need the vault for their sign-ins.
 	c.servers = startMCP(c.ctx, c.cfg, vlt, c.log)
 	guarded.Policy.NeverRemember(c.servers.Sensitive()...) // the Always button is never offered for a tool that sends or deletes
+	guarded.Policy.NeverRemember("phone_do")               // nor for something done on the phone, whatever "no_remember" says
 	calSvc, calProblems := buildCalendars(c.cfg, c.getenv, c.home)
 	for _, p := range calProblems {
 		c.log.Warn(p)
@@ -268,12 +282,26 @@ func (c *cli) setupModel(gateway bool) (err error) {
 	}
 	c.res, c.p = res, p
 	c.rt = app.Open(appCfg)
+	c.rt.SetUsage(func(days int) string {
+		zone, _ := calendarZone(c.cfg, c.getenv)
+		l := c.ledger
+		if l == nil {
+			l = usage.Open(filepath.Join(c.home, "usage.json"), zone)
+		}
+		l.Flush() // so the file and the memory agree for anything else that reads it
+		return l.Report(days, usagePrices(c.cfg)).Summary(usagePeriod(days))
+	})
 	return nil
 }
 
 // closeModel stops the runtime, the connected services and the environment, in
 // that order. It is safe to call twice.
 func (c *cli) closeModel() {
+	if c.ledger != nil {
+		provider.SetSink(nil)
+		c.ledger.Flush()
+		c.ledger = nil
+	}
 	if c.rt != nil {
 		c.rt.Close()
 		c.rt = nil
@@ -381,8 +409,11 @@ func (c *cli) runEnvCmd(args []string) error {
 }
 
 func (c *cli) runMCPCmd(args []string) error {
+	if len(args) > 0 && args[0] == "serve" {
+		return c.runMCPServe(args[1:])
+	}
 	if len(args) > 0 && args[0] != "list" {
-		return fmt.Errorf("unknown mcp command %q (try: tal mcp list)", args[0])
+		return fmt.Errorf("unknown mcp command %q (try: tal mcp list, tal mcp serve)", args[0])
 	}
 	return runMCPList(c.ctx, c.cfg, c.cfgPath, c.home)
 }
@@ -761,7 +792,7 @@ func withFallbacks(cfg *config.Config, getenv func(string) string, health *provi
 			}
 			continue
 		}
-		links = append(links, provider.Link{Name: fb, Model: r.Model, Provider: p})
+		links = append(links, provider.Link{Name: fb, Model: r.Model, Provider: provider.Meter(p, fb, r.Model)})
 	}
 	if len(links) == 1 {
 		return primary
@@ -809,6 +840,7 @@ func gatewayBackends(cfg *config.Config, def config.Resolved, defProvider provid
 		if err != nil {
 			return chat.Backend{}, err
 		}
+		p = provider.Meter(p, name, r.Model)
 		if chain {
 			p = withFallbacks(cfg, getenv, health, log, name, r.Model, p) // a task on any profile moves on when its model is not working
 		}

@@ -39,6 +39,7 @@ var Categories = []Category{
 	{ID: "browser", Title: "Click and type in web pages", Detail: "Pressing buttons and typing in the agent's browser. Using a saved login always asks, whatever you set here.", Tools: []string{"browser_click", "browser_type", "browser_press", "browser_select"}, Risky: true},
 	{ID: "schedule", Title: "Schedule and start work", Detail: "Reminders, goals, watches, background tasks, cards on the board, saved skills and saved agents, which keep acting when you are away.", Tools: []string{"cron_add", "cron_remove", "phone_trigger_add", "task_start", "kanban_add", "kanban_move", "kanban_remove", "goal_create", "goal_update", "watch_create", "watch_update", "skill_save", "skill_delete", "agent_create"}},
 	{ID: "phone", Title: "Read your phone", Detail: "Its location and battery, your contacts, calendar and notifications. The phone has its own switch for each; nothing is shared until you turn it on there.", Tools: []string{"phone_info", "phone_read"}},
+	{ID: "phone_do", Title: "Change things on your phone", Detail: "Set an alarm or timer, open a reminder, a map or a drafted text on your phone. It asks every time, and a text is only ever drafted: you press send yourself. The phone has its own switch for each.", Tools: []string{"phone_do"}, Risky: true},
 	{ID: "apps", Title: "Use connected apps", Detail: "Anything done through a connected service (an MCP server).", Tools: []string{"mcp_*"}},
 }
 

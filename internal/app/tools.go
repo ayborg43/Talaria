@@ -167,6 +167,12 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 	if rt.docs != nil {
 		docsearch.RegisterTools(tools, rt.docs)
 	}
+	if rt.whileAway != nil {
+		registerWhileAwayTool(tools, rt.whileAway)
+	}
+	if rt.usageSummary != nil {
+		registerUsageTool(tools, rt.usageSummary)
+	}
 	if rt.models != nil {
 		registerModelTool(tools, rt.models)
 	}

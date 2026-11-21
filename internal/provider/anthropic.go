@@ -78,14 +78,35 @@ type aResponse struct {
 	Type       string   `json:"type"`
 	Content    []aBlock `json:"content"`
 	StopReason string   `json:"stop_reason"`
+	Usage      *aUsage  `json:"usage"`
 	Error      *struct {
 		Message string `json:"message"`
 	} `json:"error"`
 }
 
+// aUsage is the token count the Messages API reports. Cached reads and writes are counted with the input: they are
+// still tokens the request used, though the service bills them differently.
+type aUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+}
+
+func (u *aUsage) in() int {
+	if u == nil {
+		return 0
+	}
+	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
+}
+
 type aEvent struct {
-	Type         string `json:"type"`
-	Index        int    `json:"index"`
+	Type    string `json:"type"`
+	Index   int    `json:"index"`
+	Message struct {
+		Usage *aUsage `json:"usage"`
+	} `json:"message"`
+	Usage        *aUsage `json:"usage"`
 	ContentBlock struct {
 		Type string `json:"type"`
 		ID   string `json:"id"`
@@ -228,6 +249,9 @@ func parseAnthropic(raw []byte) (Message, error) {
 			out.ToolCalls = append(out.ToolCalls, ToolCall{ID: b.ID, Name: b.Name, Arguments: string(b.Input)})
 		}
 	}
+	if r.Usage != nil {
+		out.Usage = Usage{In: r.Usage.in(), Out: r.Usage.OutputTokens}
+	}
 	return finalize(out, r.StopReason == "max_tokens", nil)
 }
 
@@ -245,6 +269,7 @@ func readAnthropicStream(body io.Reader, onText func(string)) (Message, error) {
 		order    []int
 		stop     string
 		finished bool
+		usage    Usage
 	)
 	err := sse.Read(body, func(data string) error {
 		var ev aEvent
@@ -252,6 +277,8 @@ func readAnthropicStream(body io.Reader, onText func(string)) (Message, error) {
 			return fmt.Errorf("decode stream: %w", err)
 		}
 		switch ev.Type {
+		case "message_start":
+			usage.In = ev.Message.Usage.in()
 		case "content_block_start":
 			if ev.ContentBlock.Type == "tool_use" {
 				if len(order) >= maxToolCalls {
@@ -271,6 +298,9 @@ func readAnthropicStream(body io.Reader, onText func(string)) (Message, error) {
 				}
 			}
 		case "message_delta":
+			if ev.Usage != nil {
+				usage.Out = ev.Usage.OutputTokens
+			}
 			if ev.Delta.StopReason != "" {
 				stop = ev.Delta.StopReason
 			}
@@ -293,7 +323,7 @@ func readAnthropicStream(body io.Reader, onText func(string)) (Message, error) {
 		return Message{}, errors.New("stream ended before the reply was complete")
 	}
 
-	out := Message{Role: RoleAssistant, Content: content.String()}
+	out := Message{Role: RoleAssistant, Content: content.String(), Usage: usage}
 	for _, i := range order {
 		c := calls[i]
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: c.id, Name: c.name, Arguments: c.args.String()})

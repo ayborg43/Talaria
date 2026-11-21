@@ -85,13 +85,12 @@ private val tabs = listOf("Active", "Board", "Up next", "History")
 
 @androidx.compose.material3.ExperimentalMaterial3Api
 @Composable
-fun TasksHost(repo: Repo, modifier: Modifier, onOpenBrowser: () -> Unit, onChat: () -> Unit) {
+fun TasksHost(repo: Repo, modifier: Modifier, tab: Int, onTab: (Int) -> Unit, onOpenBrowser: () -> Unit, onChat: () -> Unit) {
     var run by remember { mutableStateOf<String?>(null) }
     var agent by remember { mutableStateOf<PersonaDto?>(null) }
     var creating by remember { mutableStateOf(false) }
     var card by remember { mutableStateOf<CardDto?>(null) }
     var newCard by remember { mutableStateOf(false) }
-    var tab by rememberSaveable { mutableIntStateOf(0) } // kept here so coming back from a run or a form lands on the same tab
     BackHandler(enabled = run != null) { run = null }
     BackHandler(enabled = agent != null || creating) { agent = null; creating = false }
     BackHandler(enabled = run == null && (card != null || newCard)) { card = null; newCard = false }
@@ -100,7 +99,7 @@ fun TasksHost(repo: Repo, modifier: Modifier, onOpenBrowser: () -> Unit, onChat:
         run != null -> RunDetailScreen(repo, run!!, onBack = { run = null }, modifier = modifier)
         card != null || newCard -> CardFormScreen(repo, card, onDone = { card = null; newCard = false }, onWatch = { run = it }, modifier = modifier)
         agent != null || creating -> AgentFormScreen(repo, agent, onDone = { agent = null; creating = false }, modifier = modifier)
-        else -> TasksScreen(repo, modifier, tab, { tab = it }, onRun = { run = it }, onEditAgent = { agent = it }, onNewAgent = { creating = true }, onOpenBrowser = onOpenBrowser, onChat = onChat,
+        else -> TasksScreen(repo, modifier, tab, onTab, onRun = { run = it }, onEditAgent = { agent = it }, onNewAgent = { creating = true }, onOpenBrowser = onOpenBrowser, onChat = onChat,
             onOpenCard = { card = it }, onNewCard = { newCard = true })
     }
 }

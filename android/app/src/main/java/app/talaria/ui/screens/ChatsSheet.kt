@@ -48,6 +48,7 @@ import app.talaria.ui.components.Pill
 import app.talaria.ui.components.Tone
 import app.talaria.ui.theme.extra
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.put
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,6 +64,14 @@ fun ChatsSheet(repo: Repo, onDismiss: () -> Unit) {
     var renaming by remember { mutableStateOf<ChatMeta?>(null) }
     var deleting by remember { mutableStateOf<ChatMeta?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    // The saved agents, as contacts above the conversations. A dot shows while one has a task running on the board.
+    val personas = app.talaria.ui.rememberPolled(0, "roster-agents" + repo.store.baseUrl) { repo.api.getJson<app.talaria.data.PersonasDto>("/api/personas") }
+    val board = app.talaria.ui.rememberPolled(6000, "roster-board" + repo.store.baseUrl) { repo.api.getJson<app.talaria.data.BoardDto>("/api/board") }
+    val roster = personas.value?.takeIf { it.available }?.agents.orEmpty().filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
+    val working = remember(board.value) { workingAgents(board.value?.takeIf { it.available }?.cards.orEmpty()) }
+
+    // The agents arrive after the sheet has opened and make it taller: settle it at its full height again.
+    LaunchedEffect(roster.size) { if (roster.isNotEmpty()) runCatching { sheet.expand() } }
 
     fun act(block: suspend () -> Unit, close: Boolean = false) {
         scope.launch {
@@ -83,7 +92,7 @@ fun ChatsSheet(repo: Repo, onDismiss: () -> Unit) {
                 leadingIcon = { Icon(Ti.Search, null, Modifier.size(18.dp)) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), shape = MaterialTheme.shapes.extraLarge,
             )
             error?.let { Text(it, Modifier.padding(horizontal = 20.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.extra.bad) }
-            if (chats.isEmpty()) EmptyState("Nothing kept yet", "Your conversations are listed here once you have had one.")
+            if (chats.isEmpty() && roster.isEmpty()) EmptyState("Nothing kept yet", "Your conversations are listed here once you have had one.")
             if (archived.isNotEmpty()) TextButton(onClick = { showArchived = !showArchived }, Modifier.padding(horizontal = 12.dp)) { Text(if (showArchived) "Hide archived" else "Archived (${archived.size})") }
             if (showArchived) archived.forEach { c ->
                 Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp).heightIn(min = 52.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -95,6 +104,10 @@ fun ChatsSheet(repo: Repo, onDismiss: () -> Unit) {
             val listState = androidx.compose.foundation.lazy.rememberLazyListState()
             LaunchedEffect(pinned) { listState.animateScrollToItem(0) }
             LazyColumn(Modifier.heightIn(max = 560.dp), state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (roster.isNotEmpty()) rosterItems(roster, working, showConversationsLabel = listed.isNotEmpty()) { a ->
+                    // The same as "Chat" on the agent's card: a new conversation with it, then back to the chat.
+                    act({ repo.api.postJson("/api/personas", kotlinx.serialization.json.buildJsonObject { put("action", "chat"); put("id", a.id) }); repo.reload() }, close = true)
+                }
                 items(listed, key = { it.id }) { c ->
                     var menu by remember { mutableStateOf(false) }
                     Surface(

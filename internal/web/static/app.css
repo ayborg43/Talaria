@@ -986,3 +986,12 @@ html{caret-color:var(--brass-text);accent-color:var(--brass);scrollbar-color:var
 @media (max-width:700px){
   .board{grid-auto-flow:row;grid-auto-columns:auto;overflow:visible}
 }
+
+.usage-bars{display:flex;align-items:flex-end;gap:3px;height:56px;margin:10px 0}
+.usage-bar{flex:1;min-width:2px;background:var(--brass);border-radius:2px 2px 0 0;opacity:.85}
+.card details summary{cursor:pointer;margin:8px 0}
+.card details .rows input[type=number]{width:5.5em}
+
+.mention{padding-top:6px}
+.mention .chip{flex:none;height:36px;padding:0 14px;border-radius:18px;border:1px solid var(--brass-line);background:var(--brass-soft);color:var(--brass-text);font-weight:600;font-size:14px}
+.agent-says{white-space:pre-wrap;word-break:break-word;font:inherit;font-size:14px;background:var(--brass-soft);border:1px solid var(--brass-line);border-radius:12px;padding:12px;max-height:40vh;overflow:auto}
