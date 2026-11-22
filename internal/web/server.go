@@ -269,6 +269,7 @@ func (s *Server) origin() string {
 // Handler is everything the web app serves.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /talaria.apk", s.androidApp)
 	mux.Handle("GET /", s.static())
 
 	mux.HandleFunc("POST /api/login", s.login)
@@ -450,6 +451,25 @@ func (s *Server) static() http.Handler {
 		}
 		files.ServeHTTP(w, r)
 	})
+}
+
+// androidApp hands out the Android build that ships inside this binary, so a phone can install it from the same
+// address it opens in a browser. It needs no session: installing the app is how a new phone gets one.
+func (s *Server) androidApp(w http.ResponseWriter, r *http.Request) {
+	b, err := staticFS.ReadFile("static/talaria.apk")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "application/vnd.android.package-archive")
+	h.Set("Content-Disposition", `attachment; filename="Talaria.apk"`)
+	h.Set("Cache-Control", "no-cache")
+	h.Set("Content-Length", strconv.Itoa(len(b)))
+	if r.Method == http.MethodHead {
+		return
+	}
+	w.Write(b)
 }
 
 // ---- helpers ----

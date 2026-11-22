@@ -1702,7 +1702,9 @@ $('#install-go').addEventListener('click', async () => {
 $('#install-close').addEventListener('click', () => { installDismissed = true; renderInstall(); });
 function installCard() {
   if (standalone()) return null;
-  const card = h('div', { class: 'card' }, h('h2', null, 'Install the App'));
+  const card = h('div', { class: 'card' }, h('h2', null, 'Install the App'),
+    h('p', { class: 'note' }, 'On an Android phone you can also install Talaria itself: ',
+      h('a', { href: '/talaria.apk', download: 'Talaria.apk', text: 'download the APK' }), '.'));
   if (S.installEvent) return (card.append(h('div', { class: 'note', text: 'Add Talaria to your home screen to open it like any app.' }), h('p', null, h('button', { class: 'btn primary big', type: 'button', text: 'Install', onclick: async () => { S.installEvent.prompt(); await S.installEvent.userChoice; S.installEvent = null; renderSettings(); } }))), card);
   if (isIOS()) return (card.append(h('ol', { class: 'steps' }, h('li', { text: 'Tap the Share button in Safari.' }), h('li', { text: 'Choose “Add to Home Screen”.' }), h('li', { text: 'Open Talaria from your Home Screen.' }))), card);
   // Chrome on Android offers installing from its own menu even when it has not offered a button yet.
