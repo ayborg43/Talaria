@@ -367,6 +367,20 @@ type Files struct {
 	MaxTotalMB int `json:"max_total_mb,omitempty"`
 }
 
+// Conversations says how long old chats are kept. Nothing is removed unless a number is set.
+type Conversations struct {
+	// KeepDays archives a conversation nobody has touched for this many days (7 to 3650; 0 keeps them forever). The main
+	// conversation, the open one, channels and conversations with a named agent are never archived this way. One that was
+	// archived this way is deleted for good a month later (see GraceDays); one you archived yourself is never deleted.
+	KeepDays int `json:"keep_days,omitempty"`
+	// HistoryKeepDays forgets the searchable history (what the agent finds with session_search) older than this many days
+	// (30 to 3650; 0 keeps it forever). The agent no longer remembers what was said then.
+	HistoryKeepDays int `json:"history_keep_days,omitempty"`
+}
+
+// GraceDays is how long a conversation archived by the sweep waits before it is deleted, so a mistake can be undone.
+const GraceDays = 30
+
 // Permission modes, as written in the config.
 const (
 	PermissionsDeletesAndPosts = "deletes_and_posts"
@@ -461,6 +475,8 @@ type Workspace struct {
 
 type Config struct {
 	DefaultProfile string `json:"default_profile,omitempty"`
+	// Conversations says how long old chats are kept.
+	Conversations Conversations `json:"conversations,omitzero"`
 	// Prices says what each profile's model costs, by profile name (see ModelPrice), so the usage screen can show dollars.
 	Prices map[string]ModelPrice `json:"prices,omitempty"`
 	// FallbackProfile and FallbackProfiles name the profiles tried, in order, when a model is not working: rate
@@ -565,6 +581,12 @@ func Load(path string) (*Config, error) {
 // warnings. Write runs it too, so what is saved always loads.
 func (c *Config) validate(path string) error {
 	var warnings []string
+	if k := c.Conversations.KeepDays; k != 0 && (k < 7 || k > 3650) {
+		return fmt.Errorf("%s: conversations.keep_days is 0 (keep forever) or 7 to 3650", path)
+	}
+	if k := c.Conversations.HistoryKeepDays; k != 0 && (k < 30 || k > 3650) {
+		return fmt.Errorf("%s: conversations.history_keep_days is 0 (keep forever) or 30 to 3650", path)
+	}
 	for name, p := range c.Prices {
 		if _, ok := c.Profiles[name]; !ok && name != "default" {
 			return fmt.Errorf("%s: prices names %q, which is not a profile", path, name)

@@ -1530,6 +1530,22 @@ for you (questions to answer, finished tasks to look at). Ask the agent (its `wh
 and press *Last 24 hours*. Turn on the scheduled one there to have it posted into the chat every morning (or every Monday) at a time you choose, covering the time since the
 last one; on a quiet day nothing is sent. The activity log is read one line at a time, so a long log is never held in memory.
 
+## Old conversations
+
+By default nothing is ever removed by age (only the newest 100 conversations are kept, and the open and main ones always stay). Settings → **Old conversations** (and the phone app's Settings) or
+the config can change that:
+
+```json
+{ "conversations": { "keep_days": 90, "history_keep_days": 365 } }
+```
+
+- **`keep_days`** (0 = forever, otherwise 7 to 3650): a conversation nobody has touched for that long is **archived**, which you can undo with Restore. One archived this way is **deleted for good 30 days later**.
+  The main conversation, the open one, channels, conversations with a named agent, and anything you archived yourself are never touched, and restoring one takes it out of the process.
+- **`history_keep_days`** (0 = forever, otherwise 30 to 3650): forgets the searchable history (what the agent finds with `session_search`) older than that. The agent will no longer remember what was said then,
+  so this is a separate choice and off unless set.
+- A sweep runs a minute after start and every six hours, reads one small file, and logs what it did (`web: old chats: 2 archived, 1 deleted, 40 messages forgotten`). Settings shows what the next sweep would do before you
+  choose, and **Tidy now** runs it at once. Conversations in Telegram and Discord are not in the web app's list and are not affected by `keep_days`; `history_keep_days` covers the history of every chat.
+
 ## Webhooks
 
 A webhook is an address another service can call (a form, a monitor, a build) to make Talaria do something. In Settings → **Webhooks** give one a name and say what to do when it

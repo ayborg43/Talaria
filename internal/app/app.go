@@ -212,6 +212,14 @@ func Open(cfg Config) *Runtime {
 	return rt
 }
 
+// PruneHistory forgets the searchable history older than before, and says how many messages went. Nil history: nothing.
+func (rt *Runtime) PruneHistory(before time.Time) (int, error) {
+	if rt.sessions == nil {
+		return 0, nil
+	}
+	return rt.sessions.Prune(before)
+}
+
 // HasVault reports whether saved logins are available.
 func (rt *Runtime) HasVault() bool { return rt.cfg.Vault != nil }
 

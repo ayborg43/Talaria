@@ -25,6 +25,10 @@ type Convo struct {
 	ID       string `json:"id"`
 	Title    string `json:"title,omitempty"`
 	Archived bool   `json:"archived,omitempty"`
+	// ArchivedAt is when it was archived, and AutoArchived says the sweep did it (for age), not the person: only such a
+	// conversation is ever deleted by the sweep, and restoring it clears the mark.
+	ArchivedAt   time.Time `json:"archived_at,omitzero"`
+	AutoArchived bool      `json:"auto_archived,omitempty"`
 	// Parent is the conversation this one was opened beside: a side chat, for
 	// a tangent that should not crowd the conversation it came from.
 	Parent string `json:"parent,omitempty"`
@@ -378,8 +382,57 @@ func (c *Convos) SetArchived(id string, archived bool) error {
 		return errorString("the main conversation stays: make another one main first, or start a side chat")
 	}
 	cv.Archived = archived
+	cv.AutoArchived = false // a person's choice, either way: the sweep never deletes it
+	if archived {
+		cv.ArchivedAt = time.Now()
+	} else {
+		cv.ArchivedAt = time.Time{}
+	}
 	c.saveLocked()
 	return nil
+}
+
+// SweepResult says what a sweep did, or with dry set what it would do.
+type SweepResult struct {
+	Archived int `json:"archived"`
+	Deleted  int `json:"deleted"`
+}
+
+// Sweep archives conversations nobody has touched since archiveBefore and deletes those the sweep archived before
+// deleteBefore. A zero time turns that half off. It never touches the main conversation, the open one, a channel or a
+// conversation with a named agent (those are kept on purpose), and a conversation the person archived is never deleted.
+// With dry set it only counts.
+func (c *Convos) Sweep(archiveBefore, deleteBefore time.Time, dry bool) SweepResult {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var res SweepResult
+	var drop []string
+	for _, id := range c.order {
+		cv := c.items[id]
+		if cv == nil || id == c.main || id == c.active {
+			continue
+		}
+		switch {
+		case cv.Archived && cv.AutoArchived && !deleteBefore.IsZero() && !cv.ArchivedAt.IsZero() && cv.ArchivedAt.Before(deleteBefore):
+			drop = append(drop, id)
+		case !cv.Archived && !archiveBefore.IsZero() && cv.Purpose == "" && cv.Agent == "" && !cv.UpdatedAt.IsZero() && cv.UpdatedAt.Before(archiveBefore):
+			res.Archived++
+			if !dry {
+				cv.Archived, cv.AutoArchived, cv.ArchivedAt = true, true, time.Now()
+			}
+		}
+	}
+	res.Deleted = len(drop)
+	if !dry {
+		for _, id := range drop {
+			delete(c.items, id)
+			c.order = without(c.order, id)
+		}
+		if res.Archived+res.Deleted > 0 {
+			c.saveLocked()
+		}
+	}
+	return res
 }
 
 // Delete removes a conversation for good, archived or not. The main

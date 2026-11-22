@@ -180,3 +180,26 @@ func Snapshot(src, dst string) error {
 	_, err = db.Exec("VACUUM INTO ?", dst)
 	return err
 }
+
+// Prune forgets every message older than before, and the sessions left with none, and says how many messages went.
+// The search index is kept in step: it holds the text of each message separately, so each row is removed from it too.
+func (s *Sessions) Prune(before time.Time) (int, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	cut := before.Unix()
+	if _, err := tx.Exec(`INSERT INTO messages_fts(messages_fts, rowid, content) SELECT 'delete', id, content FROM messages WHERE ts < ?`, cut); err != nil {
+		return 0, err
+	}
+	res, err := tx.Exec(`DELETE FROM messages WHERE ts < ?`, cut)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`DELETE FROM sessions WHERE id NOT IN (SELECT DISTINCT session_id FROM messages) AND started_at < ?`, cut); err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), tx.Commit()
+}

@@ -512,6 +512,7 @@ func runGateway(c *cli) error {
 			return out
 		}
 		srv.Sources.ReviewTask = reviewed.Add
+		srv.Sources.PruneHistory = c.rt.PruneHistory
 		srv.Hooks = &webhook.Store{Path: filepath.Join(c.home, "webhooks.json")}
 		srv.Sources.Webhook = func(h webhook.Hook, prompt string) error {
 			// A task like any other (it shows under Tasks, and the limit on how many run at once applies), but its prompt came

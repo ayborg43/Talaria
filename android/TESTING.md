@@ -4,7 +4,7 @@
 
 ```bash
 cd android && export JAVA_HOME=/path/to/jdk17
-./gradlew :app:testDebugUnitTest     # 125 tests: cost and digest wording, price parsing, bar scaling, agent-file share detection, clipboard truncation and the sensitive rule, task-notice cap and throttle, assistant rules; voice detection, server-address rules, the API client against a mock server, Make, pins, search, quick-action and alert helpers, phone-action argument checks and intent plans, @-mentions, the agent roster, the board widget's state
+./gradlew :app:testDebugUnitTest     # 134 tests: old-conversation labels and lines, cost and digest wording, price parsing, bar scaling, agent-file share detection, clipboard truncation and the sensitive rule, task-notice cap and throttle, assistant rules; voice detection, server-address rules, the API client against a mock server, Make, pins, search, quick-action and alert helpers, phone-action argument checks and intent plans, @-mentions, the agent roster, the board widget's state
 ./gradlew :app:lintDebug             # no errors expected
 ```
 

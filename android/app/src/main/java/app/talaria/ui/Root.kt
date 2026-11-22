@@ -107,7 +107,7 @@ fun Root(
     var chats by remember { mutableStateOf(false) }
     var browser by remember { mutableStateOf(false) }
     var askFocus by remember { mutableStateOf(0) }
-    // Screens that open over the tabs: "cost", "digest" or "import" (an agent file to read and add).
+    // Screens that open over the tabs: "cost", "digest", "retention" or "import" (an agent file to read and add).
     var extra by rememberSaveable { mutableStateOf("") }
     var importSeed by rememberSaveable { mutableStateOf("") }
     // A photo was just taken and is on its way: the message box is ready to ask about it.
@@ -212,6 +212,7 @@ fun Root(
             when (extra) {
                 "cost" -> app.talaria.ui.screens.CostScreen(repo, onBack = { extra = "" })
                 "digest" -> app.talaria.ui.screens.DigestScreen(repo, onBack = { extra = "" })
+                "retention" -> app.talaria.ui.screens.RetentionScreen(repo, onBack = { extra = "" })
                 // keyed by what was shared, so a second file shared while this is open replaces the first
                 "import" -> androidx.compose.runtime.key(importSeed) { app.talaria.ui.screens.AgentImportScreen(repo, importSeed, onBack = { extra = "" }, onAdded = { extra = ""; tab = Tab.Tasks.ordinal; tasksTab = 2 }) }
             }

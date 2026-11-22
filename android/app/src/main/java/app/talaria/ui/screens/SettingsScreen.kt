@@ -178,6 +178,8 @@ private fun SettingsHome(activity: AppCompatActivity, repo: Repo, modifier: Modi
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                         LinkRow("What the models cost", "What each model was asked today, this week or this month, and what that came to at the prices you set.", onClick = { onOpenScreen("cost") })
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        LinkRow("Old conversations", "Archive conversations nobody has touched for a while, and if you like, forget old searchable history. Nothing is removed unless you choose a time.", onClick = { onOpenScreen("retention") })
+                        HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                         LinkRow("While you were away", "What Talaria did on its own, and a summary sent to your chat each day or each Monday.", onClick = { onOpenScreen("digest") })
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                         BriefRow(repo)

@@ -850,6 +850,7 @@ function paneYou() {
       h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: () => saveMe({ profile: { name: name.value, avatar: avatar.value, tone: tone.value, theme: p.theme || '' } }, 'Saved.') }))),
     briefCard(),
     digestCard(),
+    retentionCard(),
     webhooksCard(),
     backupCard(),
     themeCard(p),
@@ -1000,6 +1001,40 @@ function digestCard() {
   load();
   return card;
 }
+// ---------- how long old chats are kept ----------
+// Off by default. A conversation nobody has touched for the chosen time is archived, and one archived this way is deleted a
+// month later; the main one, the open one, channels, conversations with an agent, and anything you archived yourself stay.
+function retentionCard() {
+  const card = h('div', { class: 'card' }, h('h2', null, 'Old conversations'));
+  const body = h('div');
+  card.append(body);
+  const keepOptions = [[0, 'Forever'], [30, '30 days'], [90, '90 days'], [180, '6 months'], [365, 'A year']];
+  const historyOptions = [[0, 'Forever'], [90, '90 days'], [180, '6 months'], [365, 'A year'], [730, 'Two years']];
+  const load = async (v) => {
+    try { v = v || await api('/api/retention'); } catch (e) { failed(e); return; }
+    if (!v.available) { card.remove(); return; }
+    const save = async (b) => { try { load(await api('/api/retention', { method: 'POST', body: b })); } catch (e) { failed(e); } };
+    const pick = (label, options, value, key) => {
+      const sel = h('select', { 'aria-label': label }, options.map(([n, t]) => h('option', { value: String(n), text: t })));
+      sel.value = String(value);
+      if (sel.value !== String(value)) sel.append(h('option', { value: String(value), text: value + ' days' })), sel.value = String(value);
+      sel.addEventListener('change', () => save({ [key]: Number(sel.value) }));
+      return h('div', { class: 'field' }, h('label', { class: 'field-label', text: label }), sel);
+    };
+    const last = v.last_at ? 'Last tidy ' + fmtWhen(new Date(v.last_at)) + ': ' + [v.last_archived && v.last_archived + ' archived', v.last_deleted && v.last_deleted + ' deleted', v.last_pruned && v.last_pruned + ' messages forgotten'].filter(Boolean).join(', ') + '.' : '';
+    fill(body,
+      h('div', { class: 'field-note', text: 'Nothing is removed unless you choose a time here. After that time untouched, a conversation is archived (you can restore it); one archived this way is deleted for good ' + v.grace_days + ' days later. Your main conversation, the open one, channels, conversations with an agent, and anything you archived yourself are never removed.' }),
+      pick('Archive conversations nobody has touched for', keepOptions, v.keep_days, 'keep_days'),
+      v.can_prune_history ? pick('Forget the searchable history older than', historyOptions, v.history_keep_days, 'history_keep_days') : null,
+      v.can_prune_history && v.history_keep_days ? h('div', { class: 'note', text: 'The agent finds what you said before by searching this history. What is older than this is gone, and it will not remember it.' }) : null,
+      v.keep_days ? h('div', { class: 'field-note', role: 'status', text: v.would_archive || v.would_delete ? 'If it ran now: ' + [v.would_archive && v.would_archive + ' to archive', v.would_delete && v.would_delete + ' to delete'].filter(Boolean).join(', ') + '.' : 'Nothing is due now.' }) : null,
+      last ? h('div', { class: 'field-note', text: last }) : null,
+      v.keep_days || v.history_keep_days ? h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'button', text: 'Tidy now', onclick: () => { if (confirm('Apply this now? Conversations past the time are archived, and archived ones past ' + v.grace_days + ' days are deleted for good.')) save({ sweep: true }); } })) : null);
+  };
+  load();
+  return card;
+}
+
 // ---------- webhooks: something else calls Talaria ----------
 // Each webhook is an address another service can call (a form, a monitor, a build). Calling it starts a background task
 // that does what you wrote, with what was sent quoted to it as data. The secret is shown once; only a hash is kept.

@@ -244,3 +244,12 @@ data class DigestSchedule(val available: Boolean = false, val enabled: Boolean =
 
 @Serializable data class AgentPreview(val name: String = "", val icon: String = "", val instructions: String = "", val read_only: Boolean = false)
 @Serializable data class AgentPreviewDto(val agent: AgentPreview = AgentPreview(), val exists: Boolean = false)
+
+// ---- old conversations (GET /api/retention) ----
+
+@Serializable
+data class RetentionDto(
+    val available: Boolean = false, val keep_days: Int = 0, val history_keep_days: Int = 0, val grace_days: Int = 30,
+    val would_archive: Int = 0, val would_delete: Int = 0, val last_at: String = "",
+    val last_archived: Int = 0, val last_deleted: Int = 0, val last_pruned: Int = 0, val can_prune_history: Boolean = false,
+)

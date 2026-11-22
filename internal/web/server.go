@@ -125,6 +125,8 @@ type Sources struct {
 	// Webhook starts the background task a webhook that was called describes, with the prompt already written. It
 	// returns an error for which cron.IsBusy is true when the chat has as many tasks going as it may.
 	Webhook func(h webhook.Hook, prompt string) error
+	// PruneHistory forgets the searchable history older than a time and says how many messages went. Nil leaves that setting out.
+	PruneHistory func(before time.Time) (int, error)
 	// Runs connects the Activity view to steering a running task and following up a finished one. Nil leaves
 	// those out; the record itself is Server.Runs.
 	Runs *RunHooks
@@ -237,6 +239,7 @@ type Server struct {
 	// Hooks is the inbound webhooks, and Sources.Webhook starts the task one of them describes. Nil leaves them out.
 	Hooks     *webhook.Store
 	hookFails failWindow
+	retention retentionState
 	// Usage is what the models were asked and what that cost. Nil leaves the usage screen out.
 	Usage *usage.Ledger
 
@@ -346,6 +349,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/backup", s.authed(s.backupGet))
 	mux.HandleFunc("GET /api/restore", s.authed(s.restoreGet))
 	mux.HandleFunc("POST /api/restore", s.authed(s.restorePost))
+	mux.HandleFunc("GET /api/retention", s.authed(s.retentionGet))
+	mux.HandleFunc("POST /api/retention", s.authed(s.retentionPost))
 	mux.HandleFunc("GET /api/digest", s.authed(s.digestGet))
 	mux.HandleFunc("POST /api/digest", s.authed(s.digestPost))
 	mux.HandleFunc("GET /api/usage", s.authed(s.usageGet))
@@ -386,6 +391,7 @@ func (s *Server) Serve(ctx context.Context, addr string) error {
 	}()
 	s.purgeFiles()
 	go s.sweepFiles(ctx)
+	go s.sweepChatsLoop(ctx)
 	s.logf("web: serving the app on %s", ln.Addr())
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
