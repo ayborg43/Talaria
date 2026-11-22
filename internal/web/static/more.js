@@ -797,23 +797,24 @@ async function saveMe(body, done) {
 }
 // Light is how the app looks unless you choose otherwise. The choice is kept on the server with your profile,
 // not on the phone, so it follows you to every device you sign in on.
-const THEME_COLOR = { light: '#F6F3EC', dark: '#100E0A' };
+const THEME_COLOR = { light: '#F6F3EC', white: '#FFFFFF', dark: '#100E0A' };
 function applyTheme(theme) {
-  const t = theme === 'dark' || theme === 'auto' ? theme : 'light';
+  const t = theme === 'dark' || theme === 'auto' || theme === 'white' ? theme : 'light';
   const root = document.documentElement;
   if (t === 'light') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', t);
   const dark = t === 'dark' || (t === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
   const bar = document.querySelector('meta[name="theme-color"]');
-  if (bar) bar.setAttribute('content', dark ? THEME_COLOR.dark : THEME_COLOR.light);
+  if (bar) bar.setAttribute('content', dark ? THEME_COLOR.dark : THEME_COLOR[t]);
 }
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => applyTheme(document.documentElement.getAttribute('data-theme') || 'light'));
 function themeCard(p) {
-  const cur = p.theme === 'dark' || p.theme === 'auto' ? p.theme : 'light';
+  const cur = p.theme === 'dark' || p.theme === 'auto' || p.theme === 'white' ? p.theme : 'light';
   const opt = (id, title, text) => h('label', { class: 'opt' + (cur === id ? ' on' : '') },
     h('input', { type: 'radio', name: 'theme', value: id, checked: cur === id, onchange: () => saveMe({ profile: { name: p.name || '', avatar: p.avatar || '', tone: p.tone || '', theme: id } }) }),
     h('span', { class: 'grow' }, h('b', { text: title }), h('span', { class: 's', text })));
   return h('div', { class: 'card' }, h('h2', null, 'Appearance'),
     opt('light', 'Light', 'Warm paper and ink. The default.'),
+    opt('white', 'White', 'Plain white and ink, with no paper tint.'),
     opt('dark', 'Dark', 'Always dark, whatever the device is set to.'),
     opt('auto', 'Match my device', 'Light by day and dark by night, if that is how your phone is set.'));
 }

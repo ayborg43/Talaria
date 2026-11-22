@@ -31,6 +31,15 @@ val LightExtra = Extra(
     scrim = Color(0x6117150F), logo = Color(0xFF1B1812),
 )
 
+val WhiteExtra = Extra(
+    ok = Color(0xFF0B7643), okTint = Color(0xFFDAF7E3), okLine = Color(0xFFA4DEB7),
+    info = Color(0xFF2855AD), infoTint = Color(0xFFE2ECFD), infoInk = Color(0xFF254582),
+    bad = Color(0xFFB6322B), badTint = Color(0xFFFFE8E5), badLine = Color(0xFFF8BDB4),
+    brassText = Color(0xFF7D5002), brassTint = Color(0xFFFBE6AF), brassSoft = Color(0xFFFEF6DC), brassLine = Color(0xFFE7C97E),
+    bubble = Color(0xFFF1F1F1), bubbleLine = Color(0xFFE2E2E2), coral = Color(0xFFF87966), onCoral = Color(0xFF250E0B),
+    scrim = Color(0x6117150F), logo = Color(0xFF171717),
+)
+
 val DarkExtra = Extra(
     ok = Color(0xFF68CD8F), okTint = Color(0xFF143320), okLine = Color(0xFF275639),
     info = Color(0xFF8EB4FB), infoTint = Color(0xFF202E47), infoInk = Color(0xFFB2CBF9),
@@ -60,6 +69,27 @@ val LightScheme: ColorScheme = lightColorScheme(
     errorContainer = Color(0xFFFFE8E5), onErrorContainer = Color(0xFF7A1F1A),
     inverseSurface = Color(0xFF1B1812), inverseOnSurface = Color(0xFFF8F3EB), inversePrimary = Color(0xFFEEB53E),
     scrim = Color(0xFF17150F),
+)
+
+// Plain white and ink: the same brand, with no paper tint on the page, cards, bars or fields.
+val WhiteScheme: ColorScheme = lightColorScheme(
+    primary = Color(0xFFEEB53E), onPrimary = Color(0xFF1D1406),
+    primaryContainer = Color(0xFFFBE6AF), onPrimaryContainer = Color(0xFF4A3000),
+    secondary = Color(0xFF5A5A5A), onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFF0F0F0), onSecondaryContainer = Color(0xFF171717),
+    tertiary = Color(0xFF2855AD), onTertiary = Color(0xFFFFFFFF),
+    tertiaryContainer = Color(0xFFE2ECFD), onTertiaryContainer = Color(0xFF254582),
+    background = Color(0xFFFFFFFF), onBackground = Color(0xFF171717),
+    surface = Color(0xFFFFFFFF), onSurface = Color(0xFF171717),
+    surfaceVariant = Color(0xFFF4F4F4), onSurfaceVariant = Color(0xFF5C5C5C),
+    surfaceTint = Color(0xFFEEB53E),
+    surfaceContainerLowest = Color(0xFFFFFFFF), surfaceContainerLow = Color(0xFFFFFFFF),
+    surfaceContainer = Color(0xFFFAFAFA), surfaceContainerHigh = Color(0xFFF2F2F2), surfaceContainerHighest = Color(0xFFEBEBEB),
+    outline = Color(0xFF8C8C8C), outlineVariant = Color(0xFFE6E6E6),
+    error = Color(0xFFB6322B), onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFFFE8E5), onErrorContainer = Color(0xFF7A1F1A),
+    inverseSurface = Color(0xFF171717), inverseOnSurface = Color(0xFFFFFFFF), inversePrimary = Color(0xFFEEB53E),
+    scrim = Color(0xFF171717),
 )
 
 val DarkScheme: ColorScheme = darkColorScheme(

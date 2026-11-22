@@ -58,9 +58,9 @@ func (n *Notes) SetProfile(p Profile) error {
 		return errors.New("the avatar is one emoji or a couple of initials")
 	}
 	switch p.Theme {
-	case "", "light", "dark", "auto":
+	case "", "light", "white", "dark", "auto":
 	default:
-		return errors.New("the theme is light, dark or auto")
+		return errors.New("the theme is light, white, dark or auto")
 	}
 	if err := os.MkdirAll(n.Dir, 0o700); err != nil {
 		return err

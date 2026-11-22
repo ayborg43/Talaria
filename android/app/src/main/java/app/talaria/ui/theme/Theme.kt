@@ -30,10 +30,10 @@ val MaterialTheme.extra: Extra
     @Composable get() = LocalExtra.current
 
 @Composable
-fun TalariaTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
-    CompositionLocalProvider(LocalExtra provides if (dark) DarkExtra else LightExtra) {
+fun TalariaTheme(dark: Boolean = isSystemInDarkTheme(), white: Boolean = false, content: @Composable () -> Unit) {
+    CompositionLocalProvider(LocalExtra provides when { dark -> DarkExtra; white -> WhiteExtra; else -> LightExtra }) {
         MaterialTheme(
-            colorScheme = if (dark) DarkScheme else LightScheme,
+            colorScheme = when { dark -> DarkScheme; white -> WhiteScheme; else -> LightScheme },
             typography = TalariaTypography,
             shapes = TalariaShapes,
             content = content,

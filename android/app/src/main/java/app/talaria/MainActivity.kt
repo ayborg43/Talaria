@@ -80,7 +80,8 @@ class MainActivity : AppCompatActivity() {
         handleIntent(intent)
         setContent {
             val mode by repo.theme.collectAsState()
-            val dark = when (mode) { "dark" -> true; "light" -> false; else -> isSystemInDarkTheme() }
+            val white = mode == "white"
+            val dark = when (mode) { "dark" -> true; "light", "white" -> false; else -> isSystemInDarkTheme() }
             DisposableEffect(dark) {
                 enableEdgeToEdge(
                     statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { dark },
@@ -88,7 +89,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 onDispose { }
             }
-            TalariaTheme(dark) {
+            TalariaTheme(dark, white) {
                 Root(
                     activity = this, repo = repo, voice = voice,
                     locked = locked, onUnlocked = { locked = false },

@@ -88,6 +88,9 @@ class Repo(context: Context) {
     val version: StateFlow<String> = _version.asStateFlow()
     private val _chats = MutableStateFlow<List<ChatMeta>>(emptyList())
     val chats: StateFlow<List<ChatMeta>> = _chats.asStateFlow()
+    private val _conversation = MutableStateFlow(0)
+    /** Bumped whenever the open conversation changes, so the chat opens on its newest message. */
+    val conversation: StateFlow<Int> = _conversation.asStateFlow()
 
     private val _pinned = MutableStateFlow(store.pinned)
     val pinned: StateFlow<Set<String>> = _pinned.asStateFlow()
@@ -141,6 +144,7 @@ class Repo(context: Context) {
         generation++
         _messages.value = emptyList(); _workers.value = emptyList(); _running.value = false; _typing.value = false
         _chats.value = emptyList(); _archived.value = emptyList(); _channel.value = null; _suggestion.value = null
+        _conversation.value++
     }
 
     /** Forgets the live server's session. With another server saved, the phone moves to it instead of the sign-in screen. */
@@ -404,6 +408,8 @@ class Repo(context: Context) {
     suspend fun reload() {
         applyState(api.getJson<StateDto>("/api/state"))
         refreshChats()
+        // A conversation was opened (or started): the chat screen starts again at its newest message.
+        _conversation.value++
     }
 }
 

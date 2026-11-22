@@ -226,9 +226,16 @@ private fun SettingsHome(activity: AppCompatActivity, repo: Repo, modifier: Modi
                         Column(Modifier.padding(16.dp)) {
                             Text("Appearance", style = MaterialTheme.typography.titleSmall)
                             Gap(8.dp)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                listOf("system" to "Match phone", "light" to "Light", "dark" to "Dark").forEach { (k, label) ->
-                                    FilterChip(selected = theme == k, onClick = { repo.setTheme(k) }, label = { Text(label) })
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    listOf("system" to "Match phone", "light" to "Light").forEach { (k, label) ->
+                                        FilterChip(selected = theme == k, onClick = { repo.setTheme(k) }, label = { Text(label) })
+                                    }
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    listOf("dark" to "Dark", "white" to "White").forEach { (k, label) ->
+                                        FilterChip(selected = theme == k, onClick = { repo.setTheme(k) }, label = { Text(label) })
+                                    }
                                 }
                             }
                         }

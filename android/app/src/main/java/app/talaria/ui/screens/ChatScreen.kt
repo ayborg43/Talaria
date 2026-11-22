@@ -179,6 +179,7 @@ fun ChatScreen(
     val channel by repo.channel.collectAsState()
     val suggestion by repo.suggestion.collectAsState()
     val workers by repo.workers.collectAsState()
+    val conversation by repo.conversation.collectAsState()
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
     var sendError by remember { mutableStateOf<String?>(null) }
@@ -207,17 +208,30 @@ fun ChatScreen(
     // scrolled up to read. A tall reply is shown from its top, a short one at the bottom of the screen.
     var follow by remember { mutableStateOf(true) }
     var programmatic by remember { mutableStateOf(false) }
+    // Which conversation the list is already showing. A conversation that has just been opened goes to its newest
+    // message at once, so no one has to scroll down through the whole history to find it.
+    var shownChat by remember { mutableStateOf(-1) }
     val last = messages.lastOrNull()
     LaunchedEffect(list) {
         snapshotFlow { list.isScrollInProgress }.collect { moving -> if (!moving && !programmatic) follow = !list.canScrollForward }
     }
     val waitingHere = waiting.count { it.base == repo.store.baseUrl }
-    LaunchedEffect(rows.size, last?.state, last?.text?.length, typing, running, searching, waitingHere) {
+    LaunchedEffect(rows.size, last?.state, last?.text?.length, typing, running, searching, waitingHere, conversation) {
         val target = rows.size - 1 + waitingHere + if (running || typing) 1 else 0
-        if (searching || target < 0 || !(follow || last?.role == "user" || waitingHere > 0)) return@LaunchedEffect
+        val opened = conversation != shownChat
+        if (opened) { shownChat = conversation; follow = true }
+        if (searching || target < 0 || !(opened || follow || last?.role == "user" || waitingHere > 0)) return@LaunchedEffect
         snapshotFlow { list.layoutInfo.totalItemsCount }.first { it > target }
         programmatic = true
-        try { list.animateScrollToItem(target); follow = true } finally { programmatic = false }
+        try {
+            if (opened) {
+                // The composition has the new conversation; the frame after it has the rows measured, so the end of
+                // the list is known and the jump is one step instead of a scroll through everything above it.
+                androidx.compose.runtime.withFrameNanos { }
+                list.scrollToItem((list.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+            } else list.animateScrollToItem(target)
+            follow = true
+        } finally { programmatic = false }
     }
 
     // "Show me what needs my answer": go to the first approval still waiting.

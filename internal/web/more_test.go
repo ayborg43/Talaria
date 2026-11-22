@@ -405,6 +405,9 @@ func TestLightIsTheDefaultAndDarkIsAChoice(t *testing.T) {
 	if !strings.Contains(css, ":root[data-theme=dark]{") || !strings.Contains(css, ":root[data-theme=auto]{") {
 		t.Fatal("the dark theme cannot be chosen")
 	}
+	if !strings.Contains(css, ":root[data-theme=white]{") {
+		t.Fatal("the white theme cannot be chosen")
+	}
 	if strings.Contains(html, "prefers-color-scheme") || !strings.Contains(html, `<meta name="color-scheme" content="light">`) {
 		t.Fatal("the page itself asks to follow the device")
 	}
@@ -420,6 +423,12 @@ func TestLightIsTheDefaultAndDarkIsAChoice(t *testing.T) {
 	}
 	if _, body := r.do("GET", "/api/state", nil); !strings.Contains(string(body), `"theme":"dark"`) {
 		t.Fatalf("the choice did not reach the page: %s", body)
+	}
+	if resp, body := r.do("POST", "/api/profile", map[string]any{"profile": map[string]string{"theme": "white"}}); resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+	if _, body := r.do("GET", "/api/state", nil); !strings.Contains(string(body), `"theme":"white"`) {
+		t.Fatalf("the white choice did not reach the page: %s", body)
 	}
 	if resp, _ := r.do("POST", "/api/profile", map[string]any{"profile": map[string]string{"theme": "neon"}}); resp.StatusCode != 400 {
 		t.Fatalf("an unknown theme answered %d", resp.StatusCode)

@@ -113,7 +113,57 @@
   --toast:oklch(21% 0.012 84);
   --on-toast:oklch(96.6% 0.012 84);
 }}
-/* Light is the theme unless the user picks otherwise (Settings, You): dark always, or whatever the device is set to.
+/* White is the same light theme with no paper tint: the page, cards, bars and fields are pure white, and the neutrals are grey.
+   The meaning colours (brass, blue, green, red, coral) are the light theme's, so a thing means the same in both. */
+:root[data-theme=white]{
+  color-scheme:light;
+  --bg:#FFFFFF;
+  --card:#FFFFFF;
+  --tab:#FFFFFF;
+  --sunk:#F5F5F5;
+  --line:#E5E5E5;
+  --line2:#EFEFEF;
+  --btn-line:#CFCFCF;
+  --ink:#171717;
+  --ink2:#383838;
+  --muted:#5C5C5C;
+  --faint:#6B6B6B;
+  --bubble:#F1F1F1;
+  --bubble-line:#E2E2E2;
+  --field:#FFFFFF;
+  --field-line:#8C8C8C;
+  --bar:#E9E9E9;
+  --ring:#F0F0F0;
+  --logo:#171717;
+  --toast:#171717;
+  --on-toast:#FFFFFF;
+  --scrim:rgba(0,0,0,.35);
+  --shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.06);
+  --lift:0 10px 30px rgba(0,0,0,.18);
+}
+@supports (color:oklch(0% 0 0)){:root[data-theme=white]{
+  --bg:oklch(100% 0 0);
+  --card:oklch(100% 0 0);
+  --tab:oklch(100% 0 0);
+  --sunk:oklch(96.5% 0 0);
+  --line:oklch(91% 0 0);
+  --line2:oklch(94.5% 0 0);
+  --btn-line:oklch(83% 0 0);
+  --ink:oklch(20% 0 0);
+  --ink2:oklch(34% 0 0);
+  --muted:oklch(47% 0 0);
+  --faint:oklch(51% 0 0);
+  --bubble:oklch(95.5% 0 0);
+  --bubble-line:oklch(90% 0 0);
+  --field:oklch(100% 0 0);
+  --field-line:oklch(64% 0 0);
+  --bar:oklch(92% 0 0);
+  --ring:oklch(95% 0 0);
+  --logo:oklch(19% 0 0);
+  --toast:oklch(19% 0 0);
+  --on-toast:oklch(100% 0 0);
+}}
+/* Light is the theme unless the user picks otherwise (Settings, You): white, dark always, or whatever the device is set to.
    The dark tokens are written twice because a selector and a media query cannot share one block. */
 :root[data-theme=dark]{
   color-scheme:dark;
