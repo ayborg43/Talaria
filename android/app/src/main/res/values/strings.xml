@@ -12,4 +12,7 @@
     <string name="shortcut_approvals">Approvals</string>
     <string name="shortcut_approvals_long">See what needs your answer</string>
     <string name="tile_label">Talk</string>
+    <string name="tile_clip_label">Ask clipboard</string>
+    <string name="shortcut_clip">Ask about the clipboard</string>
+    <string name="shortcut_clip_long">Ask about the text you copied</string>
 </resources>

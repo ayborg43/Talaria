@@ -87,6 +87,7 @@ fun Root(
     onSaveFile: (String, String, ByteArray) -> Unit,
     quick: app.talaria.QuickAction?, onQuickHandled: () -> Unit, photoSent: Int = 0, onTakePhoto: () -> Unit = {},
     onAttach: () -> Unit, onUploadShared: (android.net.Uri) -> Unit, uploadError: String?, onUploadErrorShown: () -> Unit,
+    agentFile: String? = null, onAgentFileUsed: () -> Unit = {},
 ) {
     val conn by repo.conn.collectAsState()
     val needsMic by voice.needsMic.collectAsState()
@@ -106,6 +107,9 @@ fun Root(
     var chats by remember { mutableStateOf(false) }
     var browser by remember { mutableStateOf(false) }
     var askFocus by remember { mutableStateOf(0) }
+    // Screens that open over the tabs: "cost", "digest" or "import" (an agent file to read and add).
+    var extra by rememberSaveable { mutableStateOf("") }
+    var importSeed by rememberSaveable { mutableStateOf("") }
     // A photo was just taken and is on its way: the message box is ready to ask about it.
     LaunchedEffect(photoSent) { if (photoSent > 0) { if (draft.isBlank()) draft = "What is in this photo?"; askFocus++ } }
     var approvalJump by remember { mutableStateOf(0) }
@@ -121,11 +125,17 @@ fun Root(
     // A request from outside the app (a shortcut, the tile, the widget, a notification) is carried out once the app is open and unlocked.
     LaunchedEffect(quick) {
         val q = quick ?: return@LaunchedEffect
-        tab = 0; browser = false; viewing = null; allFiles = false; chats = false
+        tab = 0; browser = false; viewing = null; allFiles = false; chats = false; extra = ""
+        // Words (and maybe a picture) another screen of this app left for the message box: the clipboard, or the assistant's screenshot.
+        fun takeHandoff() {
+            val (text, image) = app.talaria.Handoff.take()
+            if (text != null) draft = app.talaria.Handoff.merge(draft, text)
+            if (image != null) onUploadShared(image)
+        }
         when (q) {
             app.talaria.QuickAction.NewChat -> runCatching { repo.newChat() }.onSuccess { askFocus++ }
             app.talaria.QuickAction.Talk -> if (voice.phase.value == app.talaria.voice.Phase.Off) voice.startConversation()
-            app.talaria.QuickAction.Ask -> askFocus++
+            app.talaria.QuickAction.Ask, app.talaria.QuickAction.Assist -> { takeHandoff(); askFocus++ }
             app.talaria.QuickAction.Approvals -> approvalJump++
             app.talaria.QuickAction.Photo -> onTakePhoto()
             app.talaria.QuickAction.Board -> { tab = Tab.Tasks.ordinal; tasksTab = 1 }
@@ -135,6 +145,10 @@ fun Root(
     LaunchedEffect(shared) {
         if (shared?.text != null) { draft = (draft + " " + shared.text).trim(); tab = 0; onSharedUsed() }
         else if (shared?.stream != null) { tab = 0; onUploadShared(shared.stream); onSharedUsed() }
+    }
+    // An agent file shared to Talaria opens the screen that shows what is in it.
+    LaunchedEffect(agentFile) {
+        if (agentFile != null) { importSeed = agentFile; extra = "import"; tab = Tab.Tasks.ordinal; tasksTab = 2; onAgentFileUsed() }
     }
     BackHandler(enabled = tab != 0 && !browser) { tab = 0 }
 
@@ -154,10 +168,10 @@ fun Root(
                     ChatScreen(repo, voice, draft, { draft = it }, onOpenChats = { chats = true }, onOpenBrowser = { browser = true }, onAttach = onAttach, onPhoto = onTakePhoto, externalError = uploadError, onExternalErrorShown = onUploadErrorShown, focusSignal = askFocus, approvalSignal = approvalJump)
                 }
             }
-            Tab.Today -> TodayScreen(repo, mod, onAsk = { draft = it; tab = 0 }, onChat = { tab = 0 }, onAllFiles = { allFiles = true })
+            Tab.Today -> TodayScreen(repo, mod, onAsk = { draft = it; tab = 0 }, onChat = { tab = 0 }, onAllFiles = { allFiles = true }, onDigest = { extra = "digest" })
             Tab.Make -> MakeScreen(repo, mod, onStart = { draft = it; tab = 0 }, onAllFiles = { allFiles = true })
-            Tab.Tasks -> TasksHost(repo, mod, tasksTab, { tasksTab = it }, onOpenBrowser = { browser = true }, onChat = { tab = 0 })
-            Tab.Settings -> SettingsScreen(activity, repo, voice, mod, onAskNotifications = onAskNotifications)
+            Tab.Tasks -> TasksHost(repo, mod, tasksTab, { tasksTab = it }, onOpenBrowser = { browser = true }, onChat = { tab = 0 }, onImportAgent = { importSeed = ""; extra = "import" })
+            Tab.Settings -> SettingsScreen(activity, repo, voice, mod, onAskNotifications = onAskNotifications, onOpenScreen = { extra = it })
         }
         }
     }
@@ -193,6 +207,14 @@ fun Root(
         androidx.compose.material3.SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = if (wide) 24.dp else 96.dp).padding(horizontal = 12.dp))
         androidx.compose.animation.AnimatedVisibility(allFiles, enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().navigationBarsPadding()) { FilesScreen(repo, onBack = { allFiles = false }) }
+        }
+        if (extra.isNotEmpty()) Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().navigationBarsPadding().imePadding()) {
+            when (extra) {
+                "cost" -> app.talaria.ui.screens.CostScreen(repo, onBack = { extra = "" })
+                "digest" -> app.talaria.ui.screens.DigestScreen(repo, onBack = { extra = "" })
+                // keyed by what was shared, so a second file shared while this is open replaces the first
+                "import" -> androidx.compose.runtime.key(importSeed) { app.talaria.ui.screens.AgentImportScreen(repo, importSeed, onBack = { extra = "" }, onAdded = { extra = ""; tab = Tab.Tasks.ordinal; tasksTab = 2 }) }
+            }
         }
         viewing?.let { f -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) { DocViewer(repo, f, onBack = { viewing = null }, onSave = onSaveFile) } }
     }

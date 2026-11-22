@@ -12,4 +12,7 @@
     <shortcut android:shortcutId="photo" android:enabled="true" android:icon="@drawable/ic_shortcut_photo" android:shortcutShortLabel="@string/shortcut_photo" android:shortcutLongLabel="@string/shortcut_photo_long">
         <intent android:action="app.talaria.action.PHOTO" android:targetPackage="app.talaria" android:targetClass="app.talaria.MainActivity" />
     </shortcut>
+    <shortcut android:shortcutId="ask_clipboard" android:enabled="true" android:icon="@drawable/ic_shortcut_clip" android:shortcutShortLabel="@string/shortcut_clip" android:shortcutLongLabel="@string/shortcut_clip_long">
+        <intent android:action="app.talaria.action.ASK_CLIPBOARD" android:targetPackage="app.talaria" android:targetClass="app.talaria.assist.AskClipboardActivity" />
+    </shortcut>
 </shortcuts>

@@ -84,7 +84,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 @Composable
-fun SettingsScreen(activity: AppCompatActivity, repo: Repo, voice: VoiceController, modifier: Modifier, onAskNotifications: () -> Unit) {
+fun SettingsScreen(activity: AppCompatActivity, repo: Repo, voice: VoiceController, modifier: Modifier, onAskNotifications: () -> Unit, onOpenScreen: (String) -> Unit = {}) {
     var sub by remember { mutableStateOf<String?>(null) }
     BackHandler(enabled = sub != null) { sub = null }
     when (sub) {
@@ -94,12 +94,12 @@ fun SettingsScreen(activity: AppCompatActivity, repo: Repo, voice: VoiceControll
         "files" -> FilesSearchScreen(repo, onBack = { sub = null }, modifier = modifier)
         "models" -> ModelsScreen(repo, onBack = { sub = null }, modifier = modifier)
         "phone" -> PhoneAccessScreen(activity, repo, onBack = { sub = null }, modifier = modifier)
-        else -> SettingsHome(activity, repo, modifier, onOpen = { sub = it }, onAskNotifications = onAskNotifications)
+        else -> SettingsHome(activity, repo, modifier, onOpen = { sub = it }, onAskNotifications = onAskNotifications, onOpenScreen = onOpenScreen)
     }
 }
 
 @Composable
-private fun SettingsHome(activity: AppCompatActivity, repo: Repo, modifier: Modifier, onOpen: (String) -> Unit, onAskNotifications: () -> Unit) {
+private fun SettingsHome(activity: AppCompatActivity, repo: Repo, modifier: Modifier, onOpen: (String) -> Unit, onAskNotifications: () -> Unit, onOpenScreen: (String) -> Unit) {
     val base by repo.base.collectAsState()
     val servers by repo.servers.collectAsState()
     val conn by repo.conn.collectAsState()
@@ -176,6 +176,10 @@ private fun SettingsHome(activity: AppCompatActivity, repo: Repo, modifier: Modi
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                         LinkRow("AI models", "Add keys for the services you use, say what each model is for, and choose what to try when one stops working.", onClick = { onOpen("models") })
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        LinkRow("What the models cost", "What each model was asked today, this week or this month, and what that came to at the prices you set.", onClick = { onOpenScreen("cost") })
+                        HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        LinkRow("While you were away", "What Talaria did on its own, and a summary sent to your chat each day or each Monday.", onClick = { onOpenScreen("digest") })
+                        HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                         BriefRow(repo)
                         HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                         ToggleRow("Pause everything", "Stops goals, watches and scheduled jobs from starting anything until you resume.", paused) { v -> scope.launch { try { repo.setPaused(v); error = null } catch (e: Exception) { error = e.message } } }
@@ -197,6 +201,9 @@ private fun SettingsHome(activity: AppCompatActivity, repo: Repo, modifier: Modi
                         ToggleRow("Read replies aloud", "In a voice conversation, replies are spoken with this phone's own voice.", speak) { speak = it; repo.store.speakReplies = it }
                     }
                 }
+
+                SectionTitle("Ask from anywhere")
+                Panel(Modifier.fillMaxWidth()) { Column { AssistRows(activity, repo) } }
 
                 SectionTitle("This phone")
                 Panel(Modifier.fillMaxWidth()) {
@@ -291,6 +298,34 @@ private fun SpeechWhereRow(activity: AppCompatActivity, repo: Repo) {
         HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
         ToggleRow("Keep speech on this phone", "Only use a recogniser that runs on the phone. Turn off to let Android use its online one when there is no offline pack.", local) { local = it; repo.store.speechLocalOnly = it }
     }
+}
+
+/**
+ * Talaria as the phone's assistant (Settings > Apps > Default apps > Digital assistant app), and the clipboard tile.
+ * Android keeps that choice itself: Talaria can only say whether it holds it and open the page where it is made.
+ */
+@Composable
+private fun AssistRows(activity: AppCompatActivity, repo: Repo) {
+    var resumed by remember { mutableStateOf(0) }
+    DisposableEffect(activity) {
+        val o = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) resumed++ }
+        activity.lifecycle.addObserver(o)
+        onDispose { activity.lifecycle.removeObserver(o) }
+    }
+    val held = remember(resumed) { app.talaria.assist.AssistRole.isHeld(activity) }
+    var listen by remember { mutableStateOf(repo.store.assistListen) }
+    val divider = @Composable { HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)) }
+    LinkRow(
+        "Talaria as your phone's assistant",
+        if (held) "On. The power-button long-press or the assist gesture opens Talaria. To ask about what is on screen (Ask about my screen), turn on \"Use screenshot\" in the same Android setting."
+        else "Choose Talaria as the Default digital assistant app, and the power-button long-press or the assist gesture opens it. To ask about what is on screen (Ask about my screen), also turn on \"Use screenshot\" there.",
+        trailing = { Pill(if (held) "On" else "Not chosen", if (held) Tone.Ok else Tone.Neutral) },
+        onClick = { if (!app.talaria.assist.AssistRole.openChooser(activity)) repo.toast("Open Settings, then Apps, Default apps, Digital assistant app, and choose Talaria.") },
+    )
+    divider()
+    ToggleRow("Start listening when opened as the assistant", "Instead of the message box, open the hands-free voice conversation. Not used when a screenshot comes with it, so you can read the question first.", listen) { listen = it; repo.store.assistListen = it }
+    divider()
+    LinkRow("Ask about the clipboard", "Copy some text anywhere, then tap the Ask clipboard tile in Quick Settings (or press and hold the Talaria icon). Talaria opens a message about it for you to edit and send. It never reads the clipboard in the background.", onClick = { app.talaria.assist.AssistRole.offerClipboardTile(activity) { repo.toast(it) } })
 }
 
 /** What keeps alerts arriving: whether the live link is up, whether Android may pause it, quiet hours, and the system sounds. */

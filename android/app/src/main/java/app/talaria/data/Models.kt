@@ -208,3 +208,39 @@ data class BrowserTab(val id: String = "", val url: String = "", val signin: Lis
 @Serializable data class ProfileFields(val name: String = "", val tone: String = "", val avatar: String = "", val theme: String = "", val onboarded: Boolean = false)
 @Serializable data class ProfileDto(val profile: ProfileFields = ProfileFields(), val user: NotesView = NotesView(), val memory: NotesView = NotesView())
 @Serializable data class BriefDto(val available: Boolean = false, val enabled: Boolean = false, val at: String = "", val next: String = "", val last: String = "", val status: String = "")
+
+// ---- what the models cost (GET /api/usage) ----
+
+@Serializable
+data class UsageTotals(val calls: Long = 0, @kotlinx.serialization.SerialName("in") val tokensIn: Long = 0, @kotlinx.serialization.SerialName("out") val tokensOut: Long = 0, val estimated: Long = 0)
+
+/** One row of the report: a name, what it used and, where every call had a price, what that cost. */
+@Serializable
+data class UsageLine(val name: String = "", val totals: UsageTotals = UsageTotals(), val cost: Double = 0.0, val priced: Boolean = false)
+
+@Serializable data class UsageDay(val date: String = "", val tokens: Long = 0, val cost: Double = 0.0)
+
+@Serializable
+data class UsageReport(
+    val total: UsageLine = UsageLine(), val by_model: List<UsageLine> = emptyList(), val by_agent: List<UsageLine> = emptyList(),
+    val by_source: List<UsageLine> = emptyList(), val by_kind: List<UsageLine> = emptyList(),
+    val per_day: List<UsageDay> = emptyList(), val unpriced: List<String> = emptyList(),
+)
+
+/** A price the owner set for one profile, in dollars for a million tokens; null when none is set. */
+@Serializable data class UsagePrice(val profile: String = "", val model: String = "", val price_in: Double? = null, val price_out: Double? = null)
+
+@Serializable
+data class UsageDto(val available: Boolean = false, val report: UsageReport = UsageReport(), val summary: String = "", val prices: List<UsagePrice> = emptyList())
+
+// ---- while you were away (GET /api/digest) ----
+
+@Serializable
+data class DigestSchedule(val available: Boolean = false, val enabled: Boolean = false, val at: String = "", val weekly: Boolean = false, val next: String = "", val last: String = "")
+
+@Serializable data class DigestDto(val schedule: DigestSchedule = DigestSchedule(), val text: String? = null)
+
+// ---- a shared agent file (POST /api/agent-file) ----
+
+@Serializable data class AgentPreview(val name: String = "", val icon: String = "", val instructions: String = "", val read_only: Boolean = false)
+@Serializable data class AgentPreviewDto(val agent: AgentPreview = AgentPreview(), val exists: Boolean = false)

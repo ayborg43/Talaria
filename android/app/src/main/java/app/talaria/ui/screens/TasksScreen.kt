@@ -85,7 +85,7 @@ private val tabs = listOf("Active", "Board", "Up next", "History")
 
 @androidx.compose.material3.ExperimentalMaterial3Api
 @Composable
-fun TasksHost(repo: Repo, modifier: Modifier, tab: Int, onTab: (Int) -> Unit, onOpenBrowser: () -> Unit, onChat: () -> Unit) {
+fun TasksHost(repo: Repo, modifier: Modifier, tab: Int, onTab: (Int) -> Unit, onOpenBrowser: () -> Unit, onChat: () -> Unit, onImportAgent: () -> Unit = {}) {
     var run by remember { mutableStateOf<String?>(null) }
     var agent by remember { mutableStateOf<PersonaDto?>(null) }
     var creating by remember { mutableStateOf(false) }
@@ -100,7 +100,7 @@ fun TasksHost(repo: Repo, modifier: Modifier, tab: Int, onTab: (Int) -> Unit, on
         card != null || newCard -> CardFormScreen(repo, card, onDone = { card = null; newCard = false }, onWatch = { run = it }, modifier = modifier)
         agent != null || creating -> AgentFormScreen(repo, agent, onDone = { agent = null; creating = false }, modifier = modifier)
         else -> TasksScreen(repo, modifier, tab, onTab, onRun = { run = it }, onEditAgent = { agent = it }, onNewAgent = { creating = true }, onOpenBrowser = onOpenBrowser, onChat = onChat,
-            onOpenCard = { card = it }, onNewCard = { newCard = true })
+            onOpenCard = { card = it }, onNewCard = { newCard = true }, onImportAgent = onImportAgent)
     }
 }
 
@@ -108,7 +108,7 @@ fun TasksHost(repo: Repo, modifier: Modifier, tab: Int, onTab: (Int) -> Unit, on
 @Composable
 private fun TasksScreen(
     repo: Repo, modifier: Modifier, tab: Int, onTab: (Int) -> Unit, onRun: (String) -> Unit, onEditAgent: (PersonaDto) -> Unit,
-    onNewAgent: () -> Unit, onOpenBrowser: () -> Unit, onChat: () -> Unit, onOpenCard: (CardDto) -> Unit, onNewCard: () -> Unit,
+    onNewAgent: () -> Unit, onOpenBrowser: () -> Unit, onChat: () -> Unit, onOpenCard: (CardDto) -> Unit, onNewCard: () -> Unit, onImportAgent: () -> Unit,
 ) {
     val workers by repo.workers.collectAsState()
     Column(modifier.fillMaxSize()) {
@@ -129,7 +129,7 @@ private fun TasksScreen(
         when (tab) {
             0 -> ActiveTab(repo, onRun)
             1 -> BoardTab(repo, onWatch = onRun, onOpenCard = onOpenCard, onNewCard = onNewCard)
-            2 -> UpNextTab(repo, onEditAgent, onNewAgent, onOpenBrowser, onChat)
+            2 -> UpNextTab(repo, onEditAgent, onNewAgent, onOpenBrowser, onChat, onImportAgent)
             else -> HistoryTab(repo, onRun)
         }
     }
@@ -209,12 +209,13 @@ private fun RunRow(r: RunSummary, onClick: () -> Unit) {
 
 @androidx.compose.material3.ExperimentalMaterial3Api
 @Composable
-private fun UpNextTab(repo: Repo, onEditAgent: (PersonaDto) -> Unit, onNewAgent: () -> Unit, onOpenBrowser: () -> Unit, onChat: () -> Unit) {
+private fun UpNextTab(repo: Repo, onEditAgent: (PersonaDto) -> Unit, onNewAgent: () -> Unit, onOpenBrowser: () -> Unit, onChat: () -> Unit, onImportAgent: () -> Unit) {
     val agents = rememberPolled(10_000, "agents") { repo.api.getJson<AgentsDto>("/api/agents") }
     val sugg = rememberPolled(0, "sugg") { repo.api.getJson<SuggestionsDto>("/api/suggestions") }
     val recipes = rememberPolled(0, "recipes") { repo.api.getJson<RecipesDto>("/api/recipes") }
     val personas = rememberPolled(0, "personas") { repo.api.getJson<PersonasDto>("/api/personas") }
     val scope = rememberCoroutineScope()
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     var note by remember { mutableStateOf<String?>(null) }
     var failure by remember { mutableStateOf<String?>(null) }
 
@@ -257,10 +258,16 @@ private fun UpNextTab(repo: Repo, onEditAgent: (PersonaDto) -> Unit, onNewAgent:
         else {
             if (list.isEmpty()) item { Panel(Modifier.fillMaxWidth()) { Text("A named agent is a persona with its own instructions: an Inbox helper, a research partner. Make one, then chat with it.", Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
             items(list, key = { it.id }) { a ->
-                AgentCard(a, onChat = { act { repo.api.postJson("/api/personas", buildJsonObject { put("action", "chat"); put("id", a.id) }); repo.reload(); onChat(); null } }, onEdit = { onEditAgent(a) })
+                AgentCard(a, onChat = { act { repo.api.postJson("/api/personas", buildJsonObject { put("action", "chat"); put("id", a.id) }); repo.reload(); onChat(); null } }, onEdit = { onEditAgent(a) }, onShare = { act { app.talaria.ui.shareAgentFile(ctx, repo, a.id, a.name); null } })
                 Gap(8.dp)
             }
-            if (list.size < (personas.value?.max ?: 8)) item { Gap(4.dp); SecondaryButton(onClick = onNewAgent, shape = MaterialTheme.shapes.large, modifier = Modifier.heightIn(min = 48.dp)) { Icon(Ti.Plus, null, Modifier.size(18.dp)); Text("New agent", Modifier.padding(start = 8.dp)) } }
+            item {
+                Gap(4.dp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (list.size < (personas.value?.max ?: 8)) SecondaryButton(onClick = onNewAgent, shape = MaterialTheme.shapes.large, modifier = Modifier.heightIn(min = 48.dp)) { Icon(Ti.Plus, null, Modifier.size(18.dp)); Text("New agent", Modifier.padding(start = 8.dp)) }
+                    SecondaryButton(onClick = onImportAgent, shape = MaterialTheme.shapes.large, modifier = Modifier.heightIn(min = 48.dp)) { Icon(Ti.File, null, Modifier.size(18.dp)); Text("Import an agent", Modifier.padding(start = 8.dp)) }
+                }
+            }
         }
 
         item { SectionTitle("Routines") }
@@ -318,7 +325,7 @@ internal fun agentColor(name: String, extra: app.talaria.ui.theme.Extra, scheme:
 }
 
 @Composable
-private fun AgentCard(a: PersonaDto, onChat: () -> Unit, onEdit: () -> Unit) {
+private fun AgentCard(a: PersonaDto, onChat: () -> Unit, onEdit: () -> Unit, onShare: () -> Unit) {
     val c = agentColor(a.color, MaterialTheme.extra, MaterialTheme.colorScheme)
     Panel(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large).clickable(onClick = onEdit)) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -332,6 +339,7 @@ private fun AgentCard(a: PersonaDto, onChat: () -> Unit, onEdit: () -> Unit) {
                 }
                 Text(a.instructions.take(120), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
+            IconButton(onClick = onShare) { Icon(Ti.Share, "Share ${a.name}") }
             Button(onClick = onChat, shape = MaterialTheme.shapes.medium, contentPadding = PaddingValues(horizontal = 14.dp)) { Text("Chat") }
         }
     }

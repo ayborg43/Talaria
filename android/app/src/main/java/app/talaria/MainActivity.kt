@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.talaria.service.ConnectionService
+import app.talaria.ui.AgentFile
 import app.talaria.ui.Root
 import app.talaria.ui.theme.TalariaTheme
 import app.talaria.voice.VoiceController
@@ -31,6 +32,8 @@ class MainActivity : AppCompatActivity() {
     private var locked by mutableStateOf(false)
     private var uploadError by mutableStateOf<String?>(null)
     private var quick by mutableStateOf<QuickAction?>(null)
+    /** The text of a shared agent file, until the import screen has taken it. */
+    private var agentFile by mutableStateOf<String?>(null)
     private var leftAt = 0L
 
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
@@ -91,6 +94,7 @@ class MainActivity : AppCompatActivity() {
                     locked = locked, onUnlocked = { locked = false },
                     shared = shared, onSharedUsed = { shared = null },
                     onSaveFile = { name, _, bytes -> pendingSave = bytes; saveDocument.launch(name) },
+                    agentFile = agentFile, onAgentFileUsed = { agentFile = null },
                     quick = quick, onQuickHandled = { quick = null }, photoSent = photoSent, onTakePhoto = ::capture,
                     onAttach = { pickFile.launch("*/*") }, onUploadShared = { upload(it) }, uploadError = uploadError, onUploadErrorShown = { uploadError = null },
                     onNeedMic = { micPermission.launch(Manifest.permission.RECORD_AUDIO) },
@@ -120,7 +124,30 @@ class MainActivity : AppCompatActivity() {
         if (i?.action != Intent.ACTION_SEND) return
         val text = i.getStringExtra(Intent.EXTRA_TEXT)
         @Suppress("DEPRECATION") val stream = i.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
+        // An agent file goes to the screen that shows it; any other text, picture or PDF goes to the chat as before.
+        if (AgentFile.looksLikeAgentFile(text)) { agentFile = text; return }
+        if (stream != null && AgentFile.worthReading(i.type, null)) {
+            lifecycleScope.launch {
+                val file = readAgentFile(stream)
+                if (file != null) agentFile = file else shared = Shared(text, stream, i.type)
+            }
+            return
+        }
         shared = Shared(text, stream, i.type)
+    }
+
+    /** The text of [uri] when it is an agent file (by its name or its content), else null. Reads at most a few KB, and only what was shared. */
+    private suspend fun readAgentFile(uri: android.net.Uri): String? = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        try {
+            var name: String? = null
+            contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) name = c.getString(0) }
+            val bytes = contentResolver.openInputStream(uri)?.use { AgentFile.readLimited(it) } ?: return@withContext null
+            val text = String(bytes, Charsets.UTF_8)
+            // A file named *.agent.md is always shown for review (the server says so if it is no good); anything else only if it says it is one.
+            if (bytes.size <= AgentFile.READ_LIMIT && AgentFile.isAgentShare(name, text)) text
+            else if (AgentFile.isAgentFileName(name)) text.take(AgentFile.READ_LIMIT)
+            else null
+        } catch (_: Exception) { null }
     }
 
     override fun onStart() {

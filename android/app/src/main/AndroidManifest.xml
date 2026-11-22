@@ -65,11 +65,19 @@
                 <action android:name="app.talaria.action.BOARD" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <!-- The phone's assistant: with Talaria chosen as "Default digital assistant app", Android opens this. -->
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
+                <!-- A shared agent file (.agent.md) arrives as one of these; the app tells it from other text before using it. -->
+                <data android:mimeType="text/markdown" />
+                <data android:mimeType="text/x-markdown" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
@@ -78,6 +86,43 @@
                 <data android:mimeType="application/pdf" />
             </intent-filter>
         </activity>
+
+        <!-- Asks about the text you copied. See-through, no screen of its own; reads the clipboard only once it has focus after a tap. -->
+        <activity
+            android:name=".assist.AskClipboardActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <service
+            android:name=".service.AskClipboardTile"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_clip"
+            android:label="@string/tile_clip_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- Talaria as the phone's assistant. Idle until the system binds them, which it does only if Talaria is chosen as the assistant. -->
+        <service
+            android:name=".assist.TalariaInteractionService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <meta-data android:name="android.voice_interaction" android:resource="@xml/interaction_service" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+        </service>
+        <service
+            android:name=".assist.TalariaSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+        <service android:name=".assist.UnusedRecognitionService" android:exported="false" />
 
         <service
             android:name=".service.ConnectionService"

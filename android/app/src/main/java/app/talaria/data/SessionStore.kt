@@ -124,6 +124,10 @@ class SessionStore(context: Context) : Credentials {
     var speakReplies: Boolean
         get() = prefs.getBoolean("speak", true)
         set(v) { prefs.edit().putBoolean("speak", v).apply() }
+    /** When Talaria is opened as the phone's assistant, start the hands-free voice conversation instead of the message box. Off unless chosen. */
+    var assistListen: Boolean
+        get() = prefs.getBoolean("assistListen", false)
+        set(v) { prefs.edit().putBoolean("assistListen", v).apply() }
     var askedNotifications: Boolean
         get() = prefs.getBoolean("askedNotify", false)
         set(v) { prefs.edit().putBoolean("askedNotify", v).apply() }

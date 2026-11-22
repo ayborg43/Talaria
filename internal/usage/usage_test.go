@@ -86,3 +86,12 @@ func TestNothingYet(t *testing.T) {
 		t.Fatal(s)
 	}
 }
+
+func TestTinyCostIsNotWrittenAboutUnder(t *testing.T) {
+	l := Open("", time.UTC)
+	l.Add(provider.Spent{Profile: "p", Usage: provider.Usage{In: 100, Out: 10}})
+	s := l.Report(1, func(string) (Price, bool) { return Price{In: 1, Out: 1}, true }).Summary("today")
+	if strings.Contains(s, "about under") || !strings.Contains(s, "under $0.01") {
+		t.Fatal(s)
+	}
+}

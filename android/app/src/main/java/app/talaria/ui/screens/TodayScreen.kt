@@ -61,7 +61,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @Composable
-fun TodayScreen(repo: Repo, modifier: Modifier, onAsk: (String) -> Unit, onChat: () -> Unit = {}, onAllFiles: () -> Unit = {}) {
+fun TodayScreen(repo: Repo, modifier: Modifier, onAsk: (String) -> Unit, onChat: () -> Unit = {}, onAllFiles: () -> Unit = {}, onDigest: () -> Unit = {}) {
     val openFile = app.talaria.ui.LocalOpenFile.current
     val today = rememberPolled(30_000, "today") { repo.api.getJson<TodayDto>("/api/today") }
     val scope = rememberCoroutineScope()
@@ -85,6 +85,19 @@ fun TodayScreen(repo: Repo, modifier: Modifier, onAsk: (String) -> Unit, onChat:
                         Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("${t.pending} ${if (t.pending == 1) "thing needs" else "things need"} your answer", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.extra.brassText, modifier = Modifier.weight(1f))
                             Button(onClick = onChat, shape = MaterialTheme.shapes.medium) { Text("Open chat") }
+                        }
+                    }
+                }
+
+                item {
+                    Gap(if (t != null && t.pending > 0) 8.dp else 0.dp)
+                    Panel(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large).clickable(onClick = onDigest)) {
+                        Row(Modifier.padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("While you were away", style = MaterialTheme.typography.titleSmall)
+                                Text("What Talaria did on its own, in the last day or week.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Icon(Ti.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }

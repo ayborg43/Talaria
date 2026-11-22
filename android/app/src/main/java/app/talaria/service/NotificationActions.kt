@@ -13,6 +13,8 @@ import kotlinx.coroutines.launch
 class NotificationActions : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == REPLY) { reply(context, intent); return }
+        if (intent.action == STOP_RUN) { stopRun(context, intent); return }
+        if (intent.action == PROGRESS_SWIPED) { intent.getStringExtra("run")?.let { (context.applicationContext as TalariaApp).notifier.progressSwiped(it) }; return }
         val token = intent.getStringExtra("token") ?: return
         val choice = intent.getStringExtra("choice") ?: return
         val repo = (context.applicationContext as TalariaApp).repo
@@ -41,5 +43,20 @@ class NotificationActions : BroadcastReceiver() {
         }
     }
 
-    companion object { const val REPLY = "app.talaria.REPLY" }
+    /** Stop pressed on a running task's notice: asks the server to stop that run, with no screen needed. */
+    private fun stopRun(context: Context, intent: Intent) {
+        val run = intent.getStringExtra("run") ?: return
+        val app = context.applicationContext as TalariaApp
+        val pending = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try { app.repo.api.post("/api/runs/$run/stop") } catch (_: Exception) { /* already finished, or the server is out of reach */ }
+            finally { app.notifier.progressStopped(run); pending.finish() }
+        }
+    }
+
+    companion object {
+        const val REPLY = "app.talaria.REPLY"
+        const val STOP_RUN = "app.talaria.STOP_RUN"
+        const val PROGRESS_SWIPED = "app.talaria.PROGRESS_SWIPED"
+    }
 }

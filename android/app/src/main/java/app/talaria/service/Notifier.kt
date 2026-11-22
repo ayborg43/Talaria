@@ -21,6 +21,8 @@ import app.talaria.data.Servers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
@@ -44,6 +46,10 @@ class Notifier(private val ctx: Context, private val repo: Repo) {
             description = "When the agent answers or finishes a task while the app is closed."
             lockscreenVisibility = android.app.Notification.VISIBILITY_PRIVATE
         })
+        sys.createNotificationChannel(NotificationChannel(PROGRESS, "Running tasks", NotificationManager.IMPORTANCE_LOW).apply {
+            description = "What a background task is doing now, while it works, with a Stop button."
+            setShowBadge(false)
+        })
         sys.createNotificationChannel(NotificationChannel(CONNECTION, "Connection", NotificationManager.IMPORTANCE_MIN).apply {
             description = "Shown while the app keeps its link to your server open so alerts reach you."
             setShowBadge(false)
@@ -54,6 +60,7 @@ class Notifier(private val ctx: Context, private val repo: Repo) {
         ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED)
 
     fun start() {
+        watchProgress()
         // An approval answered anywhere (in the app, on the web, by a timeout) comes back without its token, so the
         // notices are matched against what is still waiting instead: any notice for the live server that is not waiting goes.
         scope.launch {
@@ -75,6 +82,78 @@ class Notifier(private val ctx: Context, private val repo: Repo) {
             }
         }
     }
+
+    // ---- what a running task is doing now ----
+
+    /** The notices on screen: id to the text each shows. */
+    private val shown = java.util.concurrent.ConcurrentHashMap<Int, String>()
+    /** Tasks whose notice the person swiped away: left alone until the task ends. */
+    private val swiped: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    @Volatile private var lastLook = 0L
+
+    /**
+     * While a background task runs, one quiet notice per task (the newest few) says what it is doing, with a Stop button,
+     * and it is changed at most every few seconds. It rides on the link the app already keeps open: the "agents" events say
+     * when a task starts and ends, and nothing happens when none is running. No new service is involved.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun watchProgress() {
+        scope.launch {
+            repo.workers.map { list -> list.any { it.kind != "main" } }.distinctUntilChanged().collectLatest { busy ->
+                if (!busy) { clearProgress(); return@collectLatest }
+                while (true) {
+                    if (progressWanted()) lookAtRuns() else clearProgress()
+                    delay(TaskProgress.MIN_GAP_MS)
+                }
+            }
+        }
+    }
+
+    /** Not while the app is open (the Tasks screen shows it), without the notification permission or setting, in quiet hours, or when the server cannot be reached. */
+    private fun progressWanted(): Boolean {
+        if (!canPost() || repo.foreground || repo.conn.value !is Conn.Online) return false
+        val now = java.time.LocalTime.now().let { it.hour * 60 + it.minute }
+        return !(repo.store.quietHours && Alerts.inQuietHours(now, repo.store.quietFrom, repo.store.quietTo))
+    }
+
+    private suspend fun lookAtRuns() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!TaskProgress.due(lastLook, now)) return
+        lastLook = now
+        val runs = runCatching { repo.api.getJson<app.talaria.data.RunsDto>("/api/runs") }.getOrNull() ?: return
+        swiped.retainAll(runs.runs.filter { it.status == "running" }.map { it.id }.toSet())
+        val items = TaskProgress.items(runs.runs.filter { it.id !in swiped })
+        TaskProgress.gone(shown.keys, items).forEach { nm.cancel(it); shown.remove(it) }
+        TaskProgress.changed(shown, items).forEach { progress(it) }
+    }
+
+    @Suppress("MissingPermission")
+    private fun progress(item: ProgressItem) {
+        val id = TaskProgress.id(item.runId)
+        val b = NotificationCompat.Builder(ctx, PROGRESS).setSilent(true)
+            .setSmallIcon(R.drawable.ic_progress).setContentTitle(item.title).setContentText(item.text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(item.text))
+            .setPublicVersion(NotificationCompat.Builder(ctx, PROGRESS).setSmallIcon(R.drawable.ic_progress).setContentTitle("A task is running").build())
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS).setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true).setOnlyAlertOnce(true).setShowWhen(false).setProgress(0, 0, true)
+            .setContentIntent(open())
+            .setDeleteIntent(PendingIntent.getBroadcast(ctx, id, Intent(ctx, NotificationActions::class.java).setAction(NotificationActions.PROGRESS_SWIPED).putExtra("run", item.runId), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+        // Stopping a task is not offered from a notification while the app lock is on, as with approvals.
+        if (!repo.store.lockWithBiometrics) {
+            val stop = Intent(ctx, NotificationActions::class.java).setAction(NotificationActions.STOP_RUN).putExtra("run", item.runId)
+            b.addAction(NotificationCompat.Action.Builder(0, "Stop", PendingIntent.getBroadcast(ctx, id + 1, stop, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)).build())
+        }
+        nm.notify(id, b.build())
+        shown[id] = item.text
+    }
+
+    private fun clearProgress() { shown.keys.forEach { nm.cancel(it) }; shown.clear(); swiped.clear(); lastLook = 0L }
+
+    /** A task's notice was swiped away: it does not come back for that task. */
+    fun progressSwiped(runId: String) { swiped.add(runId); shown.remove(TaskProgress.id(runId)) }
+
+    /** A task's notice is gone because it was stopped from it. */
+    fun progressStopped(runId: String) { val id = TaskProgress.id(runId); nm.cancel(id); shown.remove(id) }
 
     /**
      * Approvals found by looking at a server directly (the app was not connected, or it is a server other than the
@@ -170,7 +249,7 @@ class Notifier(private val ctx: Context, private val repo: Repo) {
         nm.notify(REPLY_ID, b.build())
     }
 
-    fun cancelAll() { nm.cancel(REPLY_ID) }
+    fun cancelAll() { nm.cancel(REPLY_ID); clearProgress() }
 
     /** [status] says whether the link is working, so a notice that has been sitting there for hours still tells the truth. */
     fun connectionNotification(host: String, status: String = "Keeping alerts coming. Turn this off in Settings.") = NotificationCompat.Builder(ctx, CONNECTION)
@@ -184,6 +263,7 @@ class Notifier(private val ctx: Context, private val repo: Repo) {
         const val APPROVALS = "approvals"
         const val REPLIES = "replies"
         const val CONNECTION = "connection"
+        const val PROGRESS = "progress"
         const val REPLY_ID = 1
         const val SUMMARY_ID = 2
         const val CONNECTION_ID = 7

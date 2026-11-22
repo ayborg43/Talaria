@@ -354,7 +354,11 @@ func (r Report) Summary(period string) string {
 	t := r.Total.Totals
 	fmt.Fprintf(&b, "%s: %s, %s tokens in and %s out", capitalize(period), requests(t.Calls), Tokens(t.In), Tokens(t.Out))
 	if r.Total.Cost > 0 || r.Total.Priced {
-		fmt.Fprintf(&b, ", about %s", Money(r.Total.Cost))
+		if m := Money(r.Total.Cost); strings.HasPrefix(m, "under") {
+			fmt.Fprintf(&b, ", %s", m)
+		} else {
+			fmt.Fprintf(&b, ", about %s", m)
+		}
 		if !r.Total.Priced {
 			b.WriteString(" for the models with a price set")
 		}
