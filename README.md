@@ -1352,24 +1352,35 @@ are **Backlog, Ready, Running, Review and Done**.
 
 ### Named agents
 
-**Tasks, Up next, Your agents** lets you make up to eight named agents: a name, an icon, what it is for and how it should behave
-(up to 1,500 characters), optionally its own model profile, and a **Looks only** switch. **Chat** opens a conversation with it,
-kept like a channel, and the header says who you are talking to.
+**Tasks, Up next, Your agents** lets you make named agents: a name, an icon, a one-line **Choose this agent for** description (up to
+120 characters, used to pick it when work is handed out; left out, the start of its instructions stands in for it), what it is for and how it should behave
+(up to 1,500 characters), optionally its own model profile, the **tool areas** it may use, and a **Looks only** switch. **Chat** opens a conversation with it,
+kept like a channel, and the header says who you are talking to. Each agent's card shows how its work has gone: board cards running, done, waiting
+in Review and failed, the last card it finished, its model tokens over the last 30 days, and how its model last did on your test questions.
 
 - It is the same Talaria with those instructions added after the usual ones. They can only narrow it: the instructions say that your
   safety rules and approvals are unchanged, and nothing here lets an agent do what would otherwise ask first.
 - **Looks only** is enforced, not requested: any tool that needs approval is refused for that agent, even if one of your rules would allow it,
   so what is left is reading and searching. The model is told so and says what it would have done.
-- The main agent can also hand a task to one of your agents by name (`delegate` with `agent`), which runs it with those instructions and that model. It cannot change or remove agents. It can **suggest** a new one with `agent_create` when it sees you keep needing the same kind of help: you are shown exactly what it proposes (name, instructions, model, and whether it only looks or can act) and nothing is created until you allow it. That prompt appears in every permission mode, including the default where only deleting and posting ask, and "always allow" is not offered for it. If you refuse, it is told not to ask again. A suggested agent that can act still asks for the usual approvals. Subagents cannot suggest agents, and the most is still eight.
+- **Tool areas** narrow it further, by kind rather than by risk: tick `mail`, `files`, `web`, `browser`, `shell`, `calendar`, `phone`, `docs`,
+  `social`, `apps` (connected services) or `finance`, and only those areas are offered to it — tools outside them are refused, and it is told so.
+  Nothing ticked means every area. A few tools belong to no area (telling the time, remembering, listing models) and stay. Scopes and looks-only
+  combine, and both apply however the agent is reached: its own chat, `@name`, a board card, a job or a delegated task.
+- The main agent can also hand a task to one of your agents by name (`delegate` with `agent`), which runs it with those instructions and that model.
+  It chooses by each agent's description when it has one. `delegate` also takes a `handoff`: a summary of the conversation the helper needs
+  (decisions made, facts found, what was ruled out), since a helper starts with an empty conversation and cannot see yours. An `@name` message
+  needs none of that: it is answered in the same conversation, so the agent has the conversation itself. It cannot change or remove agents. It can **suggest** a new one with `agent_create` when it sees you keep needing the same kind of help: you are shown exactly what it proposes (name, instructions, model, and whether it only looks or can act) and nothing is created until you allow it. That prompt appears in every permission mode, including the default where only deleting and posting ask, and "always allow" is not offered for it. If you refuse, it is told not to ask again. A suggested agent that can act still asks for the usual approvals. Subagents cannot suggest agents.
 - Its model profile applies while you talk with it, and jobs started from that conversation start on it too. Going back to an
   ordinary conversation puts the usual instructions and model back. Edit or remove an agent at any time; the conversations stay, as ordinary ones.
+  **Copy** makes a duplicate (`Inbox copy`, then `Inbox copy 2`) to try a variant in. An edit keeps the wording it replaces, and
+  **Revert wording** on the agent swaps back to it; reverting again puts the newer wording back.
 - Agents share one memory, one set of goals and watches, and one set of rules with the rest of Talaria. They are kept in `~/.talaria/agents.json`.
 - **`@name` hands one message to an agent.** Start a message with `@Inbox sort my mail` (any case; the longest matching name wins) in the web app,
   Telegram or Discord, and that message is answered by the saved agent, with its instructions, its model and its look-only limit, in the same
   conversation; the usual agent is back for the next message. It says "→ Inbox" first so you can see who has it. In a conversation that is already
   with an agent, an `@` is just text. The web app and the phone offer the names as you type `@`, and the conversation list shows your agents as
   contacts, with **WORKING** while one of their board cards is running.
-- **Share an agent as one file.** **Share** on an agent saves `Name.agent.md`: a small header (`talaria-agent: 1`, name, icon, looks-only) and the
+- **Share an agent as one file.** **Share** on an agent saves `Name.agent.md`: a small header (`talaria-agent: 1`, name, icon, looks-only, and its description and tool areas when it has them) and the
   instructions, as plain text anyone can read. Nothing else goes in it: not its model profile (those are yours, with your keys), not memory, notes, goals,
   conversations or anything about your machine. **Import an agent** reads such a file strictly (unknown settings are refused), shows the instructions in full, and
   only then adds it: always without a model, and looking only unless you turn that off, whatever the file asked for. A name you already use is refused.

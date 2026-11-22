@@ -6,7 +6,7 @@ import (
 )
 
 func TestExportParseRoundTrip(t *testing.T) {
-	in := Agent{ID: "a1", Name: "Researcher", Icon: "🔎", Profile: "my-secret-profile", ReadOnly: true,
+	in := Agent{ID: "a1", Name: "Researcher", Icon: "🔎", Profile: "my-secret-profile", ReadOnly: true, Description: "looks things up", Scopes: []string{"web", "docs"},
 		Instructions: "Look things up.\n\nCite sources. Never guess.", Color: "blue"}
 	text := Export(in)
 	if strings.Contains(text, "my-secret-profile") || strings.Contains(text, "a1") {
@@ -16,7 +16,7 @@ func TestExportParseRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Name != "Researcher" || out.Icon != "🔎" || !out.ReadOnly || out.Instructions != in.Instructions || out.Profile != "" || out.ID != "" {
+	if out.Name != "Researcher" || out.Icon != "🔎" || !out.ReadOnly || out.Instructions != in.Instructions || out.Profile != "" || out.ID != "" || out.Description != "looks things up" || len(out.Scopes) != 2 {
 		t.Fatalf("%+v", out)
 	}
 }

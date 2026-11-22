@@ -258,13 +258,15 @@ private fun UpNextTab(repo: Repo, onEditAgent: (PersonaDto) -> Unit, onNewAgent:
         else {
             if (list.isEmpty()) item { Panel(Modifier.fillMaxWidth()) { Text("A named agent is a persona with its own instructions: an Inbox helper, a research partner. Make one, then chat with it.", Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
             items(list, key = { it.id }) { a ->
-                AgentCard(a, onChat = { act { repo.api.postJson("/api/personas", buildJsonObject { put("action", "chat"); put("id", a.id) }); repo.reload(); onChat(); null } }, onEdit = { onEditAgent(a) }, onShare = { act { app.talaria.ui.shareAgentFile(ctx, repo, a.id, a.name); null } })
+                AgentCard(a, onChat = { act { repo.api.postJson("/api/personas", buildJsonObject { put("action", "chat"); put("id", a.id) }); repo.reload(); onChat(); null } }, onEdit = { onEditAgent(a) }, onShare = { act { app.talaria.ui.shareAgentFile(ctx, repo, a.id, a.name); null } },
+                    onDuplicate = { act { repo.api.postJson("/api/personas", buildJsonObject { put("action", "duplicate"); put("id", a.id) }); repo.reload(); null } },
+                    onRevert = { act { repo.api.postJson("/api/personas", buildJsonObject { put("action", "revert"); put("id", a.id) }); repo.reload(); null } })
                 Gap(8.dp)
             }
             item {
                 Gap(4.dp)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (list.size < (personas.value?.max ?: 8)) SecondaryButton(onClick = onNewAgent, shape = MaterialTheme.shapes.large, modifier = Modifier.heightIn(min = 48.dp)) { Icon(Ti.Plus, null, Modifier.size(18.dp)); Text("New agent", Modifier.padding(start = 8.dp)) }
+                    SecondaryButton(onClick = onNewAgent, shape = MaterialTheme.shapes.large, modifier = Modifier.heightIn(min = 48.dp)) { Icon(Ti.Plus, null, Modifier.size(18.dp)); Text("New agent", Modifier.padding(start = 8.dp)) }
                     SecondaryButton(onClick = onImportAgent, shape = MaterialTheme.shapes.large, modifier = Modifier.heightIn(min = 48.dp)) { Icon(Ti.File, null, Modifier.size(18.dp)); Text("Import an agent", Modifier.padding(start = 8.dp)) }
                 }
             }
@@ -325,22 +327,37 @@ internal fun agentColor(name: String, extra: app.talaria.ui.theme.Extra, scheme:
 }
 
 @Composable
-private fun AgentCard(a: PersonaDto, onChat: () -> Unit, onEdit: () -> Unit, onShare: () -> Unit) {
+private fun AgentCard(a: PersonaDto, onChat: () -> Unit, onEdit: () -> Unit, onShare: () -> Unit, onDuplicate: () -> Unit, onRevert: () -> Unit) {
     val c = agentColor(a.color, MaterialTheme.extra, MaterialTheme.colorScheme)
     Panel(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large).clickable(onClick = onEdit)) {
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Box(Modifier.size(44.dp).clip(CircleShape).background(c.copy(alpha = 0.22f)), contentAlignment = Alignment.Center) {
-                Text(a.icon.ifBlank { a.name.take(1).uppercase() }, style = MaterialTheme.typography.titleMedium, color = c)
-            }
-            Column(Modifier.weight(1f)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(a.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                    if (a.read_only) Pill("Looks only", Tone.Info)
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Box(Modifier.size(44.dp).clip(CircleShape).background(c.copy(alpha = 0.22f)), contentAlignment = Alignment.Center) {
+                    Text(a.icon.ifBlank { a.name.take(1).uppercase() }, style = MaterialTheme.typography.titleMedium, color = c)
                 }
-                Text(a.instructions.take(120), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Column(Modifier.weight(1f)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(a.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        if (a.read_only) Pill("Looks only", Tone.Info)
+                    }
+                    Text(a.description.ifBlank { a.instructions.take(120) }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    a.track?.let { t ->
+                        val parts = listOfNotNull(
+                            if (t.running > 0) "${t.running} running" else null, if (t.done > 0) "${t.done} done" else null,
+                            if (t.waiting > 0) "${t.waiting} to review" else null, if (t.failed > 0) "${t.failed} failed" else null,
+                            t.last_what.takeIf { it.isNotBlank() }?.let { "last: $it" }, if (t.tokens > 0) "${t.tokens / 1000}k tokens (30d)" else null,
+                            t.eval.takeIf { it.isNotBlank() }?.let { "tests: $it" },
+                        )
+                        if (parts.isNotEmpty()) Text(parts.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                IconButton(onClick = onShare) { Icon(Ti.Share, "Share ${a.name}") }
+                Button(onClick = onChat, shape = MaterialTheme.shapes.medium, contentPadding = PaddingValues(horizontal = 14.dp)) { Text("Chat") }
             }
-            IconButton(onClick = onShare) { Icon(Ti.Share, "Share ${a.name}") }
-            Button(onClick = onChat, shape = MaterialTheme.shapes.medium, contentPadding = PaddingValues(horizontal = 14.dp)) { Text("Chat") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onDuplicate) { Text("Copy") }
+                if (a.can_revert) TextButton(onClick = onRevert) { Text("Revert wording") }
+            }
         }
     }
 }

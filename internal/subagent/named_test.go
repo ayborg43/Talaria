@@ -153,6 +153,42 @@ func TestADelegateOfALookOnlyConversationIsLookOnlyToo(t *testing.T) {
 	}
 }
 
+func TestAScopedSavedAgentGetsTheHandoffAndNotTheClosedTools(t *testing.T) {
+	var subReq provider.Request
+	var result string
+	p := chatFunc(func(_ context.Context, req provider.Request) (provider.Message, error) {
+		switch {
+		case isSub(req) && lastTool(req):
+			result = req.Messages[len(req.Messages)-1].Content
+			return text("could not"), nil
+		case isSub(req):
+			subReq = req
+			return toolCalls(provider.ToolCall{ID: "s", Name: "shell", Arguments: `{"command":"ls"}`}), nil
+		case lastTool(req):
+			return text("final"), nil
+		}
+		args, _ := json.Marshal(map[string]string{"task": "look into it", "agent": "scout", "handoff": "We already ruled out the cache."})
+		return toolCalls(provider.ToolCall{ID: "1", Name: "delegate", Arguments: string(args)}), nil
+	})
+	pool := NewPool(Limits{})
+	pool.Named = func() []Named {
+		return []Named{{Name: "scout", About: "finds things in files", Instructions: "look", Scopes: []string{"files"}}}
+	}
+	parent := newParent(p, pool)
+	if _, err := parent.Run(context.Background(), "go"); err != nil {
+		t.Fatal(err)
+	}
+	if sys := subReq.Messages[0].Content; !strings.Contains(sys, "Context handed over") || !strings.Contains(sys, "ruled out the cache") || !strings.Contains(sys, "limited to these areas: files") {
+		t.Errorf("the handoff or the scope did not reach the subagent:\n%s", sys)
+	}
+	if names := toolNames(subReq); names["shell"] || !names["read_file"] {
+		t.Errorf("the closed tool was offered, or the open one was not: %v", names)
+	}
+	if !strings.Contains(result, "outside this agent's tool areas") {
+		t.Fatalf("a call to a closed tool was not refused: %q", result)
+	}
+}
+
 func TestASubagentCannotCreateAgents(t *testing.T) {
 	if !slices.Contains(excluded, "agent_create") {
 		t.Fatal("a helper could suggest agents, and the team could grow from inside a task")

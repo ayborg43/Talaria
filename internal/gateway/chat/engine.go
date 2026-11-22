@@ -462,6 +462,8 @@ type Persona struct {
 	System   string // what the model is told, added after its usual instructions
 	Profile  string // the model profile it uses; "" follows the chat's
 	ReadOnly bool
+	// AllowTool, if set, says which tools this persona may use at all (its tool areas).
+	AllowTool func(name string) bool
 }
 
 // SetPersona makes the chat talk with a named agent, or with the usual one when p is nil. Call it after SetHistory,
@@ -493,6 +495,11 @@ func (c *chat) applyPersona() {
 	}
 	c.agent.SetSystem(system)
 	c.agent.ReadOnly = c.persona != nil && c.persona.ReadOnly
+	if c.persona != nil {
+		c.agent.ToolAllowed = c.persona.AllowTool
+	} else {
+		c.agent.ToolAllowed = nil
+	}
 }
 
 // SetHistory puts a stored conversation back into the chat: the running task

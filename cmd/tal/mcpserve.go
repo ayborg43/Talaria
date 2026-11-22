@@ -83,7 +83,7 @@ func (c *cli) mcpTools() []mcpserve.Tool {
 				}
 				var b strings.Builder
 				for _, a := range list {
-					fmt.Fprintf(&b, "- %s: %s", a.Name, short(a.Instructions, 160))
+					fmt.Fprintf(&b, "- %s: %s", a.Name, short(a.About(), 160))
 					if a.Profile != "" {
 						fmt.Fprintf(&b, " [model %s]", a.Profile)
 					}

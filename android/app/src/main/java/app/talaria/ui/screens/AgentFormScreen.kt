@@ -61,7 +61,9 @@ fun AgentFormScreen(repo: Repo, agent: PersonaDto?, onDone: () -> Unit, modifier
     var name by remember { mutableStateOf(agent?.name.orEmpty()) }
     var icon by remember { mutableStateOf(agent?.icon.orEmpty()) }
     var color by remember { mutableStateOf(agent?.color?.ifBlank { "brass" } ?: "brass") }
+    var description by remember { mutableStateOf(agent?.description.orEmpty()) }
     var instructions by remember { mutableStateOf(agent?.instructions.orEmpty()) }
+    var scopes by remember { mutableStateOf(agent?.scopes.orEmpty().toSet()) }
     var readOnly by remember { mutableStateOf(agent?.read_only ?: false) }
     var profile by remember { mutableStateOf(agent?.profile.orEmpty()) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -81,6 +83,8 @@ fun AgentFormScreen(repo: Repo, agent: PersonaDto?, onDone: () -> Unit, modifier
             OutlinedTextField(name, { name = it.take(30) }, label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
             Gap(12.dp)
             OutlinedTextField(icon, { icon = it.take(8) }, label = { Text("Icon (optional)") }, supportingText = { Text("One emoji or a couple of letters") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
+            Gap(12.dp)
+            OutlinedTextField(description, { description = it.take(120) }, label = { Text("Choose this agent for (one line)") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
             Gap(12.dp)
             OutlinedTextField(
                 instructions, { instructions = it.take(1500) }, label = { Text("What it is for and how it should behave") },
@@ -109,6 +113,15 @@ fun AgentFormScreen(repo: Repo, agent: PersonaDto?, onDone: () -> Unit, modifier
                     profiles.forEach { p -> FilterChip(selected = profile == p, onClick = { profile = p }, label = { Text(p) }) }
                 }
             }
+            val groups = meta.value?.scope_groups.orEmpty()
+            if (groups.isNotEmpty()) {
+                Gap(16.dp)
+                Text("Tool areas it may use (none chosen = all)", style = MaterialTheme.typography.labelLarge)
+                Gap(8.dp)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    groups.forEach { g -> FilterChip(selected = g in scopes, onClick = { scopes = if (g in scopes) scopes - g else scopes + g }, label = { Text(g) }) }
+                }
+            }
             Gap(16.dp)
             Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(MaterialTheme.shapes.medium).clickable { readOnly = !readOnly }, verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -127,7 +140,8 @@ fun AgentFormScreen(repo: Repo, agent: PersonaDto?, onDone: () -> Unit, modifier
                             repo.api.postJson("/api/personas", buildJsonObject {
                                 put("action", "save"); agent?.let { put("id", it.id) }
                                 put("name", name.trim()); put("icon", icon.trim()); put("color", color)
-                                put("instructions", instructions.trim()); put("profile", profile); put("read_only", readOnly)
+                                put("description", description.trim()); put("instructions", instructions.trim()); put("profile", profile); put("read_only", readOnly)
+                                put("scopes", kotlinx.serialization.json.buildJsonArray { scopes.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) } })
                             })
                             onDone()
                         } catch (e: Exception) { error = e.message }

@@ -252,7 +252,7 @@ func (s *Server) applyPersona() {
 	if s.Agents != nil && s.Convos != nil {
 		if id := s.Convos.ActiveAgent(); id != "" {
 			if a, ok := s.Agents.Get(id); ok {
-				p = &chat.Persona{Name: a.Name, System: a.System(), Profile: a.Profile, ReadOnly: a.ReadOnly}
+				p = &chat.Persona{Name: a.Name, System: a.System(), Profile: a.Profile, ReadOnly: a.ReadOnly, AllowTool: a.AllowsTool}
 			}
 		}
 	}

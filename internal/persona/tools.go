@@ -23,7 +23,9 @@ func RegisterTools(r *tool.Registry, s *Store, profiles func() []string) {
 		names = profiles()
 	}
 	props := `"name":{"type":"string","description":"a short name for the agent, like Researcher"},` +
+		`"description":{"type":"string","description":"one line saying when to choose this agent, like 'looks things up and cites sources'"},` +
 		`"instructions":{"type":"string","description":"what it is for and how it should behave: written to it, in the second person, standing alone"},` +
+		`"scopes":{"type":"array","items":{"type":"string","enum":["web","files","shell","browser","mail","calendar","phone","docs","social","apps","finance"]},"description":"tool areas it may use; leave out for all of them"},` +
 		`"read_only":{"type":"boolean","description":"true if its work is only to look things up and read (the safe choice, and the default); false if it needs to act, such as write files or run commands, still with the user's usual approvals"},` +
 		`"icon":{"type":"string","description":"an emoji or a couple of letters (optional)"}`
 	if len(names) > 0 {
@@ -86,8 +88,9 @@ func clip(s string, n int) string {
 // parseCreate reads a proposal. An agent that does not say whether it is look-only is look-only: the wider choice has to be made out loud.
 func parseCreate(raw json.RawMessage, profiles []string) (Agent, error) {
 	var in struct {
-		Name, Instructions, Icon, Profile string
-		ReadOnly                          *bool `json:"read_only"`
+		Name, Description, Instructions, Icon, Profile string
+		ReadOnly                                       *bool `json:"read_only"`
+		Scopes                                         []string
 	}
 	if err := json.Unmarshal(raw, &in); err != nil {
 		return Agent{}, err
@@ -96,6 +99,6 @@ func parseCreate(raw json.RawMessage, profiles []string) (Agent, error) {
 	if profile != "" && profiles != nil && !slices.Contains(profiles, profile) {
 		return Agent{}, fmt.Errorf("there is no model profile called %q: choose one of %s, or leave it out", profile, strings.Join(profiles, ", "))
 	}
-	a := Agent{Name: in.Name, Icon: in.Icon, Color: defaultColor, Instructions: in.Instructions, Profile: profile, ReadOnly: in.ReadOnly == nil || *in.ReadOnly}
+	a := Agent{Name: in.Name, Description: in.Description, Icon: in.Icon, Color: defaultColor, Instructions: in.Instructions, Profile: profile, ReadOnly: in.ReadOnly == nil || *in.ReadOnly, Scopes: in.Scopes}
 	return Check(a)
 }

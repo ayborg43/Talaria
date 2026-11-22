@@ -281,6 +281,22 @@ func (s *Store) List(gateway string, chatID int64) ([]Card, error) {
 	return sorted(cards), err
 }
 
+// All is every card on every board, for a summary across chats (such as how a saved agent's work has gone).
+func (s *Store) All() ([]Card, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	db, err := s.db()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT data FROM cards`)
+	if err != nil {
+		return nil, err
+	}
+	return scan(rows)
+}
+
 // ErrNoCard is what a card that is not on this chat's board gets.
 var ErrNoCard = errors.New("there is no such card on this board (kanban_list shows them)")
 

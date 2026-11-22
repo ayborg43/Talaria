@@ -132,6 +132,9 @@ func (c *cli) runOnce(ctx context.Context, req runRequest) runResult {
 	a := c.rt.NewAgent(opts)
 	if named != nil {
 		a.ReadOnly = named.ReadOnly
+		if len(named.Scopes) > 0 {
+			a.ToolAllowed = named.AllowsTool
+		}
 		if named.Profile != "" {
 			if p, model, err := c.providerFor(named.Profile); err == nil {
 				a.Provider, a.Model = p, model

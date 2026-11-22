@@ -4,20 +4,38 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
+	"talaria/internal/kanban"
 	"talaria/internal/persona"
 )
 
 // PersonaInfo is a named agent as the page shows it.
 type PersonaInfo struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Icon         string `json:"icon,omitempty"`
-	Color        string `json:"color"`
-	Instructions string `json:"instructions"`
-	Profile      string `json:"profile,omitempty"`
-	ReadOnly     bool   `json:"read_only,omitempty"`
-	Active       bool   `json:"active,omitempty"` // the open conversation is with it
+	ID           string        `json:"id"`
+	Name         string        `json:"name"`
+	Icon         string        `json:"icon,omitempty"`
+	Color        string        `json:"color"`
+	Description  string        `json:"description,omitempty"`
+	Instructions string        `json:"instructions"`
+	Profile      string        `json:"profile,omitempty"`
+	ReadOnly     bool          `json:"read_only,omitempty"`
+	Scopes       []string      `json:"scopes,omitempty"`
+	CanRevert    bool          `json:"can_revert,omitempty"`
+	Active       bool          `json:"active,omitempty"` // the open conversation is with it
+	Track        *PersonaTrack `json:"track,omitempty"`
+}
+
+// PersonaTrack is how a named agent's work has gone lately: its board cards, and what its model cost.
+type PersonaTrack struct {
+	Done     int       `json:"done"`
+	Failed   int       `json:"failed"`
+	Running  int       `json:"running"`
+	Waiting  int       `json:"waiting"` // in Review, waiting for the person to look
+	LastAt   time.Time `json:"last_at,omitempty"`
+	LastWhat string    `json:"last_what,omitempty"`
+	Tokens   int64     `json:"tokens,omitempty"` // model tokens in the last 30 days, from the usage ledger
+	Eval     string    `json:"eval,omitempty"`   // how its model's latest run on the person's test questions went
 }
 
 func (s *Server) personaInfos() []PersonaInfo {
@@ -25,9 +43,70 @@ func (s *Server) personaInfos() []PersonaInfo {
 	if s.Convos != nil {
 		active = s.Convos.ActiveAgent()
 	}
+	tracks := s.personaTracks()
 	out := []PersonaInfo{}
 	for _, a := range s.Agents.List() {
-		out = append(out, PersonaInfo{ID: a.ID, Name: a.Name, Icon: a.Icon, Color: a.Color, Instructions: a.Instructions, Profile: a.Profile, ReadOnly: a.ReadOnly, Active: a.ID == active})
+		out = append(out, PersonaInfo{ID: a.ID, Name: a.Name, Icon: a.Icon, Color: a.Color, Description: a.Description, Instructions: a.Instructions, Profile: a.Profile, ReadOnly: a.ReadOnly, Scopes: a.Scopes, CanRevert: a.PrevInstructions != "", Active: a.ID == active, Track: tracks[a.Name]})
+	}
+	return out
+}
+
+// personaTracks builds each saved agent's record from the board, the usage ledger and the test questions.
+func (s *Server) personaTracks() map[string]*PersonaTrack {
+	out := map[string]*PersonaTrack{}
+	get := func(name string) *PersonaTrack {
+		if out[name] == nil {
+			out[name] = &PersonaTrack{}
+		}
+		return out[name]
+	}
+	if s.Cards != nil {
+		if cards, err := s.Cards.All(); err == nil {
+			for _, c := range cards {
+				if c.Agent == "" || c.Agent == kanban.Main {
+					continue
+				}
+				t := get(c.Agent)
+				switch {
+				case c.Column == kanban.Running:
+					t.Running++
+				case c.Status == kanban.StatusFailed || c.Status == kanban.StatusCancelled || c.Status == kanban.StatusLost:
+					t.Failed++
+				case c.Column == kanban.Done:
+					t.Done++
+				case c.Column == kanban.Review:
+					t.Waiting++
+				}
+				if !c.Finished.IsZero() && c.Finished.After(t.LastAt) {
+					t.LastAt, t.LastWhat = c.Finished, c.Title
+				}
+			}
+		}
+	}
+	if s.Usage != nil {
+		for _, l := range s.Usage.Report(30, nil).ByAgent {
+			if l.Name != "" && l.Name != "main agent" {
+				get(l.Name).Tokens = l.Totals.In + l.Totals.Out
+			}
+		}
+	}
+	if s.Evals != nil {
+		_, def := s.profileNames()
+		for _, a := range s.Agents.List() {
+			p := a.Profile
+			if p == "" {
+				p = def
+			}
+			if run, ok := s.Evals.Latest(p); ok {
+				get(a.Name).Eval = run.Line()
+			}
+		}
+	}
+	// An agent with no record at all gets none shown.
+	for name, t := range out {
+		if t.Done+t.Failed+t.Running+t.Waiting == 0 && t.Tokens == 0 && t.Eval == "" {
+			delete(out, name)
+		}
 	}
 	return out
 }
@@ -44,7 +123,7 @@ func (s *Server) personasState() map[string]any {
 	if names == nil {
 		names = []string{}
 	}
-	return map[string]any{"available": true, "agents": s.personaInfos(), "profiles": names, "default_profile": def, "colors": ChannelColors, "max": persona.MaxAgents}
+	return map[string]any{"available": true, "agents": s.personaInfos(), "profiles": names, "default_profile": def, "colors": ChannelColors, "scope_groups": persona.ScopeGroups}
 }
 
 func (s *Server) personasGet(w http.ResponseWriter, r *http.Request) {
@@ -58,14 +137,16 @@ func (s *Server) personasGet(w http.ResponseWriter, r *http.Request) {
 // personasPost makes, changes and removes named agents, and starts a conversation with one.
 func (s *Server) personasPost(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Action       string `json:"action"` // save, remove or chat
-		ID           string `json:"id"`
-		Name         string `json:"name"`
-		Icon         string `json:"icon"`
-		Color        string `json:"color"`
-		Instructions string `json:"instructions"`
-		Profile      string `json:"profile"`
-		ReadOnly     bool   `json:"read_only"`
+		Action       string   `json:"action"` // save, remove, chat, duplicate or revert
+		ID           string   `json:"id"`
+		Name         string   `json:"name"`
+		Icon         string   `json:"icon"`
+		Color        string   `json:"color"`
+		Description  string   `json:"description"`
+		Instructions string   `json:"instructions"`
+		Profile      string   `json:"profile"`
+		ReadOnly     bool     `json:"read_only"`
+		Scopes       []string `json:"scopes"`
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -93,12 +174,27 @@ func (s *Server) personasPost(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusBadRequest, "there is no model profile called "+in.Profile)
 			return
 		}
-		saved, err := s.Agents.Save(persona.Agent{ID: in.ID, Name: in.Name, Icon: in.Icon, Color: in.Color, Instructions: in.Instructions, Profile: in.Profile, ReadOnly: in.ReadOnly})
+		saved, err := s.Agents.Save(persona.Agent{ID: in.ID, Name: in.Name, Icon: in.Icon, Color: in.Color, Description: in.Description, Instructions: in.Instructions, Profile: in.Profile, ReadOnly: in.ReadOnly, Scopes: in.Scopes})
 		if err != nil {
 			fail(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		s.applyPersona() // if it is the one talking now, the change takes effect at once
+		out["saved"] = saved.Name
+	case "duplicate":
+		saved, err := s.Agents.Duplicate(in.ID)
+		if err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		out["saved"] = saved.Name
+	case "revert":
+		saved, err := s.Agents.Revert(in.ID)
+		if err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.applyPersona()
 		out["saved"] = saved.Name
 	case "remove":
 		if err := s.Agents.Remove(in.ID); err != nil {
@@ -127,7 +223,7 @@ func (s *Server) personasPost(w http.ResponseWriter, r *http.Request) {
 		s.setHistory(nil)
 		out["id"] = id
 	default:
-		fail(w, http.StatusBadRequest, "say what to do: save, remove or chat")
+		fail(w, http.StatusBadRequest, "say what to do: save, remove, chat, duplicate or revert")
 		return
 	}
 	for k, v := range s.personasState() {
@@ -190,7 +286,7 @@ func (s *Server) agentFilePost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !in.Import {
-		writeJSON(w, http.StatusOK, map[string]any{"agent": PersonaInfo{Name: a.Name, Icon: a.Icon, Instructions: a.Instructions, ReadOnly: a.ReadOnly}, "exists": exists})
+		writeJSON(w, http.StatusOK, map[string]any{"agent": PersonaInfo{Name: a.Name, Icon: a.Icon, Description: a.Description, Instructions: a.Instructions, ReadOnly: a.ReadOnly, Scopes: a.Scopes}, "exists": exists})
 		return
 	}
 	a.ReadOnly = in.ReadOnly == nil || *in.ReadOnly // an imported agent only looks until the person says otherwise

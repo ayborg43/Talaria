@@ -134,6 +134,10 @@ type Agent struct {
 	// tool that needs approval: what is left is the tools that only read. It is for a conversation the user has set
 	// to look and not touch.
 	ReadOnly bool
+	// ToolAllowed, if set, says whether a tool is available to this agent at all: a saved agent's scopes use
+	// it to leave whole tool areas (mail, the browser, the shell) closed. A tool it refuses is not offered to
+	// the model, and a call to it anyway is refused.
+	ToolAllowed func(name string) bool
 	// RefuseRisky refuses, without asking anyone, any call whose risk is deleting or posting, even if Approve would
 	// allow it: for a run whose approver says yes to ordinary clicks but must never do those.
 	RefuseRisky bool
@@ -240,6 +244,21 @@ func (a *Agent) Restore(transcript []provider.Message) {
 
 // Run appends the user's input, loops until the model answers without tool
 // calls, and returns that final answer. History is kept across calls.
+// toolSpecs is the tools offered to the model: everything registered, minus any ToolAllowed closes off.
+func (a *Agent) toolSpecs() []provider.ToolSpec {
+	specs := a.Tools.Specs()
+	if a.ToolAllowed == nil {
+		return specs
+	}
+	out := specs[:0]
+	for _, s := range specs {
+		if a.ToolAllowed(s.Name) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func (a *Agent) Run(ctx context.Context, input string) (string, error) {
 	if len(a.messages) == 0 && a.System != "" {
 		a.messages = append(a.messages, provider.Message{Role: provider.RoleSystem, Content: a.System})
@@ -267,7 +286,7 @@ func (a *Agent) Run(ctx context.Context, input string) (string, error) {
 		reply, err := a.Provider.Chat(ctx, provider.Request{
 			Model:     a.Model,
 			Messages:  a.requestMessages(),
-			Tools:     a.Tools.Specs(),
+			Tools:     a.toolSpecs(),
 			OnText:    a.OnText,
 			OnRestart: a.OnRestart,
 		})
@@ -473,6 +492,10 @@ func (a *Agent) executeAs(ctx context.Context, call provider.ToolCall, approved 
 	if !ok {
 		entry.Via = "unknown tool"
 		return execResult{text: fmt.Sprintf("error: unknown tool %q", call.Name)}
+	}
+	if a.ToolAllowed != nil && !a.ToolAllowed(call.Name) {
+		entry.Via = "agent scope"
+		return execResult{text: "error: " + call.Name + " is outside this agent's tool areas, so it is not available: say what you found, and what you would do if it were allowed"}
 	}
 
 	if t.LogArgs != nil {

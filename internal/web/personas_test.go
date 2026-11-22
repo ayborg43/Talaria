@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"talaria/internal/kanban"
 	"talaria/internal/persona"
 )
 
@@ -117,15 +118,88 @@ func TestMakingAnAgentChattingWithItAndRemovingIt(t *testing.T) {
 	}
 }
 
-func TestThereIsALimitToHowManyAgentsThereAre(t *testing.T) {
+func TestThereIsNoLimitToHowManyAgentsThereAre(t *testing.T) {
 	r := personaRig(t)
-	for i := 0; i < persona.MaxAgents; i++ {
+	for i := 0; i < 12; i++ {
 		if code, _ := r.personaPost(map[string]any{"action": "save", "name": "Agent " + string(rune('A'+i)), "instructions": "x"}); code != 200 {
 			t.Fatalf("%d: %d", i, code)
 		}
 	}
-	if code, _ := r.personaPost(map[string]any{"action": "save", "name": "One more", "instructions": "x"}); code != 400 {
+	if code, _ := r.personaPost(map[string]any{"action": "save", "name": "One more", "instructions": "x"}); code != 200 {
 		t.Fatalf("%d", code)
+	}
+}
+
+func TestAnAgentKeepsItsDescriptionScopesDuplicateAndRevert(t *testing.T) {
+	r := personaRig(t)
+	code, out := r.personaPost(map[string]any{"action": "save", "name": "Inbox", "description": "sorts mail", "instructions": "first wording", "scopes": []string{"mail", "docs"}})
+	if code != 200 {
+		t.Fatalf("%d %v", code, out)
+	}
+	agents := out["agents"].([]any)
+	a := agents[0].(map[string]any)
+	if a["description"] != "sorts mail" || len(a["scopes"].([]any)) != 2 {
+		t.Fatalf("the new fields did not come back: %v", a)
+	}
+	id := a["id"].(string)
+	if code, _ := r.personaPost(map[string]any{"action": "save", "id": id, "name": "Inbox", "description": "sorts mail", "instructions": "second wording", "scopes": []string{"mail"}}); code != 200 {
+		t.Fatalf("edit: %d", code)
+	}
+	if code, out := r.personaPost(map[string]any{"action": "duplicate", "id": id}); code != 200 || out["saved"] != "Inbox copy" {
+		t.Fatalf("duplicate: %d %v", code, out)
+	}
+	if code, out := r.personaPost(map[string]any{"action": "revert", "id": id}); code != 200 {
+		t.Fatalf("revert: %d %v", code, out)
+	}
+	for _, x := range out["agents"].([]any) {
+		if m := x.(map[string]any); m["id"] == id && m["instructions"] != "first wording" {
+			t.Fatalf("revert did not restore the first wording: %v", m)
+		}
+	}
+	if code, _ := r.personaPost(map[string]any{"action": "save", "name": "Bad", "instructions": "x", "scopes": []string{"nope"}}); code != 400 {
+		t.Fatalf("an unknown tool area was accepted: %d", code)
+	}
+}
+
+func TestAnAgentsTrackRecordComesFromItsBoardCards(t *testing.T) {
+	r := personaRig(t)
+	if code, _ := r.personaPost(map[string]any{"action": "save", "name": "Inbox", "instructions": "x"}); code != 200 {
+		t.Fatalf("%d", code)
+	}
+	cards := &kanban.Store{Path: filepath.Join(t.TempDir(), "sessions.db")}
+	r.srv.Cards = cards
+	for _, c := range []kanban.Card{
+		{Title: "sort mail", Column: kanban.Done, Agent: "Inbox"},
+		{Title: "draft reply", Column: kanban.Review, Agent: "Inbox"},
+		{Title: "someone else's", Column: kanban.Done, Agent: "Other"},
+	} {
+		if _, err := cards.Add("web", 1, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	broken, err := cards.Add("web", 1, kanban.Card{Title: "broken one", Column: kanban.Ready, Agent: "Inbox"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := cards.Claim(broken.ID); err != nil || !ok {
+		t.Fatalf("claim: %v %v", ok, err)
+	}
+	if err := cards.Settle(broken.ID, kanban.StatusFailed, "it broke"); err != nil {
+		t.Fatal(err)
+	}
+	resp, raw := r.do("GET", "/api/personas", nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, raw)
+	}
+	var out struct {
+		Agents []PersonaInfo `json:"agents"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil || len(out.Agents) != 1 {
+		t.Fatalf("%v %s", err, raw)
+	}
+	tr := out.Agents[0].Track
+	if tr == nil || tr.Done != 1 || tr.Waiting != 1 || tr.Failed != 1 || tr.Running != 0 {
+		t.Fatalf("track: %+v", tr)
 	}
 }
 

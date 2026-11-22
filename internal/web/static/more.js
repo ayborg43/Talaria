@@ -1511,25 +1511,39 @@ function openRoutine(id) {
 // ---------- named agents ----------
 // An agent is a conversation with its own name, instructions and, if you like, its own model, and a switch that lets it
 // look and not touch. It is the same Talaria with those added: it can never do more than you have allowed.
-const AG = { available: false, agents: [], profiles: [], default_profile: '', colors: [], max: 8 };
+const AG = { available: false, agents: [], profiles: [], default_profile: '', colors: [], scope_groups: [] };
 async function loadPersonas() {
   AG.loaded = true;
-  try { const d = await api('/api/personas'); Object.assign(AG, { available: !!d.available, agents: d.agents || [], profiles: d.profiles || [], default_profile: d.default_profile || '', colors: d.colors || CHAN_COLORS, max: d.max || 8 }); }
+  try { const d = await api('/api/personas'); Object.assign(AG, { available: !!d.available, agents: d.agents || [], profiles: d.profiles || [], default_profile: d.default_profile || '', colors: d.colors || CHAN_COLORS, scope_groups: d.scope_groups || [] }); }
   catch (e) { if (e instanceof AuthError) return; }
+}
+function agentTrackLine(a) {
+  const t = a.track; if (!t) return '';
+  const parts = [];
+  if (t.running) parts.push(t.running + ' running');
+  if (t.done) parts.push(t.done + ' done');
+  if (t.waiting) parts.push(t.waiting + ' to review');
+  if (t.failed) parts.push(t.failed + ' failed');
+  if (t.last_what) parts.push('last: ' + t.last_what);
+  if (t.tokens) parts.push(Math.round(t.tokens / 100) / 10 + 'k tokens (30d)');
+  if (t.eval) parts.push('tests: ' + t.eval);
+  return parts.join(' · ');
 }
 function agentsCard() {
   if (!AG.available) return null;
-  const card = h('div', { class: 'card' }, h('h2', null, 'Your agents', h('small', { text: AG.agents.length ? AG.agents.length + ' of ' + AG.max : '' })));
+  const card = h('div', { class: 'card' }, h('h2', null, 'Your agents', h('small', { text: AG.agents.length ? String(AG.agents.length) : '' })));
   if (!AG.agents.length) card.append(h('div', { class: 'field-note', text: 'Give a job its own agent: a name, what it is for, how it should behave, and optionally its own model. For example “Inbox”, which only reads and sorts your mail. Each keeps its own conversation.' }));
   const rows = h('div', { class: 'rows' });
   for (const a of AG.agents) {
     rows.append(h('div', { class: 'row' }, h('span', { class: 'chan-ico chan ' + a.color, text: a.icon || a.name.slice(0, 1).toUpperCase() }),
-      h('span', { class: 'grow' }, h('span', { class: 't', text: a.name + (a.active ? ' · open now' : '') }), h('span', { class: 's', text: [a.read_only ? 'Looks only' : 'Can act as you allow', a.profile ? 'Model ' + a.profile : ''].filter(Boolean).join(' · ') })),
+      h('span', { class: 'grow' }, h('span', { class: 't', text: a.name + (a.active ? ' · open now' : '') }), h('span', { class: 's', text: [a.description || '', a.read_only ? 'Looks only' : 'Can act as you allow', a.scopes && a.scopes.length ? 'Tools: ' + a.scopes.join(', ') : '', a.profile ? 'Model ' + a.profile : ''].filter(Boolean).join(' · ') }), h('span', { class: 's', text: agentTrackLine(a) })),
       h('span', { class: 'acts keep' }, h('button', { class: 'btn small primary', type: 'button', text: 'Chat', onclick: () => chatWithAgent(a) }), h('button', { class: 'btn small', type: 'button', text: 'Edit', onclick: () => openAgentForm(a) }),
+        h('button', { class: 'btn small', type: 'button', text: 'Copy', title: 'Make a copy to try a variant', onclick: async () => { try { const d = await api('/api/personas', { method: 'POST', body: { action: 'duplicate', id: a.id } }); AG.agents = d.agents || []; toast('Copied as “' + d.saved + '”.'); if (S.tab === 'agents') renderAgentsPage(); } catch (e) { failed(e); } } }),
+        a.can_revert ? h('button', { class: 'btn small', type: 'button', text: 'Revert wording', title: 'Go back to the instructions before the last edit', onclick: async () => { if (!confirm('Go back to the earlier instructions for “' + a.name + '”? Reverting again puts these back.')) return; try { const d = await api('/api/personas', { method: 'POST', body: { action: 'revert', id: a.id } }); AG.agents = d.agents || []; toast('Reverted.'); if (S.tab === 'agents') renderAgentsPage(); } catch (e) { failed(e); } } }) : null,
         h('a', { class: 'btn small', href: '/api/agent-file?id=' + encodeURIComponent(a.id), download: '', title: 'Save this agent as a file to send to someone (its model and everything else stays here)', text: 'Share' }))));
   }
   if (AG.agents.length) card.append(rows);
-  if (AG.agents.length < AG.max) card.append(h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'button', text: 'New agent', onclick: () => openAgentForm(null) }), h('button', { class: 'btn', type: 'button', text: 'Import an agent', onclick: openAgentImport })));
+  card.append(h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'button', text: 'New agent', onclick: () => openAgentForm(null) }), h('button', { class: 'btn', type: 'button', text: 'Import an agent', onclick: openAgentImport })));
   return card;
 }
 // An agent someone sent as a file. It is read and shown first, in full: its instructions steer the agent in every
@@ -1617,16 +1631,18 @@ function openAgentForm(a) {
   let color = a ? a.color : 'brass';
   const name = h('input', { type: 'text', maxlength: '30', placeholder: 'Inbox', autocomplete: 'off' });
   const iconIn = h('input', { type: 'text', maxlength: '8', placeholder: '📥', autocomplete: 'off' });
+  const desc = h('input', { type: 'text', maxlength: '120', placeholder: 'Choose me for… e.g. sorting mail and drafting replies', autocomplete: 'off' });
   const how = h('textarea', { maxlength: '1500', placeholder: 'For example: You look after my inbox. Sort what needs me from what can wait, draft replies but never send them, and keep answers to a few lines.' });
   const model = h('select', { class: 'rule-select', 'aria-label': 'Model' }, h('option', { value: '', text: 'Same as the chat' }), AG.profiles.map((p) => h('option', { value: p, text: p + (p === AG.default_profile ? ' (default)' : '') })));
   const look = h('input', { type: 'checkbox' });
-  if (a) { name.value = a.name; iconIn.value = a.icon || ''; how.value = a.instructions; model.value = a.profile || ''; look.checked = !!a.read_only; }
+  const scopeBoxes = (AG.scope_groups || []).map((g) => { const c = h('input', { type: 'checkbox', value: g }); return { g, c, label: h('label', { class: 'check' }, c, ' ' + g) }; });
+  if (a) { name.value = a.name; iconIn.value = a.icon || ''; desc.value = a.description || ''; how.value = a.instructions; model.value = a.profile || ''; look.checked = !!a.read_only; for (const s of scopeBoxes) s.c.checked = !!(a.scopes || []).includes(s.g); }
   const sw = h('div', { class: 'swatches' }, (AG.colors.length ? AG.colors : CHAN_COLORS).map((c) => h('button', { type: 'button', class: 'chan ' + c, 'aria-label': c, 'aria-pressed': c === color ? 'true' : 'false', onclick: () => { color = c; for (const b of sw.children) b.setAttribute('aria-pressed', b.classList.contains(c) ? 'true' : 'false'); } })));
   const save = h('button', { class: 'btn primary', type: 'button', text: a ? 'Save changes' : 'Create agent' });
   save.addEventListener('click', async () => {
     save.disabled = true;
     try {
-      const d = await api('/api/personas', { method: 'POST', body: { action: 'save', id: a ? a.id : '', name: name.value, icon: iconIn.value, color, instructions: how.value, profile: model.value, read_only: look.checked } });
+      const d = await api('/api/personas', { method: 'POST', body: { action: 'save', id: a ? a.id : '', name: name.value, icon: iconIn.value, color, description: desc.value, instructions: how.value, profile: model.value, read_only: look.checked, scopes: scopeBoxes.filter((s) => s.c.checked).map((s) => s.g) } });
       Object.assign(AG, { agents: d.agents || [] }); toast('Saved “' + d.saved + '”.'); closePanel(); if (S.tab === 'agents') renderAgentsPage();
     } catch (e) { failed(e); save.disabled = false; }
   });
@@ -1642,8 +1658,10 @@ function openAgentForm(a) {
     h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Name' }), name),
     h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Icon (an emoji or a couple of letters)' }), iconIn),
     h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Colour' }), sw),
+    h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Choose this agent for (one line, used to pick it)' }), desc),
     h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'What it is for and how it should behave' }), how),
     AG.profiles.length > 1 ? h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Model' }), model) : null,
+    scopeBoxes.length ? h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Tool areas it may use (none ticked = all)' }), h('div', null, scopeBoxes.map((s) => s.label))) : null,
     h('label', { class: 'check' }, look, ' Looks only: it can read and search, and nothing that asks for approval is open to it'),
     h('div', { class: 'field-note', text: 'It follows your instructions inside the same safety rules as the rest of Talaria: it can never do more than you have allowed.' }),
     h('div', { class: 'btn-row' }, acts)));

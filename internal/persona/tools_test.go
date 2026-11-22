@@ -80,13 +80,13 @@ func TestABadSuggestionIsRefusedWithAReason(t *testing.T) {
 	if _, err := tl.Run(context.Background(), json.RawMessage(`{"name":"dup","instructions":"y"}`)); err == nil || !strings.Contains(err.Error(), "already an agent") {
 		t.Errorf("a second agent with the same name: %v", err)
 	}
-	for i := 0; i < MaxAgents; i++ {
-		tl.Run(context.Background(), json.RawMessage(`{"name":"N`+strings.Repeat("a", i)+`","instructions":"x"}`))
+	// There is no cap on how many agents there are: well past the old limit of eight still works.
+	for i := 0; i < 12; i++ {
+		if _, err := tl.Run(context.Background(), json.RawMessage(`{"name":"N`+strings.Repeat("a", i)+`","instructions":"x"}`)); err != nil {
+			t.Fatalf("agent %d: %v", i, err)
+		}
 	}
-	if _, err := tl.Run(context.Background(), json.RawMessage(`{"name":"Overflow","instructions":"x"}`)); err == nil || !strings.Contains(err.Error(), "most is") {
-		t.Errorf("the cap did not hold: %v", err)
-	}
-	if len(store.List()) != MaxAgents {
+	if len(store.List()) != 13 {
 		t.Errorf("%d agents", len(store.List()))
 	}
 }

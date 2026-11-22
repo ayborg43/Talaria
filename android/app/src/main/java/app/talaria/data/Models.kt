@@ -133,16 +133,23 @@ data class RunDetail(
 )
 
 @Serializable
+data class PersonaTrackDto(
+    val done: Int = 0, val failed: Int = 0, val running: Int = 0, val waiting: Int = 0,
+    val last_what: String = "", val tokens: Long = 0, val eval: String = "",
+)
+
+@Serializable
 data class PersonaDto(
     val id: String = "", val name: String = "", val icon: String = "", val color: String = "",
-    val instructions: String = "", val profile: String = "", val read_only: Boolean = false,
+    val description: String = "", val instructions: String = "", val profile: String = "", val read_only: Boolean = false,
+    val scopes: List<String> = emptyList(), val can_revert: Boolean = false, val track: PersonaTrackDto? = null,
 )
 
 @Serializable
 data class PersonasDto(
     val agents: List<PersonaDto> = emptyList(), val available: Boolean = false,
-    val colors: List<String> = emptyList(), val default_profile: String = "", val max: Int = 8,
-    val profiles: List<String> = emptyList(),
+    val colors: List<String> = emptyList(), val default_profile: String = "",
+    val profiles: List<String> = emptyList(), val scope_groups: List<String> = emptyList(),
 )
 
 /** One card on the board: a piece of work, the agent that does it, and what its last run reported. */

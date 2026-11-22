@@ -34,6 +34,12 @@ func Export(a Agent) string {
 		fmt.Fprintf(&b, "icon: %s\n", oneLine(a.Icon))
 	}
 	fmt.Fprintf(&b, "looks-only: %t\n", a.ReadOnly)
+	if a.Description != "" {
+		fmt.Fprintf(&b, "description: %s\n", oneLine(a.Description))
+	}
+	if len(a.Scopes) > 0 {
+		fmt.Fprintf(&b, "scopes: %s\n", strings.Join(a.Scopes, ","))
+	}
 	b.WriteString("---\n\n")
 	b.WriteString(strings.TrimSpace(a.Instructions))
 	b.WriteString("\n")
@@ -83,6 +89,14 @@ func Parse(text string) (Agent, error) {
 			a.Name = v
 		case "icon":
 			a.Icon = v
+		case "description":
+			a.Description = v
+		case "scopes":
+			for _, s := range strings.Split(v, ",") {
+				if s = strings.TrimSpace(s); s != "" {
+					a.Scopes = append(a.Scopes, s)
+				}
+			}
 		case "looks-only":
 			switch strings.ToLower(v) {
 			case "true", "yes":

@@ -187,7 +187,7 @@ func runGateway(c *cli) error {
 	savedPersonas := func() []chat.Persona {
 		var out []chat.Persona
 		for _, a := range agents.List() {
-			out = append(out, chat.Persona{Name: a.Name, System: a.System(), Profile: a.Profile, ReadOnly: a.ReadOnly})
+			out = append(out, chat.Persona{Name: a.Name, System: a.System(), Profile: a.Profile, ReadOnly: a.ReadOnly, AllowTool: a.AllowsTool})
 		}
 		return out
 	}
@@ -665,11 +665,7 @@ func namedAgents(store *persona.Store) func() []subagent.Named {
 	return func() []subagent.Named {
 		var out []subagent.Named
 		for _, a := range store.List() {
-			about := strings.Join(strings.Fields(a.Instructions), " ")
-			if r := []rune(about); len(r) > 100 {
-				about = string(r[:100]) + "…"
-			}
-			out = append(out, subagent.Named{Name: a.Name, About: about, Instructions: a.Instructions, Profile: a.Profile, ReadOnly: a.ReadOnly})
+			out = append(out, subagent.Named{Name: a.Name, About: a.About(), Instructions: a.Instructions, Profile: a.Profile, ReadOnly: a.ReadOnly, Scopes: a.Scopes})
 		}
 		return out
 	}

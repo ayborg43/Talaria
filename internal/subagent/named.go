@@ -14,6 +14,7 @@ type Named struct {
 	Instructions string
 	Profile      string // its model profile; empty is the main agent's own
 	ReadOnly     bool   // it may only look: nothing that needs approval is open to it
+	Scopes       []string
 }
 
 func (p *Pool) namedAgents() []Named {

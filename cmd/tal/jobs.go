@@ -153,6 +153,9 @@ func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
 	if named != nil && named.ReadOnly {
 		a.ReadOnly = true // a look-only agent gets nothing that needs approval, whatever the card allowed
 	}
+	if named != nil && len(named.Scopes) > 0 {
+		a.ToolAllowed = named.AllowsTool
+	}
 	if r.sink != nil {
 		id := activity.ID(ctx)
 		a.OnToolStart = func(name, _ string) { activity.Note(r.sink, id, name) }
