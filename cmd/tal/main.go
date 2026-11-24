@@ -116,6 +116,7 @@ type command struct {
 // commands is every subcommand, in the order the unknown-command error lists
 // them. The empty name is the default: bare `tal` starts the interactive chat.
 var commands = []command{
+	{name: "selftest", hint: "selftest", needsConfig: true, run: (*cli).runSelftestCmd},
 	{name: "run", hint: "run PROMPT", needsConfig: true, needsModel: true, run: (*cli).runRunCmd},
 	{name: "gateway", hint: "gateway", needsConfig: true, needsModel: true, run: (*cli).runGatewayCmd},
 	{name: "cron", hint: "cron list", needsConfig: true, run: (*cli).runCronCmd},

@@ -41,7 +41,7 @@ func TestCommandTable(t *testing.T) {
 		}
 	}
 	// The unknown-command error lists every command from the table itself.
-	want := "tal run PROMPT, tal gateway, tal cron list, tal mcp list, tal env, tal log, tal policy, " +
+	want := "tal selftest, tal run PROMPT, tal gateway, tal cron list, tal mcp list, tal env, tal log, tal policy, " +
 		"tal workspace, tal vault, tal connect, tal digest [hours], tal export, tal usage [days], tal backup, tal restore, tal doctor, " +
 		"tal calendar, tal email, tal version, tal config"
 	if got := commandHints(); got != want {

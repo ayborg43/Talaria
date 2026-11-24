@@ -15,6 +15,12 @@ export OPENAI_API_KEY=sk-...         # or ANTHROPIC_API_KEY with -profile (see b
 
 `write_file` and `shell` ask for confirmation before running. Pass `-yolo` to skip that. `./tal doctor` checks your setup for the mistakes that matter, and `./tal version` says which build you have. To run it on a server, see Deploying below.
 
+**Will a real chat work?** `./tal selftest` finds out before a chat does. It starts Talaria the way the gateway does, builds the agent a web chat gets, and checks every tool it offers is something a model API accepts
+(plain names of at most 64 characters, none repeated, each schema valid JSON of type object). Then, for each profile (or the one you name with `-profile`), it sends one small real request to that profile's own model with all
+those tools attached, and asks it to call a tool and carry on. It reports `ok`, `warn` (worth knowing: the service reports no token counts so cost is estimated, the model answered without using a tool), `skip` (a profile with no key,
+left out by the gateway too) or `FAIL`, with the reason in plain words (the key was refused, the service does not have this model, it rejects the token-count option, a tool whose schema is broken). It exits 1 if anything failed, so
+a script or a deploy can gate on it; `--json` prints the report and `--quick` leaves out the tool-call round trip. It costs a few small requests, counted in the usage ledger as "selftest". Run it after changing a model, a key, an MCP server or after an upgrade.
+
 ## Models and profiles
 
 Four provider types (and presets for many services, which are OpenAI-compatible and use `openai` with their own address):
@@ -1755,7 +1761,7 @@ and how it ended.
 
 | Path | Role |
 |---|---|
-| `cmd/tal` | CLI entrypoint (`tal`, `tal -p`, `tal gateway`, `tal cron list`, `tal log`, `tal policy`, `tal workspace`, `tal vault`, `tal connect`, `tal calendar`, `tal email`, `tal backup`, `tal restore`, `tal run`, `tal mcp serve`, `tal usage`, `tal digest`, `tal export`, `tal doctor`, `tal version`, `tal config`, `tal mcp list`, `tal env`) |
+| `cmd/tal` | CLI entrypoint (`tal`, `tal -p`, `tal gateway`, `tal cron list`, `tal log`, `tal policy`, `tal workspace`, `tal vault`, `tal connect`, `tal calendar`, `tal email`, `tal backup`, `tal restore`, `tal run`, `tal selftest`, `tal mcp serve`, `tal usage`, `tal digest`, `tal export`, `tal doctor`, `tal version`, `tal config`, `tal mcp list`, `tal env`) |
 | `internal/app` | builds agents (tools, prompt, history) for the CLI and gateways |
 | `internal/cron` | schedule parser, job store, scheduler, `cron_*` tools |
 | `internal/execenv` | where the shell and file tools run: this machine, a Docker container, or an SSH host; also starts long-running processes there |
