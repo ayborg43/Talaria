@@ -238,3 +238,14 @@ func containsFold(list []string, s string) bool {
 	}
 	return false
 }
+
+// safePath is a request path as it may be written to a log: a webhook's secret, when it is in the address, is left out.
+func safePath(p string) string {
+	if rest, ok := strings.CutPrefix(p, "/hooks/"); ok {
+		id, _, hasSecret := strings.Cut(rest, "/")
+		if hasSecret {
+			return "/hooks/" + id + "/[secret]"
+		}
+	}
+	return p
+}

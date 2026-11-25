@@ -99,7 +99,9 @@ func (s *Store) RetryTask(id, gateway string, chatID int64, running map[string]b
 	}
 	old := all[at].Job
 	j, err := s.AddTask(Job{Name: old.Name, Kind: KindTask, Prompt: old.Prompt, Gateway: gateway, ChatID: chatID,
-		AllowRisky: old.AllowRisky, Profile: old.Profile, Environment: old.Environment, TimeoutSec: old.TimeoutSec}, running, max)
+		AllowRisky: old.AllowRisky, Profile: old.Profile, Environment: old.Environment, TimeoutSec: old.TimeoutSec,
+		// What made it what it was: running it again must not lose that it carries outside text, or which agent's limits apply.
+		Untrusted: old.Untrusted, Agent: old.Agent, Routine: old.Routine}, running, max)
 	if err != nil {
 		return Job{}, err
 	}
@@ -152,11 +154,12 @@ func StartChatTask(s *Store, ctl Control, gateway string, chatID int64, name, pr
 
 // StartFollowUp starts a background task that carries on from an earlier run, because the user wrote to it. It is
 // the same kind of task the model can start in chat, with risky tools off, within the same limit on how many may run.
-func StartFollowUp(s *Store, ctl Control, gateway string, chatID int64, name, prompt, parent string) (Job, error) {
+func StartFollowUp(s *Store, ctl Control, gateway string, chatID int64, name, prompt, parent string, untrusted bool, agent string) (Job, error) {
 	if gateway == "" {
 		gateway = DefaultGateway
 	}
-	j, err := s.AddTask(Job{Name: name, Kind: KindTask, Prompt: prompt, Gateway: gateway, ChatID: chatID, Parent: parent, TimeoutSec: defaultTaskMinutes * 60},
+	j, err := s.AddTask(Job{Name: name, Kind: KindTask, Prompt: prompt, Gateway: gateway, ChatID: chatID, Parent: parent, TimeoutSec: defaultTaskMinutes * 60,
+		Untrusted: untrusted, Agent: agent}, // a follow-up of a run that carried outside text carries it too
 		runningTasks(ctl, gateway, chatID), maxTasksPerChat)
 	if err != nil {
 		return Job{}, err

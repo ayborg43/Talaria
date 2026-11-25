@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // Limits.
@@ -99,8 +100,25 @@ func (a Agent) AllowsTool(name string) bool {
 	return g == "" || slices.Contains(a.Scopes, g)
 }
 
+// invisible says a rune draws nothing and so can hide text from the person reading it: zero-width and bidirectional
+// controls, and the "tag" block that can spell out a whole hidden message. The joiner that builds emoji sequences stays,
+// since an icon needs it.
+func invisible(r rune) bool {
+	return unicode.Is(unicode.Cf, r) && r != 0x200D
+}
+
+// stripInvisible removes what invisible finds.
+func stripInvisible(s string) string {
+	return strings.Map(func(r rune) rune {
+		if invisible(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 func line(s string, n int) string {
-	s = strings.Join(strings.Fields(s), " ")
+	s = strings.Join(strings.Fields(stripInvisible(s)), " ")
 	if r := []rune(s); len(r) > n {
 		return string(r[:n])
 	}
@@ -124,7 +142,7 @@ func Check(a Agent) (Agent, error) {
 	}
 	a.Scopes = scopes
 	a.Instructions = strings.TrimSpace(strings.Map(func(r rune) rune {
-		if r < ' ' && r != '\n' && r != '\t' {
+		if r < ' ' && r != '\n' && r != '\t' || unicode.Is(unicode.Cf, r) { // no hidden text in what steers the agent
 			return -1
 		}
 		return r

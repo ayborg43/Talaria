@@ -553,7 +553,7 @@ func (a *Agent) executeAs(ctx context.Context, call provider.ToolCall, approved 
 			}
 			if a.RefuseRisky && risk != 0 {
 				metrics.Inc("talaria_approvals_total", "decision", "denied")
-				return execResult{text: "error: this would delete or post something, which this run may not do"}
+				return execResult{text: "error: this needs the user's approval (" + strings.TrimSpace(risk.Note()) + "), which this run may not do: nobody is there to give it"}
 			}
 			if a.Approve == nil || !a.Approve(name, shown) {
 				metrics.Inc("talaria_approvals_total", "decision", "denied")

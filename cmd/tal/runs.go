@@ -39,7 +39,7 @@ func webRunHooks(rt *app.Runtime, runs *runlog.Log, jobs *cron.Store, sched func
 			if s := sched(); s != nil {
 				ctl = s
 			}
-			j, err := cron.StartFollowUp(jobs, ctl, "web", web.ChatID, tidy("Follow-up: "+run.Name, 60, "Follow-up"), b.String(), run.ID)
+			j, err := cron.StartFollowUp(jobs, ctl, "web", web.ChatID, tidy("Follow-up: "+run.Name, 60, "Follow-up"), b.String(), run.ID, run.Untrusted, run.Agent)
 			if err != nil {
 				return "", err
 			}

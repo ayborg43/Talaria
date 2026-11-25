@@ -53,6 +53,7 @@ func RegisterTools(r *tool.Registry, s *Store) {
 			"body":{"type":"string"}},
 			"required":["name","description","body"]}`),
 		NeedsApproval: true,
+		Egress:        tool.Always, // a saved skill steers every later chat, so it asks even after outside content has been read
 		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var a struct{ Name, Description, Body string }
 			if err := json.Unmarshal(raw, &a); err != nil {

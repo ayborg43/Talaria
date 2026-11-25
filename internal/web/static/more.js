@@ -1093,12 +1093,12 @@ function backupCard() {
     const upload = h('button', { class: 'btn', type: 'button', text: 'Restore from this file', onclick: async () => {
       const f = pick.files && pick.files[0];
       if (!f) { toast('Choose a backup file first.'); return; }
-      if (!confirm('This server will switch to the state in this backup the next time it starts. What it holds now is kept aside, not deleted. Go on?')) return;
+      if (!confirm('This server will switch to the state in this backup the next time it starts. What it holds now is kept aside, not deleted.\n\nA backup carries settings, including programs Talaria starts and what it may do without asking: restore only one you made yourself. Go on?')) return;
       try { await api('/api/restore', { method: 'POST', raw: true, body: f }); toast('The backup is checked and waiting. Restart Talaria to put it in place.'); } catch (e) { failed(e); }
       load();
     } });
     const waiting = r.pending
-      ? h('div', { class: 'note', role: 'status' }, 'A backup is waiting' + (r.created ? ' (made ' + fmtWhen(new Date(r.created)) + ')' : '') + '. Restart Talaria to put it in place: until then nothing has changed. ',
+      ? h('div', { class: 'note', role: 'status' }, (r.notes && r.notes.length ? h('div', null, h('b', { text: 'Read this first: ' }), 'its settings change more than data. ' + r.notes.join('; ') + '.') : null), 'A backup is waiting' + (r.created ? ' (made ' + fmtWhen(new Date(r.created)) + ')' : '') + '. Restart Talaria to put it in place: until then nothing has changed. ',
         h('button', { class: 'btn small', type: 'button', text: 'Cancel it', onclick: async () => { try { await api('/api/restore?cancel=1', { method: 'POST' }); } catch (e) { failed(e); } load(); } }))
       : null;
     fill(body, 

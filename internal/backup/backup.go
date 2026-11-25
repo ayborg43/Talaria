@@ -20,17 +20,25 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
 	"talaria/internal/memory"
 )
 
+// maxEntries bounds how many files and folders an archive may hold: millions of empty entries cost almost nothing to
+// upload and exhaust a disk's inodes and the time a restore takes. A real state folder holds a few hundred. A variable
+// only so a test need not write a hundred thousand.
+var maxEntries = 100000
+
 const (
 	manifestName = "BACKUP.json"
 	historyName  = "sessions.db"
 	// maxRestoreBytes bounds what a restore will write, so a hostile or broken archive cannot fill the disk.
 	maxRestoreBytes = 8 << 30
+	// SessionsName is the file of signed-in browsers. It is never put in a backup and never taken out of one.
+	SessionsName = "web_sessions.json"
 )
 
 // Manifest describes an archive.
@@ -60,6 +68,8 @@ func skipped(rel string) bool {
 		return true
 	case rel == "files" || strings.HasPrefix(rel, "files/"):
 		return true // expiring downloads are cache, not state
+	case rel == SessionsName:
+		return true // who is signed in belongs to this server: a restore must not carry sign-ins in, or out
 	case rel == PendingName || strings.HasPrefix(rel, ".before-restore-") || strings.HasPrefix(rel, ".restore-staging"):
 		return true // a restore's own working files: archiving them would bury the last backup inside the next
 	case strings.HasSuffix(rel, ".tmp"), strings.HasSuffix(rel, ".lock"), strings.HasSuffix(rel, "-wal"), strings.HasSuffix(rel, "-shm"), strings.HasSuffix(rel, "-journal"):
@@ -102,7 +112,10 @@ func Create(home string, w io.Writer, o Options) (Report, error) {
 		if err := tw.WriteHeader(&tar.Header{Name: rel, Mode: int64(mode.Perm()), Size: size, ModTime: now(), Typeflag: tar.TypeReg}); err != nil {
 			return err
 		}
-		n, err := io.Copy(tw, f)
+		n, err := io.Copy(tw, io.LimitReader(f, size)) // a file that grows while it is read (the log) is cut at the size in its header
+		if err == nil && n < size {
+			err = fmt.Errorf("%s shrank while it was being saved", rel)
+		}
 		rep.Bytes += n
 		rep.Files++
 		names = append(names, rel)
@@ -256,6 +269,7 @@ func Verify(archive io.Reader) (files int, created time.Time, err error) {
 	tr := tar.NewReader(gz)
 	var total int64
 	saw := false
+	entries := 0
 	for {
 		h, err := tr.Next()
 		if err == io.EOF {
@@ -263,6 +277,9 @@ func Verify(archive io.Reader) (files int, created time.Time, err error) {
 		}
 		if err != nil {
 			return 0, time.Time{}, fmt.Errorf("reading the archive: %w", err)
+		}
+		if entries++; entries > maxEntries {
+			return 0, time.Time{}, fmt.Errorf("the archive holds more than %d entries: a Talaria backup does not", maxEntries)
 		}
 		name := strings.TrimSuffix(h.Name, "/")
 		if name == manifestName {
@@ -368,6 +385,7 @@ func unpack(archive io.Reader, dir string) (files int, err error) {
 	tr := tar.NewReader(gz)
 	var total int64
 	sawManifest := false
+	entries := 0
 	for {
 		h, err := tr.Next()
 		if err == io.EOF {
@@ -376,6 +394,9 @@ func unpack(archive io.Reader, dir string) (files int, err error) {
 		if err != nil {
 			return 0, fmt.Errorf("reading the archive: %w", err)
 		}
+		if entries++; entries > maxEntries {
+			return 0, fmt.Errorf("the archive holds more than %d entries: a Talaria backup does not", maxEntries)
+		}
 		name := strings.TrimSuffix(h.Name, "/")
 		if name == manifestName {
 			sawManifest = true
@@ -383,6 +404,9 @@ func unpack(archive io.Reader, dir string) (files int, err error) {
 		}
 		if err := checkName(name); err != nil {
 			return 0, err
+		}
+		if name == SessionsName { // never taken in: a restored file of sign-ins would let whoever made the archive in
+			continue
 		}
 		dst := filepath.Join(staging, filepath.FromSlash(name))
 		switch h.Typeflag {
@@ -417,4 +441,65 @@ func unpack(archive io.Reader, dir string) (files int, err error) {
 		return 0, errors.New("this is not a Talaria backup (no " + manifestName + ")")
 	}
 	return files, nil
+}
+
+// ConfigNotes reads the config.json inside an archive, without unpacking anything, and says in plain words what it would
+// change that is more than data: programs it starts, permission rules it sets, machines it reaches. Restoring someone
+// else's backup is running their settings, so this is what the person should read first. Nil for an archive with none.
+func ConfigNotes(archive io.Reader) []string {
+	gz, err := gzip.NewReader(archive)
+	if err != nil {
+		return nil
+	}
+	tr := tar.NewReader(gz)
+	for i := 0; i < maxEntries; i++ {
+		h, err := tr.Next()
+		if err != nil {
+			return nil
+		}
+		if strings.TrimSuffix(h.Name, "/") != "config.json" || h.Typeflag != tar.TypeReg {
+			continue
+		}
+		raw, err := io.ReadAll(io.LimitReader(tr, 1<<20))
+		if err != nil {
+			return nil
+		}
+		return ConfigNotesOf(raw)
+	}
+	return nil
+}
+
+// ConfigNotesOf is ConfigNotes for the text of a config.json.
+func ConfigNotesOf(raw []byte) []string {
+	var cfg struct {
+		MCPServers   map[string]struct{ Command string } `json:"mcp_servers"`
+		Policy       json.RawMessage                     `json:"policy"`
+		Environments map[string]json.RawMessage          `json:"environments"`
+	}
+	if json.Unmarshal(raw, &cfg) != nil {
+		return nil
+	}
+	var notes []string
+	for name, srv := range cfg.MCPServers {
+		if srv.Command != "" {
+			notes = append(notes, fmt.Sprintf("it starts a program for the connected service %q: %s", name, clipNote(srv.Command)))
+		}
+	}
+	if len(cfg.Policy) > 0 && string(cfg.Policy) != "null" && string(cfg.Policy) != "{}" {
+		notes = append(notes, "it sets permission rules (what Talaria may do without asking)")
+	}
+	for name := range cfg.Environments {
+		if name != "workspace" {
+			notes = append(notes, fmt.Sprintf("it names a place commands run: %q", name))
+		}
+	}
+	sort.Strings(notes)
+	return notes
+}
+
+func clipNote(s string) string {
+	if r := []rune(s); len(r) > 80 {
+		return string(r[:80]) + "…"
+	}
+	return s
 }

@@ -124,6 +124,9 @@ func registerWhileAwayTool(r *tool.Registry, digest func(span time.Duration) str
 			"Use it when the owner asks what happened while they were away, what you have been up to, or what is waiting. hours defaults to 24.",
 		Schema:   json.RawMessage(`{"type":"object","properties":{"hours":{"type":"integer","minimum":1,"maximum":720}}}`),
 		Parallel: true,
+		// It repeats what finished tasks and watches reported, and some of that was read from outside (a webhook's payload, a
+		// page): it must not wash it back into a conversation as if the user had written it.
+		Untrusted: true,
 		Run: func(_ context.Context, args json.RawMessage) (string, error) {
 			var a struct{ Hours int }
 			json.Unmarshal(args, &a)

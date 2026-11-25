@@ -65,7 +65,7 @@ func (c *cli) mcpTools() []mcpserve.Tool {
 				if err := json.Unmarshal(raw, &a); err != nil {
 					return "", fmt.Errorf("the arguments were not understood")
 				}
-				res := c.runOnce(ctx, runRequest{Prompt: a.Prompt, Agent: a.Agent})
+				res := c.runOnce(ctx, runRequest{Prompt: a.Prompt, Agent: a.Agent, Untrusted: true}) // the client may have been steered by what it read
 				if !res.OK {
 					return "", fmt.Errorf("it could not finish: %s", res.Error)
 				}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -82,6 +83,13 @@ func RegisterBuiltinsIn(r *Registry, env execenv.Env) {
 		Description:   "Write content to a file, creating parent directories and overwriting any existing file." + where,
 		Schema:        json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}`),
 		NeedsApproval: true,
+		// After outside content has been read, a write that would run later by itself (a dotfile, a login item, a cron entry, a
+		// git hook) asks, whatever the permission mode: it is how something a page said could outlive the conversation.
+		Egress: func(raw json.RawMessage) bool {
+			var a struct{ Path string }
+			json.Unmarshal(raw, &a)
+			return PersistencePath(a.Path)
+		},
 		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var a struct{ Path, Content string }
 			if err := json.Unmarshal(raw, &a); err != nil {
@@ -138,3 +146,24 @@ func always(json.RawMessage) bool { return true }
 
 // Always is the same, for tools in other packages.
 var Always = always
+
+// persistenceDirs are directories whose contents run by themselves: login items, services, scheduled jobs, hooks.
+var persistenceDirs = []string{"launchagents", "launchdaemons", "systemd", "cron", "cron.d", "cron.daily", "cron.hourly", "autostart", "hooks", "startupitems", "init.d", "profile.d", "sudoers.d"}
+
+// PersistencePath says whether writing here could make something run later on its own: a dotfile or a dot-folder
+// (shell startup files, ssh keys, editor and tool settings, CI workflows), or a folder that runs what is put in it.
+// It judges the name only; it is a net, not a wall.
+func PersistencePath(p string) bool {
+	p = strings.ReplaceAll(strings.TrimSpace(p), "\\", "/")
+	for _, part := range strings.Split(p, "/") {
+		low := strings.ToLower(part)
+		switch {
+		case low == "" || low == "." || low == "..":
+		case strings.HasPrefix(low, ".") && low != ".gitignore" && low != ".gitattributes" && low != ".editorconfig" && low != ".dockerignore":
+			return true
+		case slices.Contains(persistenceDirs, low):
+			return true
+		}
+	}
+	return false
+}

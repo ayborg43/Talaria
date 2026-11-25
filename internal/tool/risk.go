@@ -19,6 +19,11 @@ const (
 	// RiskSaves: the call sets up a standing helper that stays after the conversation: a saved agent. The user decides
 	// who joins their team, so it asks even when only deleting and posting ask.
 	RiskSaves
+	// RiskSends: the call sends a message to someone else, as the user: an email or a reply. It asks even where only
+	// deleting and posting ask, since a message that has gone cannot be called back.
+	RiskSends
+	// RiskActs: the call does something on the user's own phone: sets an alarm, opens an app with something filled in.
+	RiskActs
 )
 
 // Note says what a risk is, for the person being asked.
@@ -26,6 +31,10 @@ func (r Risk) Note() string {
 	switch {
 	case r&RiskSaves != 0:
 		return "This saves a new agent that stays after this conversation."
+	case r&RiskSends != 0:
+		return "This sends a message to someone else, as you."
+	case r&RiskActs != 0:
+		return "This does something on your phone."
 	case r&RiskDeletes != 0 && r&RiskPosts != 0:
 		return "This deletes something and posts in public."
 	case r&RiskDeletes != 0:

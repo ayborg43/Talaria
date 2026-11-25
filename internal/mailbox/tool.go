@@ -359,6 +359,7 @@ func RegisterSendTools(r *tool.Registry, s *Service, resolve FileResolver) {
 		Description:   "Send a new mail from the user's mailbox. Asks first, showing the full recipients, subject and body: check them with the user before it goes. Give to (addresses, comma-separated), subject, body, optional cc and attachment_ids (ids of kept files, from files_list). A copy is filed in Sent.",
 		Schema:        json.RawMessage(`{"type":"object","properties":{"to":{"type":"string"},"cc":{"type":"string"},"subject":{"type":"string"},"body":{"type":"string"},"attachment_ids":{"type":"array","items":{"type":"string"}}},"required":["to","subject","body"]}`),
 		NeedsApproval: true,
+		Risk:          tool.RiskSends, // asks even where only deleting and posting do: a sent message cannot be called back
 		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var a struct {
 				To, Cc, Subject, Body string
@@ -379,6 +380,7 @@ func RegisterSendTools(r *tool.Registry, s *Service, resolve FileResolver) {
 		Description:   "Reply to a message by the id email_list gave, in its folder. Asks first, showing the full reply. The reply is threaded (In-Reply-To and References set, Re: subject) and goes to the sender. Give body, optional attachment_ids.",
 		Schema:        json.RawMessage(`{"type":"object","properties":{"id":{"type":"integer"},"folder":{"type":"string"},"body":{"type":"string"},"attachment_ids":{"type":"array","items":{"type":"string"}}},"required":["id","body"]}`),
 		NeedsApproval: true,
+		Risk:          tool.RiskSends, // asks even where only deleting and posting do: a sent message cannot be called back
 		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var a struct {
 				ID            int64

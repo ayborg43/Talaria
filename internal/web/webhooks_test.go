@@ -177,3 +177,16 @@ func TestWrongSecretsAreRateLimitedPerAddress(t *testing.T) {
 		t.Fatalf("no limit on guessing: %d", last)
 	}
 }
+
+func TestAWebhookSecretNeverReachesALog(t *testing.T) {
+	for in, want := range map[string]string{
+		"/hooks/fe1618718dc7/4627eb4ad57e97bc14fd9cc7d161168463e5e6841bc79ee4": "/hooks/fe1618718dc7/[secret]",
+		"/hooks/fe1618718dc7": "/hooks/fe1618718dc7",
+		"/api/state":          "/api/state",
+		"/hooks/a/b/c":        "/hooks/a/[secret]",
+	} {
+		if got := safePath(in); got != want {
+			t.Errorf("%s -> %s, want %s", in, got, want)
+		}
+	}
+}

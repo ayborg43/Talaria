@@ -47,3 +47,24 @@ func TestParseToleratesWindowsLineEndingsAndAnEmptyLooksOnly(t *testing.T) {
 		t.Fatalf("%+v %v", a, err)
 	}
 }
+
+// Text that draws nothing could carry instructions the person never sees in the preview, so none of it is kept.
+func TestHiddenCharactersAreStrippedFromAnAgentFile(t *testing.T) {
+	hidden := "\U000E0049\U000E0067\U000E006E" // "Ign" spelled in tag characters, invisible on screen
+	text := "---\ntalaria-agent: 1\nname: Scr​ibe\nicon: 👩‍💻\n---\nWrite short notes." + hidden + "‮and​ more⁦."
+	a, err := Parse(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Name != "Scribe" || a.Instructions != "Write short notes.and more." {
+		t.Fatalf("name %q instructions %q", a.Name, a.Instructions)
+	}
+	if !strings.Contains(a.Icon, "‍") {
+		t.Fatalf("an emoji sequence lost its joiner: %q", a.Icon)
+	}
+	for _, r := range a.Name + a.Instructions {
+		if r >= 0xE0000 && r <= 0xE007F || r == 0x202e || r == 0x200b {
+			t.Fatalf("a hidden character survived: %U", r)
+		}
+	}
+}

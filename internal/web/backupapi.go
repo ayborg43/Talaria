@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"talaria/internal/backup"
@@ -56,12 +57,33 @@ type restoreView struct {
 	Pending   bool      `json:"pending"`
 	Created   time.Time `json:"created,omitzero"`
 	Files     int       `json:"files,omitempty"`
+	// Notes says what the waiting backup's settings would change that is more than data: programs it starts, rules it sets.
+	Notes []string `json:"notes,omitempty"`
+}
+
+// restoreCache remembers what the waiting backup was found to hold, by size and time, so looking at the page does not read the whole file again.
+type restoreCache struct {
+	mu   sync.Mutex
+	size int64
+	mod  time.Time
+	view restoreView
+	ok   bool
 }
 
 func (s *Server) restoreView() restoreView {
 	v := restoreView{Available: s.backupOn()}
 	if !v.Available {
 		return v
+	}
+	fi, err := os.Stat(s.pendingPath())
+	if err != nil {
+		return v
+	}
+	c := &s.restoreSeen
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ok && c.size == fi.Size() && c.mod.Equal(fi.ModTime()) {
+		return c.view
 	}
 	f, err := os.Open(s.pendingPath())
 	if err != nil {
@@ -70,7 +92,11 @@ func (s *Server) restoreView() restoreView {
 	defer f.Close()
 	if n, created, err := backup.Verify(f); err == nil {
 		v.Pending, v.Files, v.Created = true, n, created
+		if _, err := f.Seek(0, 0); err == nil {
+			v.Notes = backup.ConfigNotes(f)
+		}
 	}
+	c.size, c.mod, c.view, c.ok = fi.Size(), fi.ModTime(), v, true
 	return v
 }
 
@@ -91,14 +117,19 @@ func (s *Server) restorePost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.restoreView())
 		return
 	}
+	if !s.restoreBusy.TryLock() { // one upload at a time: two would only fight over the disk
+		fail(w, http.StatusConflict, "another backup is being uploaded: wait for it to finish")
+		return
+	}
+	defer s.restoreBusy.Unlock()
 	rc := http.NewResponseController(w)
 	rc.SetReadDeadline(time.Now().Add(30 * time.Minute))
-	tmp := s.pendingPath() + ".part"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	f, err := os.CreateTemp(s.Home, "pending-restore-*.part") // its own name, 0600, so nothing else can be mistaken for it
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "the backup could not be saved here")
 		return
 	}
+	tmp := f.Name()
 	_, err = io.Copy(f, http.MaxBytesReader(w, r.Body, maxRestoreUpload))
 	if cerr := f.Close(); err == nil {
 		err = cerr

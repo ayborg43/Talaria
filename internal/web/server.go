@@ -240,6 +240,9 @@ type Server struct {
 	Hooks     *webhook.Store
 	hookFails failWindow
 	retention retentionState
+	// restoreBusy admits one backup upload at a time; restoreSeen remembers what the waiting one holds.
+	restoreBusy sync.Mutex
+	restoreSeen restoreCache
 	// Usage is what the models were asked and what that cost. Nil leaves the usage screen out.
 	Usage *usage.Ledger
 
@@ -407,7 +410,7 @@ func (s *Server) headers(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if v := recover(); v != nil {
-				s.logf("web: handler panic on %s %s: %v", r.Method, r.URL.Path, v)
+				s.logf("web: handler panic on %s %s: %v", r.Method, safePath(r.URL.Path), v)
 				fail(w, http.StatusInternalServerError, "something went wrong on the server")
 			}
 		}()

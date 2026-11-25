@@ -79,6 +79,10 @@ type Run struct {
 	Steers  []Steer   `json:"steers,omitempty"`
 	// Parent is the run this one follows up.
 	Parent string `json:"parent,omitempty"`
+	// Untrusted says what the run was given came from outside (a webhook's payload), and Agent is the saved agent that
+	// did it. A follow-up of the run inherits both, so writing to a finished task never washes the taint out of it.
+	Untrusted bool   `json:"untrusted,omitempty"`
+	Agent     string `json:"agent,omitempty"`
 }
 
 // Summary is a run as the list shows it.
@@ -159,6 +163,15 @@ func (l *Log) Begin(jobID, name, kind, gateway string, chatID int64, prompt, mod
 	l.live[id] = &Run{ID: id, JobID: jobID, Name: oneLine(name, 80), Kind: kind, Gateway: gateway, ChatID: chatID, Started: now, Status: Running,
 		Model: model, Prompt: clip(prompt, MaxPrompt), Parent: parent}
 	return id
+}
+
+// Mark records that a run was started from outside text, and which saved agent did it.
+func (l *Log) Mark(id string, untrusted bool, agent string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if r := l.live[id]; r != nil {
+		r.Untrusted, r.Agent = untrusted, agent
+	}
 }
 
 // Step adds one thing a live run did. A long run keeps its first steps and its latest, and counts the ones between.

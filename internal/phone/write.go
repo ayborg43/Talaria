@@ -24,10 +24,9 @@ const (
 	maxTimerSec = 24 * 60 * 60
 )
 
-// riskPhoneDo marks a call that does something on the person's phone. tool.Risk has no name for it, but any risk makes
-// the call ask even where only deleting and posting do (see agent.AskDestructive), which is the point: it must ask in
-// every permission mode. Its Note is empty, so nothing wrong is said about it.
-const riskPhoneDo tool.Risk = 1 << 6
+// riskPhoneDo marks a call that does something on the person's phone. Any risk makes the call ask even where only deleting
+// and posting ask (see agent.AskDestructive), which is the point: it must ask in every permission mode.
+const riskPhoneDo = tool.RiskActs
 
 // now is the clock, so tests can fix it.
 var now = time.Now

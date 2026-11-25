@@ -1,10 +1,13 @@
 package skill
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"talaria/internal/tool"
 )
 
 func TestSaveLoadListDelete(t *testing.T) {
@@ -59,5 +62,14 @@ func TestSaveValidatesContent(t *testing.T) {
 	s := &Store{Dir: t.TempDir()}
 	if s.Save("x", "  ", "body") == nil || s.Save("x", "d", " ") == nil || s.Save("x", "d", strings.Repeat("a", maxBody+1)) == nil {
 		t.Fatal("expected validation errors")
+	}
+}
+
+func TestSavingASkillAsksEvenAfterOutsideContentWasRead(t *testing.T) {
+	reg := tool.NewRegistry()
+	RegisterTools(reg, &Store{Dir: t.TempDir()})
+	tl, ok := reg.Get("skill_save")
+	if !ok || tl.Egress == nil || !tl.Egress(json.RawMessage(`{"name":"x","description":"d","body":"b"}`)) {
+		t.Fatal("skill_save does not ask after outside content: a skill steers every later chat")
 	}
 }

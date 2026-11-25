@@ -593,3 +593,20 @@ func TestAGoogleAppPasswordIsSentWithoutTheSpacesItWasCopiedWith(t *testing.T) {
 		t.Errorf("a password with a digit was cleaned: %q", got)
 	}
 }
+
+// Sending as the user asks even where only deleting and posting ask (the default way): the README promises it, and a message
+// that has gone cannot be called back.
+func TestSendingMailAsksInEveryPermissionMode(t *testing.T) {
+	_, s := seeded(t)
+	reg := tool.NewRegistry()
+	RegisterSendTools(reg, s, nil)
+	for _, name := range []string{"email_send", "email_reply"} {
+		tl, ok := reg.Get(name)
+		if !ok {
+			t.Fatalf("%s is not registered", name)
+		}
+		if tl.RiskOf(json.RawMessage(`{}`)) == 0 {
+			t.Errorf("%s has no risk, so the default permission mode would send without asking", name)
+		}
+	}
+}

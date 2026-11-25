@@ -279,6 +279,7 @@ func (r *jobRunner) runRecorded(ctx context.Context, a *agent.Agent, j cron.Job,
 		return a.Run(ctx, prompt)
 	}
 	rid := r.runs.Begin(j.ID, j.Name, j.Kind, j.Gateway, j.ChatID, prompt, a.Model, j.Parent)
+	r.runs.Mark(rid, j.Untrusted, j.Agent)
 	prevStart := a.OnToolStart
 	a.OnToolStart = func(name, args string) {
 		if prevStart != nil {

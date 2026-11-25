@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"talaria/internal/agent"
 	"talaria/internal/app"
 	"talaria/internal/config"
 	"talaria/internal/persona"
@@ -24,6 +25,9 @@ type runRequest struct {
 	Prompt string
 	// Agent is the name of a saved agent to do it, "" for Talaria's own.
 	Agent string
+	// Untrusted says the prompt may have been written by someone else (an MCP client that has itself been fed a web page):
+	// the run starts as one that has already read outside content, so anything that could send something out is refused.
+	Untrusted bool
 	// AllowRisky lets the work use tools that normally ask first. Nobody is there to answer, so without it they are refused.
 	AllowRisky bool
 }
@@ -130,6 +134,12 @@ func (c *cli) runOnce(ctx context.Context, req runRequest) runResult {
 		opts.ExtraSystem += "\n\n" + named.System()
 	}
 	a := c.rt.NewAgent(opts)
+	// Nobody is there to answer, so every tool that asks is refused, not only the ones that delete or post: the "default"
+	// way of asking would let shell and write_file run unattended, which is not what a script that hands work over expects.
+	a.Ask = agent.AskRisky
+	if req.Untrusted {
+		a.MarkUntrusted()
+	}
 	if named != nil {
 		a.ReadOnly = named.ReadOnly
 		if len(named.Scopes) > 0 {

@@ -92,6 +92,8 @@ func fakeChat(t *testing.T, rejectStreamOptions bool) *httptest.Server {
 		switch {
 		case last.Role == "tool":
 			fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"2026"},"finish_reason":"stop"}],"usage":{"prompt_tokens":9,"completion_tokens":2}}`)
+		case strings.Contains(last.Content, "run the shell"):
+			fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c2","type":"function","function":{"name":"shell","arguments":"{\"command\":\"echo hi\"}"}}]},"finish_reason":"tool_calls"}]}`)
 		case strings.Contains(last.Content, "Call the current_time tool"):
 			fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"current_time","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":9,"completion_tokens":2}}`)
 		default:
@@ -177,5 +179,19 @@ func TestSelftestToolsIncludeWhatOnlyAChatGets(t *testing.T) {
 	}
 	if r := checkTools(specs); r.Status != stOK {
 		t.Fatalf("%+v", r)
+	}
+}
+
+// Nobody is there to answer a run from a script or an MCP client, so a tool that asks is refused, shell included.
+func TestAnUnattendedRunRefusesToolsThatAsk(t *testing.T) {
+	good := fakeChat(t, false)
+	c := selftestCLI(t, map[string]config.Profile{"main": {Type: "openai", BaseURL: good.URL, APIKey: "good-key", Model: "m"}}, "main")
+	res := c.runOnce(context.Background(), runRequest{Prompt: "please run the shell"})
+	if !res.OK || len(res.Denied) != 1 || res.Denied[0] != "shell" {
+		t.Fatalf("shell should have been refused, and the run reported as incomplete: %+v", res)
+	}
+	allowed := c.runOnce(context.Background(), runRequest{Prompt: "please run the shell", AllowRisky: true})
+	if len(allowed.Denied) != 0 {
+		t.Fatalf("--allow-risky should let it through: %+v", allowed)
 	}
 }

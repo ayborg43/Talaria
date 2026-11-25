@@ -79,11 +79,18 @@ func runRestore(home string, args []string, out io.Writer) error {
 		return err
 	}
 	defer f.Close()
+	notes := backup.ConfigNotes(f)
+	if _, err := f.Seek(0, 0); err != nil {
+		return err
+	}
 	moved, n, err := backup.Restore(f, home, *replace, nil)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "restored %d files into %s\n", n, home)
+	for _, note := range notes {
+		fmt.Fprintf(out, "warning: the restored settings: %s. A backup from someone else would be running their settings: check it is yours.\n", note)
+	}
 	if moved != "" {
 		fmt.Fprintf(out, "the state that was there is kept at %s: delete it once you are happy\n", moved)
 	}
@@ -109,6 +116,8 @@ func applyPendingRestore(home string, log *slog.Logger) {
 	if err != nil {
 		return
 	}
+	notes := backup.ConfigNotes(f)
+	f.Seek(0, 0)
 	moved, n, err := backup.RestoreInPlace(f, home, []string{backup.PendingName}, nil)
 	f.Close()
 	if err != nil {
@@ -122,4 +131,7 @@ func applyPendingRestore(home string, log *slog.Logger) {
 		log.Info("the state that was here is kept at " + moved + ": delete it once you are happy")
 	}
 	log.Info("the vault opens with its own passphrase or key file, which a backup does not carry")
+	for _, n := range notes {
+		log.Warn("the restored settings: " + n + ". Check this is what you meant: a backup from someone else would be running their settings.")
+	}
 }
