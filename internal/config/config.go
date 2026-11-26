@@ -246,6 +246,19 @@ type Discord = ChatGateway
 // account's mentions and posts as it.
 type X = ChatGateway
 
+// Maps says where the agent's place and route tools get their answers. Both defaults are the free
+// OpenStreetMap services (Nominatim and OSRM), which ask for a polite User-Agent and a light touch.
+type Maps struct {
+	// NominatimURL is the geocoding and search service; default https://nominatim.openstreetmap.org.
+	NominatimURL string `json:"nominatim_url,omitempty"`
+	// OSRMURL is the routing service; default https://router.project-osrm.org.
+	OSRMURL string `json:"osrm_url,omitempty"`
+	// AllowPrivate lets the services live on this machine or a private network, for one you host
+	// yourself (a local OSRM, say). Off by default, so the fetches cannot reach a service that
+	// trusts anything on the network.
+	AllowPrivate bool `json:"allow_private,omitempty"`
+}
+
 // Calendar is one calendar feed.
 type Calendar struct {
 	// URLEnv names the environment variable holding the feed's address (https:// or webcal://).
@@ -528,6 +541,9 @@ type Config struct {
 	// Google Calendar gives each calendar. The address is a secret, so it is kept in an environment
 	// variable and the config names it. TALARIA_CALENDARS (name=address pairs) adds more.
 	Calendars map[string]Calendar `json:"calendars,omitempty"`
+	// Maps lets the agent look up places and plan routes; see Maps. The zero value uses the free
+	// OpenStreetMap services.
+	Maps Maps `json:"maps,omitzero"`
 	// Email is the mailbox the agent can read; see Email. Empty everywhere
 	// means no mailbox, same as leaving the TALARIA_EMAIL_* variables unset.
 	Email Email `json:"email,omitempty"`
@@ -660,6 +676,24 @@ func (c *Config) validate(path string) error {
 	if c.Timezone != "" {
 		if _, err := time.LoadLocation(c.Timezone); err != nil {
 			return fmt.Errorf("%s: timezone %q is not a time zone name (such as Africa/Lagos)", path, c.Timezone)
+		}
+	}
+	for _, m := range []struct{ name, raw string }{
+		{"maps.nominatim_url", c.Maps.NominatimURL},
+		{"maps.osrm_url", c.Maps.OSRMURL},
+	} {
+		if m.raw == "" {
+			continue
+		}
+		u, err := url.Parse(strings.TrimSpace(m.raw))
+		if err != nil || u.Host == "" {
+			return fmt.Errorf("%s: %s is not a web address", path, m.name)
+		}
+		if u.Scheme != "https" && u.Scheme != "http" {
+			return fmt.Errorf("%s: %s must start with https:// or http://", path, m.name)
+		}
+		if u.User != nil {
+			return fmt.Errorf("%s: %s must not hold a username or password", path, m.name)
 		}
 	}
 	if _, err := c.Policy.Parse(); err != nil {

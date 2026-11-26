@@ -21,6 +21,7 @@ import (
 	"talaria/internal/docsearch"
 	"talaria/internal/execenv"
 	"talaria/internal/files"
+	"talaria/internal/geo"
 	"talaria/internal/goal"
 	"talaria/internal/guard"
 	"talaria/internal/idea"
@@ -99,6 +100,8 @@ type Config struct {
 	Mail *mailbox.Service
 	// X lets the agent read the user's mentions and post as them. Nil turns the X tools off.
 	X *x.Service
+	// Maps lets the agent look up places and plan routes. Nil turns the place and route tools off.
+	Maps *geo.Service
 	// Watches keeps what chats have asked to be told about in connected services.
 	// Nil turns watches off.
 	Watches *watch.Store

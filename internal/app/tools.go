@@ -17,6 +17,7 @@ import (
 	"talaria/internal/execenv"
 	"talaria/internal/files"
 	"talaria/internal/finance"
+	"talaria/internal/geo"
 	"talaria/internal/goal"
 	"talaria/internal/idea"
 	"talaria/internal/kanban"
@@ -163,6 +164,9 @@ func (rt *Runtime) baseTools(o AgentOptions, sessions *memory.Sessions, sessionI
 	}
 	if rt.cfg.X != nil {
 		x.RegisterTools(tools, rt.cfg.X)
+	}
+	if rt.cfg.Maps != nil {
+		geo.RegisterTools(tools, rt.cfg.Maps)
 	}
 	if rt.docs != nil {
 		docsearch.RegisterTools(tools, rt.docs)

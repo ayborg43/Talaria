@@ -267,7 +267,11 @@ func (c *cli) setupModel(gateway bool) (err error) {
 		c.log.Warn(p)
 	}
 	xSvc := buildX(c.cfg, c.getenv)
-	appCfg := app.Config{Home: c.home, Provider: p, Model: res.Model, MCP: c.servers, Subagents: c.cfg.Subagents, Env: env, Guard: guarded, Fence: buildFence(c.cfg, c.cfgPath, c.home), Calendars: calSvc, Mail: mailSvc, X: xSvc, Ask: askMode(c.cfg, c.getenv), SocialSites: c.cfg.Policy.SocialSites, TrustOutsideContent: !c.cfg.Policy.GuardUntrusted(), ModelCallsPerHour: c.cfg.Limits.ModelCalls(), SpendGate: c.spend.Check, Log: c.log,
+	geoSvc, geoProblems := buildGeo(c.cfg)
+	for _, p := range geoProblems {
+		c.log.Warn(p)
+	}
+	appCfg := app.Config{Home: c.home, Provider: p, Model: res.Model, MCP: c.servers, Subagents: c.cfg.Subagents, Env: env, Guard: guarded, Fence: buildFence(c.cfg, c.cfgPath, c.home), Calendars: calSvc, Mail: mailSvc, X: xSvc, Maps: geoSvc, Ask: askMode(c.cfg, c.getenv), SocialSites: c.cfg.Policy.SocialSites, TrustOutsideContent: !c.cfg.Policy.GuardUntrusted(), ModelCallsPerHour: c.cfg.Limits.ModelCalls(), SpendGate: c.spend.Check, Log: c.log,
 		Browser: browserConfig(c.cfg), Goals: &goal.Store{Path: filepath.Join(c.home, "sessions.db")},
 		Watches: &watch.Store{Path: filepath.Join(c.home, "sessions.db")},
 		Ideas:   &idea.Store{Path: filepath.Join(c.home, "sessions.db")},

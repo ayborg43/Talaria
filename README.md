@@ -722,6 +722,36 @@ exceptions and moved or cancelled single occurrences), time zones and daylight s
   Writes are guarded by the server's ETag, so a change made elsewhere since the event was read is refused rather than
   overwritten. The password stays in its environment variable, out of the config file and the agent's shell.
 
+## Places and routes
+
+The agent can look up places and plan a journey, through the free OpenStreetMap services: Nominatim for
+geocoding and search, OSRM for routing. No key, no account, and nothing to sign up for: these are the owner's
+own lookups, not a bulk import.
+
+| Tool | What it does |
+|---|---|
+| `geo_lookup` | A place name or address to coordinates, with the full address. Up to ten matches, best first. |
+| `geo_reverse` | A position (`"lat,lng"`, or `lat` and `lng`) to the nearest address: what is here? |
+| `geo_route` | A route between two places (names, addresses or positions), driving, walking or cycling: distance, time and turn-by-turn steps. |
+| `geo_places` | Places of one kind near a point or a named place (cafés, pharmacies, petrol stations), nearest first with a rough distance. |
+
+- **Your own location comes from your phone, not from these.** "Where am I?" is `phone_info` with `location`, read from the
+  linked Android app (a position rounded to about 100 m), when that is switched on. `geo_reverse` turns a position it gives
+  you into an address.
+- **What they return is outside text.** Place names, road names and addresses are written by other people, so a result counts
+  as outside content: after reading one, anything that could send something out asks first, as after a web page. The tools
+  themselves never ask to run.
+- **Attribution and fair use.** Every answer names OpenStreetMap. Nominatim asks for a User-Agent and at most one request a
+  second (the tools space their requests), and the public OSRM server is for light use. For heavier or guaranteed use, point
+  the config at your own services:
+
+  ```json
+  { "maps": { "nominatim_url": "https://nominatim.example.org", "osrm_url": "https://osrm.example.org", "allow_private": true } }
+  ```
+
+  `allow_private` is needed only for a service on this machine or the local network; without it an address that points there
+  is refused at startup, with a warning, and the tools stay off.
+
 ## Email
 
 The agent can read your mail: "anything urgent today?", "find the invoice from Acme", "what did Amina say about the report?". It signs in
@@ -1788,6 +1818,7 @@ and how it ended.
 | `internal/mailbox` | mail over IMAP and SMTP: a small client that cannot send a deleting, moving or marking command, message parsing, threads and drafts, and the `email_*` tools |
 | `internal/web` | the web app: sign-in, the conversation as a chat transport, the page itself (embedded), Web Push, the Today and Control data, and the hands-on screens (Computer, documents, profile and notes, kept notifications) |
 | `internal/calendar` | read-only calendars from iCal feeds: parsing, repeats, time zones, safe fetching, the `calendar_events` tool |
+| `internal/geo` | places and routes from the free OpenStreetMap services (Nominatim and OSRM): the `geo_*` tools |
 | `internal/guard` | permission rules, "always allow" choices, the activity log, secret scrubbing |
 | `internal/backup` | `tal backup` and `tal restore`: the state folder as one archive, safely unpacked |
 | `internal/metrics`, `internal/ops` | counters in the Prometheus text format, and the health and metrics endpoint |
