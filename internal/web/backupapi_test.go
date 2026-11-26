@@ -211,3 +211,35 @@ func TestTrajectoryExportIsScrubbedJSONL(t *testing.T) {
 		t.Fatalf("%d", resp.StatusCode)
 	}
 }
+
+func TestSpendingLimitsSavedAndShown(t *testing.T) {
+	r := newRig(t)
+	r.login()
+	dir := t.TempDir()
+	r.srv.Cfg = &config.Config{Profiles: map[string]config.Profile{"strong": {Model: "big"}}, Prices: map[string]config.ModelPrice{"strong": {In: 3}}}
+	r.srv.ConfigPath = filepath.Join(dir, "config.json")
+	r.srv.Usage = usage.Open(filepath.Join(dir, "usage.json"), time.UTC)
+	cfg := r.srv.Cfg
+	r.srv.Spend = &usage.Cap{Ledger: r.srv.Usage, Prices: r.srv.usagePrices(),
+		Limits: func() usage.Limits { return usage.Limits{Day: cfg.Limits.SpendPerDay, Month: cfg.Limits.SpendPerMonth} }}
+	r.srv.Usage.Add(provider.Spent{Profile: "strong", Usage: provider.Usage{In: 1_000_000}}) // $3
+
+	if resp, _ := r.do("POST", "/api/usage/limits", map[string]any{"day": -1}); resp.StatusCode != 400 {
+		t.Fatalf("a negative limit was accepted: %d", resp.StatusCode)
+	}
+	resp, body := r.do("POST", "/api/usage/limits", map[string]any{"day": 2, "month": 50})
+	var got struct {
+		Spend usage.Status `json:"spend"`
+	}
+	json.Unmarshal(body, &got)
+	if resp.StatusCode != 200 || !got.Spend.Paused || got.Spend.DayLimit != 2 || got.Spend.MonthLimit != 50 || got.Spend.Day != 3 {
+		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+	if saved, err := config.Load(r.srv.ConfigPath); err != nil || saved.Limits.SpendPerDay != 2 || saved.Limits.SpendPerMonth != 50 {
+		t.Fatalf("not saved: %v %+v", err, saved)
+	}
+	// Blank removes them.
+	if _, body := r.do("POST", "/api/usage/limits", map[string]any{}); strings.Contains(string(body), `"paused":true`) {
+		t.Fatalf("%s", body)
+	}
+}

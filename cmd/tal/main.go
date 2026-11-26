@@ -87,6 +87,7 @@ type cli struct {
 	servers *mcp.Manager
 	health  *provider.Health                     // what the fallback chains have learned about each profile
 	ledger  *usage.Ledger                        // tokens and cost of what the models were asked
+	spend   *usage.Cap                           // pauses background work once a spending limit is reached
 	tap     atomic.Pointer[func(provider.Spent)] // also told of each answered request, for a run that reports what it cost
 	res     config.Resolved
 	p       provider.Provider
@@ -266,7 +267,7 @@ func (c *cli) setupModel(gateway bool) (err error) {
 		c.log.Warn(p)
 	}
 	xSvc := buildX(c.cfg, c.getenv)
-	appCfg := app.Config{Home: c.home, Provider: p, Model: res.Model, MCP: c.servers, Subagents: c.cfg.Subagents, Env: env, Guard: guarded, Fence: buildFence(c.cfg, c.cfgPath, c.home), Calendars: calSvc, Mail: mailSvc, X: xSvc, Ask: askMode(c.cfg, c.getenv), SocialSites: c.cfg.Policy.SocialSites, TrustOutsideContent: !c.cfg.Policy.GuardUntrusted(), ModelCallsPerHour: c.cfg.Limits.ModelCalls(), Log: c.log,
+	appCfg := app.Config{Home: c.home, Provider: p, Model: res.Model, MCP: c.servers, Subagents: c.cfg.Subagents, Env: env, Guard: guarded, Fence: buildFence(c.cfg, c.cfgPath, c.home), Calendars: calSvc, Mail: mailSvc, X: xSvc, Ask: askMode(c.cfg, c.getenv), SocialSites: c.cfg.Policy.SocialSites, TrustOutsideContent: !c.cfg.Policy.GuardUntrusted(), ModelCallsPerHour: c.cfg.Limits.ModelCalls(), SpendGate: c.spend.Check, Log: c.log,
 		Browser: browserConfig(c.cfg), Goals: &goal.Store{Path: filepath.Join(c.home, "sessions.db")},
 		Watches: &watch.Store{Path: filepath.Join(c.home, "sessions.db")},
 		Ideas:   &idea.Store{Path: filepath.Join(c.home, "sessions.db")},
@@ -290,7 +291,11 @@ func (c *cli) setupModel(gateway bool) (err error) {
 			l = usage.Open(filepath.Join(c.home, "usage.json"), zone)
 		}
 		l.Flush() // so the file and the memory agree for anything else that reads it
-		return l.Report(days, usagePrices(c.cfg)).Summary(usagePeriod(days))
+		sum := l.Report(days, usagePrices(c.cfg)).Summary(usagePeriod(days))
+		if line := c.spend.Status().Line(); line != "" {
+			sum += " " + line
+		}
+		return sum
 	})
 	return nil
 }

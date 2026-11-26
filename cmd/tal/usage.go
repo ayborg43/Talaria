@@ -20,8 +20,10 @@ func (c *cli) openLedger() {
 	}
 	zone, _ := calendarZone(c.cfg, c.getenv)
 	c.ledger = usage.Open(filepath.Join(c.home, "usage.json"), zone)
+	c.spend = &usage.Cap{Ledger: c.ledger, Prices: usagePrices(c.cfg), Limits: spendLimits(c.cfg)}
 	provider.SetSink(func(sp provider.Spent) {
 		c.ledger.Add(sp)
+		c.spend.Observe()
 		if t := c.tap.Load(); t != nil {
 			(*t)(sp)
 		}
@@ -34,6 +36,13 @@ func usagePrices(cfg *config.Config) usage.Prices {
 	return func(profile string) (usage.Price, bool) {
 		in, out, ok := cfg.Price(profile)
 		return usage.Price{In: in, Out: out}, ok
+	}
+}
+
+// spendLimits reads the spending limits from the config at each check, so one saved under Settings applies at once.
+func spendLimits(cfg *config.Config) func() usage.Limits {
+	return func() usage.Limits {
+		return usage.Limits{Day: cfg.Limits.SpendPerDay, Month: cfg.Limits.SpendPerMonth}
 	}
 }
 
@@ -64,8 +73,12 @@ func runUsage(cfg *config.Config, home string, args []string, getenv func(string
 		days = n
 	}
 	zone, _ := calendarZone(cfg, getenv)
-	rep := usage.Open(filepath.Join(home, "usage.json"), zone).Report(days, usagePrices(cfg))
+	ledger := usage.Open(filepath.Join(home, "usage.json"), zone)
+	rep := ledger.Report(days, usagePrices(cfg))
 	fmt.Fprintln(w, rep.Summary(usagePeriod(days)))
+	if line := (&usage.Cap{Ledger: ledger, Prices: usagePrices(cfg), Limits: spendLimits(cfg)}).Status().Line(); line != "" {
+		fmt.Fprintln(w, line)
+	}
 	if rep.Total.Totals.Calls == 0 {
 		return nil
 	}
@@ -86,6 +99,7 @@ func runUsage(cfg *config.Config, home string, args []string, getenv func(string
 	table("By agent", rep.ByAgent)
 	table("By kind of work", rep.ByKind)
 	table("By who asked", rep.BySource)
-	fmt.Fprintln(w, "\nA price is set per profile (\"prices\" in the config, or under Settings: dollars for a million tokens in and out).")
+	fmt.Fprintln(w, "\nA spending limit is set in dollars (\"limits\": {\"spend_per_day\", \"spend_per_month\"} in the config, or under Settings). Past it, background work pauses.")
+	fmt.Fprintln(w, "A price is set per profile (\"prices\" in the config, or under Settings: dollars for a million tokens in and out).")
 	return nil
 }

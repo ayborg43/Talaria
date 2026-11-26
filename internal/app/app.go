@@ -79,6 +79,9 @@ type Config struct {
 	Vault browser.Credentials
 	// ModelCallsPerHour limits requests to the model, across everything this process runs; 0 is no limit.
 	ModelCallsPerHour int
+	// SpendGate, if set, is asked before every request to the model and may refuse it: the spending limit, which holds
+	// back background work once it is reached.
+	SpendGate func(context.Context) error
 	// Ask is which calls ask the user first; the zero value is the strict way. SocialSites are extra sites the
 	// browser treats as social media, where acting on a page counts as posting.
 	Ask         agent.AskMode
@@ -190,7 +193,7 @@ func Open(cfg Config) *Runtime {
 		mcp:      cfg.MCP,
 		env:      cfg.Env,
 		log:      log,
-		budget:   &budget{max: cfg.ModelCallsPerHour},
+		budget:   &budget{max: cfg.ModelCallsPerHour, spend: cfg.SpendGate},
 	}
 	if rt.env == nil {
 		rt.env = execenv.Local{Fence: cfg.Fence}

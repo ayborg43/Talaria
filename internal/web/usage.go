@@ -53,7 +53,11 @@ func (s *Server) usageGet(w http.ResponseWriter, r *http.Request) {
 		days = 7
 	}
 	rep := s.Usage.Report(days, s.usagePrices())
-	writeJSON(w, http.StatusOK, map[string]any{"available": true, "report": rep, "summary": rep.Summary(periodName(days)), "prices": s.priceRows()})
+	out := map[string]any{"available": true, "report": rep, "summary": rep.Summary(periodName(days)), "prices": s.priceRows()}
+	if s.Spend != nil {
+		out["spend"] = s.Spend.Status()
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func periodName(days int) string {
@@ -111,6 +115,39 @@ func (s *Server) usagePost(w http.ResponseWriter, r *http.Request) {
 		price.Out = *in.PriceOut
 	}
 	s.Cfg.SetPrice(in.Profile, price, in.PriceIn != nil || in.PriceOut != nil) // both blank forgets it
+	if !s.writeConfig(w) {
+		return
+	}
+	s.usageGet(w, r)
+}
+
+// usageLimitsPost sets the spending limits: dollars a day and a calendar month, 0 or blank for none. Past one, background
+// work is paused; the owner's own chats are not.
+func (s *Server) usageLimitsPost(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Day   *float64 `json:"day"`
+		Month *float64 `json:"month"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if s.Cfg == nil {
+		fail(w, http.StatusNotImplemented, "settings are not available here")
+		return
+	}
+	for _, v := range []*float64{in.Day, in.Month} {
+		if v != nil && (*v < 0 || *v > config.MaxSpend || *v != *v) {
+			fail(w, http.StatusBadRequest, "a spending limit is dollars, 0 (no limit) to 1000000")
+			return
+		}
+	}
+	val := func(v *float64) float64 {
+		if v == nil {
+			return 0
+		}
+		return *v
+	}
+	s.Cfg.Limits.SpendPerDay, s.Cfg.Limits.SpendPerMonth = val(in.Day), val(in.Month)
 	if !s.writeConfig(w) {
 		return
 	}

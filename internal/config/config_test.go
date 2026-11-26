@@ -1047,3 +1047,22 @@ func TestRoutineProfileIsChosenOrACheapOneOrNone(t *testing.T) {
 		t.Fatalf("with nothing cheap there is nothing to pick: %q", got)
 	}
 }
+
+func TestSpendingLimitsValidated(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	for _, tc := range []struct {
+		json string
+		ok   bool
+	}{
+		{`{"limits":{"spend_per_day":5,"spend_per_month":100}}`, true},
+		{`{"limits":{"spend_per_day":-1}}`, false},
+		{`{"limits":{"spend_per_month":2000000}}`, false},
+	} {
+		if err := os.WriteFile(path, []byte(tc.json), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); (err == nil) != tc.ok {
+			t.Fatalf("%s: %v", tc.json, err)
+		}
+	}
+}

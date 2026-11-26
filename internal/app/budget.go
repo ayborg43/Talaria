@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -15,11 +16,21 @@ type budget struct {
 	max   int
 	now   func() time.Time
 	times []time.Time
+	// spend, if set, is asked too: it refuses background work once a spending limit is reached.
+	spend func(context.Context) error
 }
 
 // take records a request, or refuses it.
-func (b *budget) take() error {
-	if b == nil || b.max <= 0 {
+func (b *budget) take(ctx context.Context) error {
+	if b == nil {
+		return nil
+	}
+	if b.spend != nil {
+		if err := b.spend(ctx); err != nil {
+			return err
+		}
+	}
+	if b.max <= 0 {
 		return nil
 	}
 	b.mu.Lock()

@@ -11,6 +11,7 @@ import (
 	"talaria/internal/provider"
 	"talaria/internal/routine"
 	"talaria/internal/runlog"
+	"talaria/internal/usage"
 	"time"
 
 	"talaria/internal/activity"
@@ -67,6 +68,8 @@ type jobRunner struct {
 	agents *persona.Store
 	// digest writes the scheduled "while you were away" digest, which asks no model.
 	digest *digestSources
+	// spend holds background work back once a spending limit is reached; nil is no limit.
+	spend *usage.Cap
 }
 
 func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
@@ -83,6 +86,13 @@ func (r *jobRunner) run(ctx context.Context, j cron.Job) (string, error) {
 			return cron.Silent, nil
 		}
 		return d.Title + "\n\n" + d.Text, nil
+	}
+
+	if err := r.spend.Paused(); err != nil {
+		if j.Kind == cron.KindTask { // someone started it: they are told why it did not run, and it is not retried in a minute
+			return "", cron.Final(err)
+		}
+		return cron.Silent, nil // a schedule or a goal: skipped quietly, the limit's own notice already said so
 	}
 
 	var named *persona.Agent
@@ -274,7 +284,11 @@ func (r *jobRunner) prepare(j cron.Job) (prompt, note, final string, err error) 
 // it made, and what it reported. It also lets the user steer it: anything they add while it works is read at its next
 // step. Only a web chat's jobs are recorded; the rest run as they always did.
 func (r *jobRunner) runRecorded(ctx context.Context, a *agent.Agent, j cron.Job, prompt string) (string, error) {
-	ctx = provider.WithLabel(ctx, provider.Label{Source: strings.ToLower(j.Kind), Agent: j.Agent}) // for what it costs
+	source := strings.ToLower(j.Kind)
+	if source == "" {
+		source = "job" // a plain scheduled prompt; left empty it was counted as a chat
+	}
+	ctx = provider.WithLabel(ctx, provider.Label{Source: source, Agent: j.Agent, Background: true}) // for what it costs, and the spending limit
 	if r.runs == nil || j.Gateway != "web" {
 		return a.Run(ctx, prompt)
 	}

@@ -199,6 +199,13 @@ It is one small file, `~/.talaria/usage.json` (a row per day, profile, model, so
 at most every 20 seconds and kept for 400 days. OpenAI-compatible streaming asks the service to end the reply with its token counts
 (`stream_options.include_usage`); a service that refuses an unknown option would need a profile of its own, and none known does.
 
+**Spending limit.** `"limits": {"spend_per_day": 5, "spend_per_month": 60}` (US dollars; 0 or absent is no limit), or the
+Spending limit fields on the same card in Settings. Past either one, background work pauses until the day or the calendar month ends:
+scheduled prompts and goal check-ins are skipped quietly, a task (from a chat, a kanban card or a webhook) fails once with the reason and
+is not retried, and a run already under way stops before its next model request. Your own chats, `tal run` and helpers a chat starts are
+never stopped. A notice goes out at 80% and at the limit. It counts only profiles with a price, so a profile left without one is free as
+far as the limit knows, and the card says so. Days end in the calendar time zone (UTC if none is set).
+
 ### Search your own files and notes
 
 The agent has `docs_search` and `docs_read` over what you keep: the files Talaria stores (uploads, documents it made; text, Markdown, web pages and PDFs), the notes it holds about you, and folders you name

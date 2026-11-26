@@ -622,7 +622,7 @@ func TestASubagentInheritsTheBudgetAndWhatTheParentHasRead(t *testing.T) {
 	pool := NewPool(Limits{})
 	a := newParent(p, pool)
 	var spent int
-	a.BeforeModel = func() error { spent++; return nil }
+	a.BeforeModel = func(context.Context) error { spent++; return nil }
 	if _, err := a.Run(context.Background(), "go"); err != nil || !sawSub {
 		t.Fatalf("%v %v", err, sawSub)
 	}
@@ -634,7 +634,7 @@ func TestASubagentInheritsTheBudgetAndWhatTheParentHasRead(t *testing.T) {
 	sawSub = false
 	a2 := newParent(p, pool)
 	n := 0
-	a2.BeforeModel = func() error {
+	a2.BeforeModel = func(context.Context) error {
 		n++
 		if n > 1 {
 			return fmt.Errorf("budget used up")

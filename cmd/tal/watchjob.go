@@ -100,7 +100,7 @@ func (r *jobRunner) runWatch(ctx context.Context, j cron.Job) (string, error) {
 		return watch.ConditionMessage(w, w.LastFound), nil // settled here: no model run, and nothing from the page but the price read
 	case watch.Changed:
 		a.MarkUntrusted() // what the model is about to read came from a service, not from the user
-		return a.Run(provider.WithLabel(ctx, provider.Label{Source: "watch"}), watch.Prompt(w, previous, result))
+		return a.Run(provider.WithLabel(ctx, provider.Label{Source: "watch", Background: true}), watch.Prompt(w, previous, result))
 	}
 	return cron.Silent, nil
 }

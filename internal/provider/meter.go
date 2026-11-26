@@ -12,6 +12,9 @@ type Label struct {
 	Source string // "chat", "job", "task", "delegate", "router", "eval"
 	Agent  string // a saved agent's name, "" for the main one
 	Kind   string // the router's kind of message ("code", "simple", ...), "" when not known
+	// Background is true for work nobody is waiting on: a scheduled job, a task, a goal's check-in, a watch. It sticks:
+	// a helper started from background work is background too. A spending limit pauses only this.
+	Background bool
 }
 
 type labelKey struct{}
@@ -29,6 +32,7 @@ func WithLabel(ctx context.Context, l Label) context.Context {
 		if l.Kind == "" {
 			l.Kind = old.Kind
 		}
+		l.Background = l.Background || old.Background
 	}
 	return context.WithValue(ctx, labelKey{}, l)
 }

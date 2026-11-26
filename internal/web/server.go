@@ -245,6 +245,8 @@ type Server struct {
 	restoreSeen restoreCache
 	// Usage is what the models were asked and what that cost. Nil leaves the usage screen out.
 	Usage *usage.Ledger
+	// Spend is the spending limit's state, shown with the usage. Nil leaves it out.
+	Spend *usage.Cap
 
 	voiceMu sync.Mutex
 	voice   voiceLimiter
@@ -359,6 +361,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/digest", s.authed(s.digestPost))
 	mux.HandleFunc("GET /api/usage", s.authed(s.usageGet))
 	mux.HandleFunc("POST /api/usage", s.authed(s.usagePost))
+	mux.HandleFunc("POST /api/usage/limits", s.authed(s.usageLimitsPost))
 	mux.HandleFunc("GET /api/phone", s.authed(s.phoneStatus))
 	mux.HandleFunc("GET /api/phone/link", s.authed(s.phoneLink))
 	mux.HandleFunc("GET /api/browser/live", s.authed(s.browserLive))

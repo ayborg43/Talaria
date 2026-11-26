@@ -31,6 +31,20 @@ type actedError struct{ err error }
 func (e *actedError) Error() string { return e.err.Error() }
 func (e *actedError) Unwrap() error { return e.err }
 
+// Final wraps the error of a run that must not be tried again on its own, though it did nothing: trying in a minute
+// would fail the same way (a spending limit, say). Unlike Acted, the user is not told it had acted.
+func Final(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &finalError{err}
+}
+
+type finalError struct{ err error }
+
+func (e *finalError) Error() string { return e.err.Error() }
+func (e *finalError) Unwrap() error { return e.err }
+
 // actedNote is added to what the user is told when such a run fails.
 const actedNote = "\n\nIt had already acted (run a command, changed a file or sent something) before it failed, so I have not tried it again: doing so could do the same thing twice. Start it again yourself if that is safe."
 
@@ -381,7 +395,9 @@ func (s *Scheduler) runJob(ctx, rctx context.Context, r *run, j Job) {
 	}
 
 	var acted *actedError
-	final := errors.As(err, &acted) // it did something before failing: one attempt is all it gets
+	var fin *finalError
+	didAct := errors.As(err, &acted)        // it did something before failing: one attempt is all it gets
+	final := didAct || errors.As(err, &fin) // or another attempt would only fail the same way
 	status, text := "ok", ""
 	switch {
 	case err != nil && errors.Is(err, context.DeadlineExceeded) && runCtx.Err() != nil:
@@ -410,7 +426,7 @@ func (s *Scheduler) runJob(ctx, rctx context.Context, r *run, j Job) {
 	finish := s.Store.Finish
 	if final {
 		finish = s.Store.FinishFinal
-		if text != "" && s.Store.wouldRetry(j) {
+		if text != "" && didAct && s.Store.wouldRetry(j) {
 			text += actedNote
 		}
 	}

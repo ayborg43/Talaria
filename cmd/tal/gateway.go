@@ -291,7 +291,7 @@ func runGateway(c *cli) error {
 			note, taskText = cronNoteMarkdown, taskNoteMarkdown
 		}
 		runner := &jobRunner{rt: c.rt, backends: backends, envs: s.envs, allowed: s.allowed, note: note, taskNote: taskText, goals: c.rt.Goals(), yolo: c.yolo, sink: s.sink, runs: runs, routines: routines,
-			routine: c.cfg.RoutineProfileName, agents: agents, digest: digestSrc}
+			routine: c.cfg.RoutineProfileName, agents: agents, digest: digestSrc, spend: c.spend}
 		s.sched = &cron.Scheduler{
 			Store:    c.rt.Cron,
 			Gateway:  s.name,
@@ -458,6 +458,9 @@ func runGateway(c *cli) error {
 		qzone, _ := calendarZone(c.cfg, c.getenv)
 		notices := &web.Notices{Path: filepath.Join(c.home, "web_notices.json"), Next: push, Zone: qzone}
 		webHub.Notifier = notices
+		if c.spend != nil {
+			c.spend.Notify = func(title, body string) { notices.Notify(title, body, "spending", "/#settings/models") }
+		}
 		s := &service{name: "web", allowed: allowed, markdown: true, sink: webHub}
 		eng := &chat.Engine{
 			T: webHub, Allowed: allowed, Logf: logf, Stream: true, MessagesPerMinute: c.cfg.Limits.Messages(),
@@ -491,6 +494,7 @@ func runGateway(c *cli) error {
 			Runs:         runs,
 			Cards:        c.rt.Cards(),
 			Usage:        c.ledger,
+			Spend:        c.spend,
 			Home:         c.home,
 			Rec:          &routine.Recorder{},
 			Agents:       agents,

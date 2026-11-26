@@ -296,7 +296,16 @@ type Limits struct {
 	// ModelCallsPerHour caps requests to the model across everything Talaria runs, jobs and
 	// watches included. Default 1000; negative removes the limit.
 	ModelCallsPerHour int `json:"model_calls_per_hour,omitempty"`
+	// SpendPerDay and SpendPerMonth are the most, in US dollars, that the models may cost in a day and in a calendar
+	// month, counted from the prices set per profile (a profile with no price counts as free). Past one, background
+	// work (scheduled jobs, tasks, goals, watches, webhooks) is paused until the day or month ends; the owner's own
+	// chats carry on. A notice goes out at 80% and at the limit. 0 is no limit.
+	SpendPerDay   float64 `json:"spend_per_day,omitempty"`
+	SpendPerMonth float64 `json:"spend_per_month,omitempty"`
 }
+
+// MaxSpend is the largest spending limit the config takes, in dollars.
+const MaxSpend = 1_000_000
 
 // Messages is the effective messages-per-minute limit; 0 means none.
 func (l Limits) Messages() int {
@@ -586,6 +595,9 @@ func (c *Config) validate(path string) error {
 	}
 	if k := c.Conversations.HistoryKeepDays; k != 0 && (k < 30 || k > 3650) {
 		return fmt.Errorf("%s: conversations.history_keep_days is 0 (keep forever) or 30 to 3650", path)
+	}
+	if l := c.Limits; l.SpendPerDay < 0 || l.SpendPerDay > MaxSpend || l.SpendPerMonth < 0 || l.SpendPerMonth > MaxSpend {
+		return fmt.Errorf("%s: limits.spend_per_day and limits.spend_per_month are dollars, 0 (no limit) to %d", path, MaxSpend)
 	}
 	for name, p := range c.Prices {
 		if _, ok := c.Profiles[name]; !ok && name != "default" {

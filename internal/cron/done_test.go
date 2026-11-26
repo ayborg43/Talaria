@@ -75,6 +75,7 @@ func TestARunThatActedBeforeFailingIsNotTriedAgain(t *testing.T) {
 	}{
 		{"acted", Acted(errors.New("the model went away")), 1, true},
 		{"only read", errors.New("the model went away"), MaxAttempts, false},
+		{"final", Final(errors.New("spending limit reached")), 1, false}, // not retried, and not said to have acted
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, func(context.Context, Job) (string, error) { return "", tc.err })

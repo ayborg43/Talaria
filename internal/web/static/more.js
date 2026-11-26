@@ -2084,11 +2084,37 @@ function usageCard() {
     }
     fill(body, 
       seg,
+      spendBox(r.spend),
       h('div', { class: 'field-note', role: 'status', text: r.summary }),
       rep.total.totals.calls ? bars : null,
       table('By model', rep.by_model), table('By kind of work', rep.by_kind), table('By agent', rep.by_agent), table('By who asked', rep.by_source),
       h('details', null, h('summary', { text: 'What each model costs (dollars for a million tokens, in and out)' }),
         h('div', { class: 'field-note', text: "Your own figures, from the service's price list. Without them a model is counted in tokens only." }), price));
+  };
+  // spendBox is where spending stands against the limits, and the two fields that set them.
+  const spendBox = (sp) => {
+    if (!sp) return null;
+    const limitNote = (spent, limit) => (limit > 0 ? money(spent) + ' of ' + money(limit) : money(spent) + ', no limit');
+    const field = (label, v) => h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', placeholder: 'No limit', 'aria-label': label, value: v > 0 ? String(v) : '' });
+    const day = field('Dollars a day', sp.day_limit), month = field('Dollars a month', sp.month_limit);
+    const num = (el) => (el.value.trim() === '' ? 0 : Number(el.value));
+    const status = sp.paused
+      ? h('div', { class: 'verdict bad', role: 'alert', text: 'Background work is paused: ' + sp.reason + '. It resumes ' + new Date(sp.until).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '. Your own chats still work.' })
+      : null;
+    const unpriced = (sp.unpriced || []).length
+      ? h('div', { class: 'field-note', text: 'No price is set for ' + sp.unpriced.join(', ') + ', so it does not count toward the limit. Set one below.' })
+      : null;
+    const save = h('button', { class: 'btn small', type: 'button', text: 'Save limits', onclick: async () => {
+      try { await api('/api/usage/limits', { method: 'POST', body: { day: num(day), month: num(month) } }); } catch (e) { failed(e); }
+      load();
+    } });
+    return h('div', null,
+      h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Spending limit' }), status),
+      h('label', { class: 'field' }, h('span', { class: 'field-label', text: 'A day · today ' + limitNote(sp.day, sp.day_limit) }), day),
+      h('label', { class: 'field' }, h('span', { class: 'field-label', text: 'A month · this month ' + limitNote(sp.month, sp.month_limit) }), month),
+      h('div', { class: 'field-note', text: 'In dollars, blank for none. Past a limit, scheduled jobs, tasks, goals and watches pause until the day or month ends; your own chats carry on. You get a notice at 80% and at the limit.' }),
+      unpriced,
+      h('div', { class: 'field' }, save));
   };
   load();
   return card;

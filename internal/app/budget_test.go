@@ -15,24 +15,24 @@ func TestTheHourlyBudgetRefusesAfterTheLimitAndRecovers(t *testing.T) {
 	clock := time.Unix(1_000_000, 0)
 	b := &budget{max: 3, now: func() time.Time { return clock }}
 	for i := 0; i < 3; i++ {
-		if err := b.take(); err != nil {
+		if err := b.take(context.Background()); err != nil {
 			t.Fatalf("request %d: %v", i+1, err)
 		}
 		clock = clock.Add(time.Minute)
 	}
-	err := b.take()
+	err := b.take(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "limit of 3") || !strings.Contains(err.Error(), "model_calls_per_hour") {
 		t.Fatalf("%v", err)
 	}
 	clock = clock.Add(57 * time.Minute) // the first request is now an hour old, the second is not
-	if err := b.take(); err != nil {
+	if err := b.take(context.Background()); err != nil {
 		t.Fatalf("it lifts as the hour passes: %v", err)
 	}
-	if err := b.take(); err == nil {
+	if err := b.take(context.Background()); err == nil {
 		t.Fatal("but only for as many as have aged out")
 	}
 	var none *budget
-	if none.take() != nil || (&budget{}).take() != nil {
+	if none.take(context.Background()) != nil || (&budget{}).take(context.Background()) != nil {
 		t.Fatal("no budget, no limit")
 	}
 }

@@ -122,7 +122,7 @@ type Agent struct {
 	Gate Gate
 	// BeforeModel, if set, is asked before every request to the model, and may refuse it: this is
 	// where a budget on model calls is enforced.
-	BeforeModel func() error
+	BeforeModel func(context.Context) error
 	// GuardUntrusted makes calls that could send something out ask first once this
 	// conversation has read outside content (see tool.Tool.Untrusted and Egress),
 	// whatever would normally be allowed, except where a permission rule in the
@@ -273,7 +273,7 @@ func (a *Agent) Run(ctx context.Context, input string) (string, error) {
 
 	for i := 0; i < steps; i++ {
 		if a.BeforeModel != nil {
-			if err := a.BeforeModel(); err != nil {
+			if err := a.BeforeModel(ctx); err != nil {
 				return "", err
 			}
 		}
