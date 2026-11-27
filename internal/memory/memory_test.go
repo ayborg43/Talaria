@@ -12,17 +12,17 @@ func TestNotesAddReplaceRemovePersist(t *testing.T) {
 	n := &Notes{Dir: dir}
 
 	for _, text := range []string{"uses macOS", "prefers Go", "prefers Go"} { // duplicate ignored
-		if err := n.Add(Agent, text); err != nil {
+		if err := n.Add(Agent, text, "20261127-150405-ab12cd"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := n.Add(User, "name is Ayo"); err != nil {
+	if err := n.Add(User, "name is Ayo", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := n.Replace(Agent, "macOS", "uses macOS 27"); err != nil {
+	if err := n.Replace(Agent, "macOS", "uses macOS 27", "20261127-150405-ab12cd"); err != nil {
 		t.Fatal(err)
 	}
-	if err := n.Remove(Agent, "prefers"); err != nil {
+	if err := n.Remove(Agent, "prefers", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -34,29 +34,29 @@ func TestNotesAddReplaceRemovePersist(t *testing.T) {
 
 func TestNotesErrors(t *testing.T) {
 	n := &Notes{Dir: t.TempDir()}
-	n.Add(Agent, "alpha one")
-	n.Add(Agent, "alpha two")
+	n.Add(Agent, "alpha one", "")
+	n.Add(Agent, "alpha two", "")
 
-	if err := n.Replace(Agent, "alpha", "x"); err == nil || !strings.Contains(err.Error(), "more than one") {
+	if err := n.Replace(Agent, "alpha", "x", ""); err == nil || !strings.Contains(err.Error(), "more than one") {
 		t.Fatalf("ambiguous match should fail, got %v", err)
 	}
-	if err := n.Remove(Agent, "missing"); err == nil {
+	if err := n.Remove(Agent, "missing", ""); err == nil {
 		t.Fatal("removing a missing entry should fail")
 	}
-	if err := n.Add("bogus", "x"); err == nil {
+	if err := n.Add("bogus", "x", ""); err == nil {
 		t.Fatal("unknown target should fail")
 	}
-	if err := n.Add(Agent, "  "); err == nil {
+	if err := n.Add(Agent, "  ", ""); err == nil {
 		t.Fatal("empty content should fail")
 	}
 }
 
 func TestNotesEnforceCap(t *testing.T) {
 	n := &Notes{Dir: t.TempDir()}
-	if err := n.Add(User, strings.Repeat("a", caps[User])); err != nil {
-		t.Fatalf("entry exactly at cap should fit: %v", err)
+	if err := n.Add(User, strings.Repeat("a", caps[User]-11), ""); err != nil {
+		t.Fatalf("an entry that fits should fit: %v", err)
 	}
-	if err := n.Add(User, "b"); err == nil || !strings.Contains(err.Error(), "limit") {
+	if err := n.Add(User, "b", ""); err == nil || !strings.Contains(err.Error(), "limit") {
 		t.Fatalf("expected cap error, got %v", err)
 	}
 }

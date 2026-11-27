@@ -28,7 +28,7 @@ func TestProfileGoesIntoThePromptAsShortLines(t *testing.T) {
 func TestEditAtChangesOnlyTheEntryItWasShown(t *testing.T) {
 	n := &Notes{Dir: t.TempDir()}
 	for _, e := range []string{"likes tea", "likes tea with milk", "lives in Lagos"} {
-		if err := n.Add(User, e); err != nil {
+		if err := n.Add(User, e, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -43,7 +43,7 @@ func TestEditAtChangesOnlyTheEntryItWasShown(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries, used, limit, err := n.Entries(User)
-	if err != nil || len(entries) != 2 || entries[0] != "likes green tea" || entries[1] != "likes tea with milk" || used == 0 || limit != 1375 {
+	if err != nil || len(entries) != 2 || entries[0].Text != "likes green tea" || entries[1].Text != "likes tea with milk" || used == 0 || limit != 1375 {
 		t.Fatalf("entries %q used %d limit %d err %v", entries, used, limit, err)
 	}
 }

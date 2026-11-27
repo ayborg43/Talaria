@@ -56,7 +56,8 @@ func (s *Server) sweepChats(now time.Time, dry bool) (SweepResult, int) {
 	return res, pruned
 }
 
-// sweepChatsLoop runs the sweep a minute after start and then every few hours until the server stops.
+// sweepChatsLoop runs the sweep a minute after start and then every few hours until the server stops. The memory
+// review runs on the same clock: it keeps its own stamp, so a pass that already read the history is not repeated.
 func (s *Server) sweepChatsLoop(ctx context.Context) {
 	t := time.NewTimer(time.Minute)
 	defer t.Stop()
@@ -66,8 +67,27 @@ func (s *Server) sweepChatsLoop(ctx context.Context) {
 			return
 		case <-t.C:
 			s.sweepChats(time.Now(), false)
+			s.reviewMemory(ctx)
 			t.Reset(6 * time.Hour)
 		}
+	}
+}
+
+// reviewMemory runs the consolidation pass, if one is set up. It is given its own bounded time: a slow model
+// must not hold up the sweep, and a failure is only logged — the next sweep tries again.
+func (s *Server) reviewMemory(ctx context.Context) {
+	if s.Sources.ConsolidateMemory == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
+	defer cancel()
+	res, err := s.Sources.ConsolidateMemory(ctx, false)
+	if err != nil {
+		s.logf("web: reviewing conversations for the notes: %v", err)
+		return
+	}
+	if res.Sessions > 0 {
+		s.logf("web: memory review: %s", res.Summary())
 	}
 }
 

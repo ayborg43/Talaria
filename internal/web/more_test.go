@@ -102,11 +102,57 @@ func TestProfileAndNotesAreEditedFromTheApp(t *testing.T) {
 	}
 	_, body = r.do("POST", "/api/profile", map[string]any{"note": map[string]any{"target": "user", "index": 0, "old": "prefers mornings", "text": ""}})
 	decode(t, body, &got)
-	if len(got.User.Entries) != 1 || got.User.Entries[0] != "lives in Lagos" {
+	if len(got.User.Entries) != 1 || got.User.Entries[0].Text != "lives in Lagos" {
 		t.Fatalf("after removing: %+v", got.User)
 	}
 	if !strings.Contains(r.srv.Notes.Prompt(), "The user asks to be called: Ayo") {
 		t.Error("the profile did not reach the prompt")
+	}
+}
+
+// The trust surface: what the agent learned is listed with the day it learned it, and any of it can be put back.
+func TestRecentlyLearnedIsShownAndCanBeUndone(t *testing.T) {
+	r := newRig(t)
+	dir := t.TempDir()
+	r.srv.Notes = &memory.Notes{Dir: dir, Log: memory.OpenLog(filepath.Join(dir, "changes.jsonl"))}
+	r.login()
+	r.srv.Notes.Add(memory.User, "prefers mornings", "chat-1")
+	if err := r.srv.Notes.Supersede(memory.User, "mornings", "prefers late mornings", "chat-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, body := r.do("GET", "/api/profile", nil)
+	var got struct {
+		Learned []memory.Change
+	}
+	decode(t, body, &got)
+	if len(got.Learned) != 2 || got.Learned[0].Action != "supersede" || got.Learned[0].Source != "chat-1" {
+		t.Fatalf("recently learned reads %+v", got.Learned)
+	}
+	if resp, body := r.do("POST", "/api/profile", map[string]any{"undo": got.Learned[0].ID}); resp.StatusCode != 200 {
+		t.Fatalf("undo answered %d %s", resp.StatusCode, body)
+	}
+	if p := r.srv.Notes.Prompt(); !strings.Contains(p, "prefers mornings") || strings.Contains(p, "late mornings") {
+		t.Fatalf("the note was not put back:\n%s", p)
+	}
+	if resp, _ := r.do("POST", "/api/profile", map[string]any{"undo": "no-such-change"}); resp.StatusCode != 400 {
+		t.Fatalf("an unknown change answered %d", resp.StatusCode)
+	}
+}
+
+// The review can be asked for from the app, and it reports what it did.
+func TestTheMemoryReviewRunsFromTheApp(t *testing.T) {
+	r := newRig(t)
+	r.srv.Notes = &memory.Notes{Dir: t.TempDir(), Log: memory.OpenLog(filepath.Join(t.TempDir(), "c.jsonl"))}
+	forced := false
+	r.srv.Sources.ConsolidateMemory = func(_ context.Context, force bool) (memory.Consolidation, error) {
+		forced = force
+		return memory.Consolidation{Sessions: 3, Added: 1, Changed: 1}, nil
+	}
+	r.login()
+	resp, body := r.do("POST", "/api/memory/consolidate", map[string]any{})
+	if resp.StatusCode != 200 || !strings.Contains(string(body), `"sessions":3`) || !forced {
+		t.Fatalf("%d %s (forced=%v)", resp.StatusCode, body, forced)
 	}
 }
 
@@ -416,7 +462,7 @@ func TestLightIsTheDefaultAndDarkIsAChoice(t *testing.T) {
 	r.srv.Notes = &memory.Notes{Dir: t.TempDir()}
 	r.login()
 	if _, body := r.do("GET", "/api/state", nil); !strings.Contains(string(body), `"theme":""`) {
-		t.Fatalf("a new profile starts with no theme, which is light: %s", body)
+		t.Fatalf("a new profile starts with no theme, which is white: %s", body)
 	}
 	if resp, body := r.do("POST", "/api/profile", map[string]any{"profile": map[string]string{"theme": "dark"}}); resp.StatusCode != 200 {
 		t.Fatalf("%d %s", resp.StatusCode, body)

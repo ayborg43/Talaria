@@ -16,9 +16,10 @@ func RegisterTools(r *tool.Registry, n *Notes, sessions *Sessions, currentSessio
 		Name: "memory",
 		Description: "Edit your persistent notes. target=memory is for your own durable notes (environment facts, conventions, lessons); " +
 			"target=user is for the user's preferences and background. Entries are tiny and size-capped, so keep them terse and " +
-			"replace or remove stale ones. Changes appear in the prompt from the next session. Save only what will matter later.",
+			"replace or remove stale ones; supersede one when a newer fact makes it untrue. Each note keeps the day it was learned. " +
+			"Changes appear in the prompt from the next session, and the person can see and undo them. Save only what will matter later.",
 		Schema: json.RawMessage(`{"type":"object","properties":{
-			"action":{"type":"string","enum":["add","replace","remove"]},
+			"action":{"type":"string","enum":["add","replace","supersede","remove"]},
 			"target":{"type":"string","enum":["memory","user"]},
 			"content":{"type":"string","description":"new entry text (add, replace)"},
 			"old":{"type":"string","description":"unique snippet of the existing entry (replace, remove)"}},
@@ -39,11 +40,13 @@ func RegisterTools(r *tool.Registry, n *Notes, sessions *Sessions, currentSessio
 			var err error
 			switch a.Action {
 			case "add":
-				err = n.Add(a.Target, a.Content)
+				err = n.Add(a.Target, a.Content, currentSession)
 			case "replace":
-				err = n.Replace(a.Target, a.Old, a.Content)
+				err = n.Replace(a.Target, a.Old, a.Content, currentSession)
+			case "supersede":
+				err = n.Supersede(a.Target, a.Old, a.Content, currentSession)
 			case "remove":
-				err = n.Remove(a.Target, a.Old)
+				err = n.Remove(a.Target, a.Old, currentSession)
 			default:
 				err = fmt.Errorf("unknown action %q", a.Action)
 			}

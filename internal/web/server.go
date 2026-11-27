@@ -127,6 +127,9 @@ type Sources struct {
 	Webhook func(h webhook.Hook, prompt string) error
 	// PruneHistory forgets the searchable history older than a time and says how many messages went. Nil leaves that setting out.
 	PruneHistory func(before time.Time) (int, error)
+	// ConsolidateMemory reads the conversations since the last review and updates the notes. It is run by the
+	// server on its own and from Settings; nil leaves the pass out.
+	ConsolidateMemory func(ctx context.Context, force bool) (memory.Consolidation, error)
 	// Runs connects the Activity view to steering a running task and following up a finished one. Nil leaves
 	// those out; the record itself is Server.Runs.
 	Runs *RunHooks
@@ -363,6 +366,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/usage", s.authed(s.usagePost))
 	mux.HandleFunc("POST /api/usage/limits", s.authed(s.usageLimitsPost))
 	mux.HandleFunc("GET /api/phone", s.authed(s.phoneStatus))
+	mux.HandleFunc("POST /api/memory/consolidate", s.authed(s.memoryConsolidate))
 	mux.HandleFunc("GET /api/phone/link", s.authed(s.phoneLink))
 	mux.HandleFunc("GET /api/browser/live", s.authed(s.browserLive))
 	mux.HandleFunc("GET /api/browser/stream", s.authed(s.browserStream))

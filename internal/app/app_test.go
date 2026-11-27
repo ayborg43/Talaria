@@ -81,7 +81,7 @@ func TestSubagentInheritsTheUsersNotesAndModel(t *testing.T) {
 		return provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "1", Name: "delegate", Arguments: string(args)}}}, nil
 	})
 	rt, home := open(t, p, subagent.Limits{})
-	if err := (&memory.Notes{Dir: filepath.Join(home, "memories")}).Add(memory.User, "likes brevity"); err != nil {
+	if err := (&memory.Notes{Dir: filepath.Join(home, "memories")}).Add(memory.User, "likes brevity", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -306,7 +306,7 @@ func TestStateIsKeptOwnerOnly(t *testing.T) {
 	os.MkdirAll(home, 0o755) // made by an older version, open to others
 	rt := Open(Config{Home: home, Provider: nil})
 	defer rt.Close()
-	rt.notes.Add("memory", "likes tea")
+	rt.notes.Add("memory", "likes tea", "")
 	if fi, err := os.Stat(home); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Fatalf("the home directory: %v %v", fi, err)
 	}

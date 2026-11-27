@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"unicode"
 )
 
 // Profile is how the user wants to be addressed: set by them in the app, read
@@ -16,7 +15,7 @@ type Profile struct {
 	Name   string `json:"name,omitempty"`   // what to call the user
 	Tone   string `json:"tone,omitempty"`   // how replies should sound, in the user's words
 	Avatar string `json:"avatar,omitempty"` // an emoji or initials, shown beside their messages
-	// Theme is how the app looks: "" or "light" (the default), "dark", or "auto" to follow the device.
+	// Theme is how the app looks: "" or "white" (the default), "light" (warm paper), "dark", or "auto" to follow the device.
 	// It is for the page alone and is never put in the prompt.
 	Theme string `json:"theme,omitempty"`
 	// Onboarded is set once the user has been through the first-day introduction (or waved it away), so the
@@ -39,10 +38,6 @@ func (n *Notes) Profile() Profile {
 		_ = json.Unmarshal(raw, &p)
 	}
 	return p
-}
-
-func oneLine(s string) string {
-	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }), " ")
 }
 
 // SetProfile saves the user's profile. Each field is one short line: it goes
@@ -71,12 +66,18 @@ func (n *Notes) SetProfile(p Profile) error {
 
 // Entries lists a target's notes, for the app to show and edit, with how much
 // room they take and how much there is.
-func (n *Notes) Entries(t Target) (entries []string, used, limit int, err error) {
+func (n *Notes) Entries(t Target) (entries []Entry, used, limit int, err error) {
 	if err := checkTarget(t); err != nil {
 		return nil, 0, 0, err
 	}
 	entries, err = n.load(t)
-	return entries, len(strings.Join(entries, sep)), caps[t], err
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	for _, e := range entries {
+		used += len(e.Line()) + 1
+	}
+	return entries, used, caps[t], nil
 }
 
 // EditAt changes or removes the entry at index, which must still read as old:
@@ -90,15 +91,27 @@ func (n *Notes) EditAt(t Target, index int, old, text string) error {
 	if err != nil {
 		return err
 	}
-	if index < 0 || index >= len(entries) || entries[index] != strings.TrimSpace(old) {
+	if index < 0 || index >= len(entries) || entries[index].Text != strings.TrimSpace(old) {
 		return errors.New("the notes changed since they were listed: reload and try again")
 	}
-	text = strings.TrimSpace(strings.ReplaceAll(text, "§", ""))
+	text = oneLine(text)
 	if text == "" {
-		return n.save(t, append(entries[:index], entries[index+1:]...))
+		before := entries[index].Text
+		if err := n.save(t, append(entries[:index], entries[index+1:]...)); err != nil {
+			return err
+		}
+		n.record(t, "remove", before, "", "you")
+		return nil
 	}
-	entries[index] = text
-	return n.save(t, entries)
+	before := entries[index].Text
+	entries[index] = Entry{Date: today(), Source: "you", Text: text}
+	if err := n.save(t, entries); err != nil {
+		return err
+	}
+	if before != text {
+		n.record(t, "change", before, text, "you")
+	}
+	return nil
 }
 
 // profilePrompt is the profile as the prompt states it.

@@ -105,6 +105,74 @@ func (s *Sessions) Search(query string, limit int, exclude string) ([]Hit, error
 	return s.SearchFor("", query, limit, exclude)
 }
 
+// Since returns the conversations started at or after since, oldest first, with
+// their messages as text: what a memory review reads. It is bounded in both
+// conversations and characters, so one long chat cannot crowd out the rest.
+func (s *Sessions) Since(since time.Time, maxSessions, maxChars int) ([]SessionText, error) {
+	if maxSessions <= 0 || maxSessions > 20 {
+		maxSessions = 8
+	}
+	if maxChars <= 0 || maxChars > 40000 {
+		maxChars = 12000
+	}
+	rows, err := s.db.Query(`SELECT id, started_at FROM sessions WHERE started_at >= ? ORDER BY started_at LIMIT ?`,
+		since.Unix(), maxSessions)
+	if err != nil {
+		return nil, err
+	}
+	type head struct {
+		id string
+		at time.Time
+	}
+	var heads []head
+	for rows.Next() {
+		var id string
+		var ts int64
+		if err := rows.Scan(&id, &ts); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		heads = append(heads, head{id: id, at: time.Unix(ts, 0)})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var out []SessionText
+	left := maxChars
+	for _, h := range heads {
+		msgs, err := s.db.Query(`SELECT role, content FROM messages WHERE session_id = ? ORDER BY id`, h.id)
+		if err != nil {
+			return nil, err
+		}
+		var b strings.Builder
+		for msgs.Next() {
+			var role, content string
+			if err := msgs.Scan(&role, &content); err != nil {
+				msgs.Close()
+				return nil, err
+			}
+			line := role + ": " + strings.Join(strings.Fields(content), " ")
+			if len(line) > 1200 {
+				line = line[:1200] + "…"
+			}
+			if len(line)+1 > left {
+				break
+			}
+			left -= len(line) + 1
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+		msgs.Close()
+		if b.Len() == 0 {
+			continue
+		}
+		out = append(out, SessionText{ID: h.id, Started: h.at, Text: b.String()})
+	}
+	return out, nil
+}
+
 // Recent returns the latest contents of one session and role, newest first,
 // so a tool can leave out what was already said. A non-positive limit reads
 // a small, bounded number.

@@ -192,11 +192,12 @@ func Open(cfg Config) *Runtime {
 		cfg:      cfg,
 		provider: cfg.Provider,
 		skills:   &skill.Store{Dir: filepath.Join(cfg.Home, "skills")},
-		notes:    &memory.Notes{Dir: filepath.Join(cfg.Home, "memories")},
-		mcp:      cfg.MCP,
-		env:      cfg.Env,
-		log:      log,
-		budget:   &budget{max: cfg.ModelCallsPerHour, spend: cfg.SpendGate},
+		notes: &memory.Notes{Dir: filepath.Join(cfg.Home, "memories"),
+			Log: memory.OpenLog(filepath.Join(cfg.Home, "memories", "changes.jsonl"))},
+		mcp:    cfg.MCP,
+		env:    cfg.Env,
+		log:    log,
+		budget: &budget{max: cfg.ModelCallsPerHour, spend: cfg.SpendGate},
 	}
 	if rt.env == nil {
 		rt.env = execenv.Local{Fence: cfg.Fence}
@@ -231,6 +232,14 @@ func (rt *Runtime) HasVault() bool { return rt.cfg.Vault != nil }
 
 // Notes is the agent's notes and the user's profile, for the app's own screen to show and edit.
 func (rt *Runtime) Notes() *memory.Notes { return rt.notes }
+
+// Sessions is the searchable history of past conversations, nil when it could not be opened. The memory
+// review reads it: it is where the conversations a pass learns from are kept.
+func (rt *Runtime) Sessions() *memory.Sessions { return rt.sessions }
+
+// GateModel is asked before every request to a model, for work this runtime starts itself: the calls-per-hour
+// limit and the spending limit, the same as a conversation's.
+func (rt *Runtime) GateModel() func(context.Context) error { return rt.budget.take }
 
 // Phone is the link to the user's phone, nil when there is none.
 func (rt *Runtime) Phone() *phone.Hub { return rt.cfg.Phone }

@@ -821,17 +821,60 @@ function themeCard(p) {
 const TONES = ['Warm and brief', 'Plain and direct', 'Formal', 'Playful', 'Detailed, with reasons'];
 function notesCard(target, title, hint, view) {
   const card = h('div', { class: 'card' }, h('h2', null, title, h('small', { text: view.used + ' of ' + view.limit + ' characters' })), h('div', { class: 'field-note', text: hint }));
-  view.entries.forEach((text, index) => {
+  view.entries.forEach((entry, index) => {
+    const text = entry.text;
     const area = h('textarea', { class: 'notearea', rows: '2', 'aria-label': 'Note ' + (index + 1) });
     area.value = text;
-    card.append(h('div', { class: 'noteitem' }, area, h('div', { class: 'btn-row' },
-      h('button', { class: 'btn small', type: 'button', text: 'Save', onclick: () => { if (area.value.trim() && area.value.trim() !== text) saveMe({ note: { target, index, old: text, text: area.value } }, 'Saved.'); } }),
-      h('button', { class: 'btn small danger', type: 'button', text: 'Forget', onclick: () => saveMe({ note: { target, index, old: text, text: '' } }, 'Forgotten.') }))));
+    const item = h('div', { class: 'noteitem' }, area);
+    if (entry.age) item.append(h('div', { class: 'field-note', text: 'Learned ' + entry.age + '.' }));
+    item.append(h('div', { class: 'btn-row' },
+        h('button', { class: 'btn small', type: 'button', text: 'Save', onclick: () => { if (area.value.trim() && area.value.trim() !== text) saveMe({ note: { target, index, old: text, text: area.value } }, 'Saved.'); } }),
+        h('button', { class: 'btn small danger', type: 'button', text: 'Forget', onclick: () => saveMe({ note: { target, index, old: text, text: '' } }, 'Forgotten.') })));
+    card.append(item);
   });
   if (!view.entries.length) card.append(h('div', { class: 'empty', text: 'Nothing yet.' }));
   const fresh = h('textarea', { class: 'notearea', rows: '2', 'aria-label': 'A new note', placeholder: target === 'user' ? 'Something it should know about you' : 'Something it should remember' });
   card.append(h('div', { class: 'noteitem' }, fresh, h('div', { class: 'btn-row' },
     h('button', { class: 'btn small primary', type: 'button', text: 'Add', onclick: async () => { if (fresh.value.trim() && await saveMe({ note: { target, text: fresh.value } }, 'Added. It is used from the next conversation.')) fresh.value = ''; } }))));
+  return card;
+}
+// What the agent learned lately, and the way back: every change in the notes can be undone from here, so a
+// wrong inference never steers the next job without the person having had a chance to see it.
+function learnedCard(learned) {
+  const items = learned || [];
+  const body = h('div');
+  const draw = (list) => {
+    body.replaceChildren();
+    if (!list.length) {
+      body.append(h('div', { class: 'empty', text: 'Nothing yet. It reviews recent conversations on its own, or now.' }));
+      return;
+    }
+    for (const c of list) {
+      const when = c.at ? new Date(c.at).toLocaleDateString() : '';
+      const what = c.action === 'add' ? 'Learned: ' + (c.text || '')
+        : c.action === 'remove' ? 'Forgot: ' + (c.before || '')
+          : c.action === 'supersede' ? 'Replaced: ' + (c.before || '') + ' → ' + (c.text || '')
+            : c.action === 'undo' ? 'Undid a change'
+              : 'Changed: ' + (c.before || '') + ' → ' + (c.text || '');
+      const who = (c.target === 'user' ? 'About you' : 'Its notes') + (when ? ' · ' + when : '');
+      body.append(h('div', { class: 'row' },
+        h('span', { class: 'grow' }, h('b', { text: what }), h('span', { class: 's', text: who })),
+        h('button', { class: 'btn small', type: 'button', text: 'Undo', onclick: async () => {
+          try { S.me = await api('/api/profile', { method: 'POST', body: { undo: c.id } }); renderSettings(); toast('Put back.'); } catch (e) { failed(e); }
+        } })));
+    }
+  };
+  draw(items);
+  const card = h('div', { class: 'card' }, h('h2', null, 'Recently learned'),
+    h('div', { class: 'field-note', text: 'What the agent has added, changed or replaced in its notes. Anything wrong here can be undone.' }), body,
+    h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'button', text: 'Review recent conversations now', onclick: async (e) => {
+      e.target.disabled = true;
+      try {
+        S.me = await api('/api/memory/consolidate', { method: 'POST', body: {} });
+        renderSettings();
+        toast(S.me.review && S.me.review.sessions ? 'Reviewed recent conversations.' : 'Nothing new to learn.');
+      } catch (err) { failed(err); e.target.disabled = false; }
+    } })));
   return card;
 }
 function paneYou() {
@@ -857,6 +900,7 @@ function paneYou() {
     themeCard(p),
     notesCard('user', 'What it knows about you', 'The agent writes these as it learns; you can correct or remove any of them.', me.user),
     notesCard('memory', 'Its own notes', 'What it has noted about its work and this setup.', me.memory),
+    learnedCard(me.learned),
   ];
 }
 

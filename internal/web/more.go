@@ -39,18 +39,26 @@ type TaskInfo struct {
 
 // ---- profile and notes ----
 
+type noteView struct {
+	Text   string `json:"text"`
+	Date   string `json:"date,omitempty"`
+	Age    string `json:"age,omitempty"`
+	Source string `json:"source,omitempty"`
+}
+
 type notesView struct {
-	Entries []string `json:"entries"`
-	Used    int      `json:"used"`
-	Limit   int      `json:"limit"`
+	Entries []noteView `json:"entries"`
+	Used    int        `json:"used"`
+	Limit   int        `json:"limit"`
 }
 
 func (s *Server) notesFor(t memory.Target) notesView {
 	entries, used, limit, _ := s.Notes.Entries(t)
-	if entries == nil {
-		entries = []string{}
+	out := make([]noteView, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, noteView{Text: e.Text, Date: e.Date, Age: e.Age(), Source: e.Source})
 	}
-	return notesView{Entries: entries, Used: used, Limit: limit}
+	return notesView{Entries: out, Used: used, Limit: limit}
 }
 
 func (s *Server) profileGet(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +66,8 @@ func (s *Server) profileGet(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotImplemented, "the profile is not set up here")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"profile": s.Notes.Profile(), "user": s.notesFor(memory.User), "memory": s.notesFor(memory.Agent)})
+	writeJSON(w, http.StatusOK, map[string]any{"profile": s.Notes.Profile(), "user": s.notesFor(memory.User), "memory": s.notesFor(memory.Agent),
+		"learned": s.Notes.Changes(20)})
 }
 
 // profilePost saves the profile, or adds, changes or removes one note. A note
@@ -73,7 +82,9 @@ func (s *Server) profilePost(w http.ResponseWriter, r *http.Request) {
 		Profile *memory.Profile `json:"profile"`
 		// Onboarded marks the first-day introduction as done (or declined) without touching the rest of the profile.
 		Onboarded *bool `json:"onboarded"`
-		Note      *struct {
+		// Undo puts back one change from the recently learned list, by its id.
+		Undo string `json:"undo"`
+		Note *struct {
 			Target string `json:"target"` // user or memory
 			Index  *int   `json:"index"`  // nil adds a note
 			Old    string `json:"old"`
@@ -85,6 +96,8 @@ func (s *Server) profilePost(w http.ResponseWriter, r *http.Request) {
 	}
 	var err error
 	switch {
+	case in.Undo != "":
+		err = s.Notes.Undo(in.Undo)
 	case in.Onboarded != nil:
 		p := s.Notes.Profile()
 		p.Onboarded = *in.Onboarded
@@ -94,7 +107,7 @@ func (s *Server) profilePost(w http.ResponseWriter, r *http.Request) {
 		p.Onboarded = s.Notes.Profile().Onboarded // the page's forms do not carry it, and must not undo it
 		err = s.Notes.SetProfile(p)
 	case in.Note != nil && in.Note.Index == nil:
-		err = s.Notes.Add(memory.Target(in.Note.Target), in.Note.Text)
+		err = s.Notes.Add(memory.Target(in.Note.Target), in.Note.Text, "you")
 	case in.Note != nil:
 		err = s.Notes.EditAt(memory.Target(in.Note.Target), *in.Note.Index, in.Note.Old, in.Note.Text)
 	default:
@@ -105,6 +118,28 @@ func (s *Server) profilePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.profileGet(w, r)
+}
+
+// ---- the memory review ----
+
+// memoryConsolidate runs the consolidation pass now: a cheap model reads the
+// conversations since the last pass and updates the two note files. It is the
+// same pass the server runs on its own, offered as a button so the person can
+// see it work (and undo what it did) without waiting for the schedule.
+func (s *Server) memoryConsolidate(w http.ResponseWriter, r *http.Request) {
+	if s.Notes == nil || s.Sources.ConsolidateMemory == nil {
+		fail(w, http.StatusNotImplemented, "learning from conversations is not set up here")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	defer cancel()
+	res, err := s.Sources.ConsolidateMemory(ctx, true)
+	if err != nil {
+		fail(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"review": res, "user": s.notesFor(memory.User), "memory": s.notesFor(memory.Agent),
+		"learned": s.Notes.Changes(20)})
 }
 
 // ---- notifications kept in the app ----

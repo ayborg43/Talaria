@@ -267,10 +267,22 @@ State lives in `~/.talaria` (override with `TALARIA_HOME`):
 | `skills/<name>/SKILL.md` | Reusable procedures. Only names and descriptions go in the prompt; the agent loads a body with `skill_view`. |
 | `memories/MEMORY.md` | The agent's own notes, capped at 2,200 characters. |
 | `memories/USER.md` | What it knows about you, capped at 1,375 characters. |
+| `memories/changes.jsonl` | Every edit to the notes, with what it said before, so Settings → Recently learned can show it and undo it. |
 | `sessions.db` | SQLite with FTS5: every user and assistant message (searched with `session_search`), plus goals, watches, ideas and choice panels. |
 
 Notes and the skill index are read once at session start, so the prompt stays stable.
-Changes the agent makes show up from the next session.
+Changes the agent makes show up from the next session. Each note carries the day it was learned
+and the conversation that learned it, and the prompt says how long ago that was, so a newer note
+visibly outranks an older one.
+
+**Learning does not depend on the agent remembering to write.** The web server runs a review pass
+on its own clock (every 20 hours at most, over the last 7 days when it has never run): a cheap
+model reads the conversations since the last pass and edits the two files — adding what will
+matter later, merging duplicates, superseding a note a later conversation contradicted. Its only
+tool is the notes themselves, so it cannot run a command, read a file or start anything, and it
+never guesses: a note has to come from what was said. The pass is stamped, so it never reads the
+same history twice. Settings → Recently learned lists what changed and can put any of it back,
+and the same screen can run a review now.
 
 `skill_save` and `skill_delete` ask for approval like `shell` does, because a saved skill
 steers every future session. Memory edits do not ask: they are small and capped.

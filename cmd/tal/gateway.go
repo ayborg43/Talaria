@@ -500,6 +500,8 @@ func runGateway(c *cli) error {
 			Agents:       agents,
 			Routines:     routines,
 		}
+		// The memory review runs on the web server's own clock and from Settings, on the cheap model routine work uses.
+		srv.Sources.ConsolidateMemory = newMemoryReviewer(c.rt, backends, c.cfg.RoutineProfileName, logf).Run
 		if webSet.AGUIKey != "" {
 			logf("web: AG-UI clients may connect at /api/agui with TALARIA_AGUI_KEY as a bearer token")
 		}
