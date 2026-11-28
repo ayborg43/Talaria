@@ -1,14 +1,16 @@
 /* Talaria. Fonts are served from here, not from a third party.
 
-   Colour. Warm paper and ink, with brass as the one colour that means "act" or "you are here": the primary
-   button, the open tab, the current choice, the thing waiting for you. It is kept rare so it keeps that meaning.
+   Colour. White and ink by default, with an optional warm paper ("Light") and a dark theme. Brass is the one
+   colour that means "act" or "you are here": the primary button, the open tab, the current choice, the thing
+   waiting for you. It is kept rare so it keeps that meaning.
    Blue is information and links, green is done or working, red is refused or failed, coral is the count on a badge.
    Every neutral leans to the same warm hue, so cards, lines and text read as one material.
 
    Tokens are roles, not swatches, and each is given twice: as OKLCH, where lightness steps are even and can be
-   tuned by eye, and before it as the same colour in hex for a browser that cannot read OKLCH. Light is the
-   default; the dark theme is a choice, and is composed, not inverted: surfaces rise in lightness with elevation, tints become deep rather than pale, and text
-   colours are lifted until they pass on them. Text on its surface is at least 4.5:1 in both; a field's edge is 3:1.
+   tuned by eye, and before it as the same colour in hex for a browser that cannot read OKLCH. The dark theme is
+   a choice, and is composed, not inverted: surfaces rise in lightness with elevation, tints become deep rather
+   than pale, and text colours are lifted until they pass on them. Text on its surface is at least 4.5:1 in the
+   theme in use; a field's edge is 3:1.
 
      surfaces   --bg page  --tab bars and sheets  --card raised  --sunk wells  --field inputs  --bubble what you said
      lines      --line2 hairline  --line edge of a card  --btn-line edge of a button  --field-line edge of an input
@@ -22,21 +24,21 @@
 
 :root{
   color-scheme:light;
-  --bg:#F8F3EB;
-  --card:#FEFDF9;
-  --tab:#FCF9F4;
-  --sunk:#F1ECE3;
-  --line:#E3DCCE;
-  --line2:#EBE6DB;
-  --btn-line:#D0C6B3;
-  --ink:#1B1812;
-  --ink2:#3B3730;
-  --muted:#5F5A51;
-  --faint:#6C675D;
-  --bubble:#EFE9DC;
-  --bubble-line:#DED5C3;
-  --field:#FFFDFA;
-  --field-line:#948B7B;
+  --bg:#FFFFFF;
+  --card:#FFFFFF;
+  --tab:#FFFFFF;
+  --sunk:#F5F5F5;
+  --line:#E5E5E5;
+  --line2:#EFEFEF;
+  --btn-line:#CFCFCF;
+  --ink:#171717;
+  --ink2:#383838;
+  --muted:#5C5C5C;
+  --faint:#6B6B6B;
+  --bubble:#F1F1F1;
+  --bubble-line:#E2E2E2;
+  --field:#FFFFFF;
+  --field-line:#8C8C8C;
   --brass:#EEB53E;
   --brass-text:#7D5002;
   --brass-tint:#FBE6AF;
@@ -57,14 +59,14 @@
   --bad-line:#F8BDB4;
   --coral:#F87966;
   --on-coral:#250E0B;
-  --bar:#E0D8C9;
-  --ring:#EDE7DC;
-  --logo:#1B1812;
-  --toast:#1B1812;
-  --on-toast:#F8F3EB;
-  --scrim:rgba(23,21,15,.38);
-  --shadow:0 1px 2px rgba(23,21,15,.04),0 8px 24px rgba(23,21,15,.05);
-  --lift:0 10px 30px rgba(23,21,15,.16);
+  --bar:#E9E9E9;
+  --ring:#F0F0F0;
+  --logo:#171717;
+  --toast:#171717;
+  --on-toast:#FFFFFF;
+  --scrim:rgba(0,0,0,.35);
+  --shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.06);
+  --lift:0 10px 30px rgba(0,0,0,.18);
   --display:"Bricolage Grotesque","Instrument Sans",system-ui,sans-serif;
   --sans:"Instrument Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
   --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
@@ -72,21 +74,21 @@
   --ease:cubic-bezier(.16,1,.3,1);
 }
 @supports (color:oklch(0% 0 0)){:root{
-  --bg:oklch(96.6% 0.012 84);
-  --card:oklch(99.3% 0.005 84);
-  --tab:oklch(98.4% 0.008 84);
-  --sunk:oklch(94.5% 0.014 84);
-  --line:oklch(89.5% 0.02 84);
-  --line2:oklch(92.5% 0.016 84);
-  --btn-line:oklch(83% 0.028 84);
-  --ink:oklch(21% 0.012 84);
-  --ink2:oklch(34% 0.014 84);
-  --muted:oklch(47% 0.016 84);
-  --faint:oklch(51.5% 0.016 84);
-  --bubble:oklch(93.5% 0.018 84);
-  --bubble-line:oklch(87.5% 0.026 84);
-  --field:oklch(99.5% 0.004 84);
-  --field-line:oklch(64% 0.026 84);
+  --bg:oklch(100% 0 0);
+  --card:oklch(100% 0 0);
+  --tab:oklch(100% 0 0);
+  --sunk:oklch(96.5% 0 0);
+  --line:oklch(91% 0 0);
+  --line2:oklch(94.5% 0 0);
+  --btn-line:oklch(83% 0 0);
+  --ink:oklch(20% 0 0);
+  --ink2:oklch(34% 0 0);
+  --muted:oklch(47% 0 0);
+  --faint:oklch(51% 0 0);
+  --bubble:oklch(95.5% 0 0);
+  --bubble-line:oklch(90% 0 0);
+  --field:oklch(100% 0 0);
+  --field-line:oklch(64% 0 0);
   --brass:oklch(80.5% 0.145 82);
   --brass-text:oklch(47% 0.1 72);
   --brass-tint:oklch(93% 0.075 90);
@@ -107,14 +109,14 @@
   --bad-line:oklch(85% 0.07 28);
   --coral:oklch(72% 0.16 30);
   --on-coral:oklch(20% 0.04 30);
-  --bar:oklch(88.5% 0.022 84);
-  --ring:oklch(93% 0.016 84);
-  --logo:oklch(21% 0.012 84);
-  --toast:oklch(21% 0.012 84);
-  --on-toast:oklch(96.6% 0.012 84);
+  --bar:oklch(92% 0 0);
+  --ring:oklch(95% 0 0);
+  --logo:oklch(19% 0 0);
+  --toast:oklch(19% 0 0);
+  --on-toast:oklch(100% 0 0);
 }}
-/* White is the same light theme with no paper tint: the page, cards, bars and fields are pure white, and the neutrals are grey.
-   The meaning colours (brass, blue, green, red, coral) are the light theme's, so a thing means the same in both. */
+/* White is the default: no paper tint, so the page, cards, bars and fields are pure white and the neutrals are grey.
+   The meaning colours (brass, blue, green, red, coral) are the same as Light's, so a thing means the same in both. */
 :root[data-theme=white]{
   color-scheme:light;
   --bg:#FFFFFF;
@@ -163,8 +165,56 @@
   --toast:oklch(19% 0 0);
   --on-toast:oklch(100% 0 0);
 }}
-/* Light is the theme unless the user picks otherwise (Settings, You): white, dark always, or whatever the device is set to.
-   The dark tokens are written twice because a selector and a media query cannot share one block. */
+/* Light is the warm paper theme, chosen in Settings (You): white (the default above), warm paper, dark always, or
+   whatever the device is set to. The dark tokens are written twice because a selector and a media query cannot share one block. */
+:root[data-theme=light]{
+  color-scheme:light;
+  --bg:#F8F3EB;
+  --card:#FEFDF9;
+  --tab:#FCF9F4;
+  --sunk:#F1ECE3;
+  --line:#E3DCCE;
+  --line2:#EBE6DB;
+  --btn-line:#D0C6B3;
+  --ink:#1B1812;
+  --ink2:#3B3730;
+  --muted:#5F5A51;
+  --faint:#6C675D;
+  --bubble:#EFE9DC;
+  --bubble-line:#DED5C3;
+  --field:#FFFDFA;
+  --field-line:#948B7B;
+  --bar:#E0D8C9;
+  --ring:#EDE7DC;
+  --logo:#1B1812;
+  --toast:#1B1812;
+  --on-toast:#F8F3EB;
+  --scrim:rgba(23,21,15,.38);
+  --shadow:0 1px 2px rgba(23,21,15,.04),0 8px 24px rgba(23,21,15,.05);
+  --lift:0 10px 30px rgba(23,21,15,.16);
+}
+@supports (color:oklch(0% 0 0)){:root[data-theme=light]{
+  --bg:oklch(96.6% 0.012 84);
+  --card:oklch(99.3% 0.005 84);
+  --tab:oklch(98.4% 0.008 84);
+  --sunk:oklch(94.5% 0.014 84);
+  --line:oklch(89.5% 0.02 84);
+  --line2:oklch(92.5% 0.016 84);
+  --btn-line:oklch(83% 0.028 84);
+  --ink:oklch(21% 0.012 84);
+  --ink2:oklch(34% 0.014 84);
+  --muted:oklch(47% 0.016 84);
+  --faint:oklch(51.5% 0.016 84);
+  --bubble:oklch(93.5% 0.018 84);
+  --bubble-line:oklch(87.5% 0.026 84);
+  --field:oklch(99.5% 0.004 84);
+  --field-line:oklch(64% 0.026 84);
+  --bar:oklch(88.5% 0.022 84);
+  --ring:oklch(93% 0.016 84);
+  --logo:oklch(21% 0.012 84);
+  --toast:oklch(21% 0.012 84);
+  --on-toast:oklch(96.6% 0.012 84);
+}}
 :root[data-theme=dark]{
   color-scheme:dark;
   --bg:#100E0A;
